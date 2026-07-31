@@ -1,0 +1,205 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 860" width="1400" height="860" role="img" aria-labelledby="dttl ddesc" preserveAspectRatio="xMidYMid meet">
+<title id="dttl">The Dimension &#8212; the agent layer, drawn</title>
+<desc id="ddesc">A network diagram of the agent layer beneath a session. Above the boundary lies the surface: the maestro seat straddling the edge, and your chair, outside the graph entirely. Below the boundary lies the graph plane: maestro dispatches to planner, planner fans out to executor-sol, executor-claude and executor-gemini, each executor's work is audited by a reviewer of a different make, and signed work merges back to maestro. A revise loop returns work to its executor twice at most. Work still blocked climbs a red escalation edge into the convergence room, where two rival makes run two passes. Support seats &#8212; context-keeper, scout, researcher, crystallizer, fleet-medic, handoff-recorder &#8212; are consulted inside the graph and never surface. One yellow edge leaves the plane for your chair carrying an S1 with both positions verbatim; a thinner yellow edge carries intent questions straight from maestro to you, skipping the ladder.</desc>
+<style>
+  @media (prefers-reduced-motion: reduce) { .pulse { opacity: 0; } }
+</style>
+<defs>
+  <pattern id="dgrid" width="40" height="40" patternUnits="userSpaceOnUse">
+    <path d="M40 0H0V40" fill="none" stroke="#F0E9DC" stroke-opacity=".05" stroke-width="1"/>
+  </pattern>
+  <marker id="darc" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0.6L10 5L0 9.4z" fill="#F0E9DC" fill-opacity=".8"/></marker>
+  <marker id="daro" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0.6L10 5L0 9.4z" fill="#FF8A00"/></marker>
+  <marker id="dary" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0.6L10 5L0 9.4z" fill="#FFD24A"/></marker>
+  <marker id="darr" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0.6L10 5L0 9.4z" fill="#E13B2F"/></marker>
+</defs>
+<g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">
+
+<rect width="1400" height="860" fill="#0B0B0C"/>
+<rect x="14" y="14" width="1372" height="832" fill="none" stroke="#F0E9DC" stroke-opacity=".22" stroke-width="2"/>
+<rect x="24" y="24" width="1352" height="812" fill="none" stroke="#F0E9DC" stroke-opacity=".10" stroke-width="1"/>
+<path d="M24 50L24 24L50 24" fill="none" stroke="#FF8A00" stroke-opacity=".7" stroke-width="3"/>
+<path d="M1376 50L1376 24L1350 24" fill="none" stroke="#FF8A00" stroke-opacity=".7" stroke-width="3"/>
+<path d="M24 810L24 836L50 836" fill="none" stroke="#FF8A00" stroke-opacity=".7" stroke-width="3"/>
+<path d="M1376 810L1376 836L1350 836" fill="none" stroke="#FF8A00" stroke-opacity=".7" stroke-width="3"/>
+
+<text font-size="38" letter-spacing="8" fill="#F0E9DC" x="56" y="86">THE DIMENSION</text>
+<text font-size="15" letter-spacing="1" fill="#FF8A00" x="58" y="114">the agent layer &#8212; this is where the work actually happens</text>
+<line x1="56" y1="136" x2="1344" y2="136" stroke="#F0E9DC" stroke-opacity=".18" stroke-width="1"/>
+
+<rect x="980" y="34" width="364" height="98" fill="#1B1B1E" stroke="#F0E9DC" stroke-opacity=".22" stroke-width="1.5"/>
+<line x1="998" y1="56" x2="1030" y2="56" stroke="#F0E9DC" stroke-opacity=".8" stroke-width="3.5"/>
+<circle cx="1014" cy="56" r="3.6" fill="#FF8A00"/>
+<text font-size="11.5" fill="#F0E9DC" fill-opacity=".7" x="1042" y="60">dispatch &#183; build &#183; merge</text>
+<line x1="998" y1="78" x2="1030" y2="78" stroke="#F0E9DC" stroke-opacity=".8" stroke-width="3.5" stroke-dasharray="6 4"/>
+<text font-size="11.5" fill="#F0E9DC" fill-opacity=".7" x="1042" y="82">audit &#8212; never the same make</text>
+<line x1="998" y1="100" x2="1030" y2="100" stroke="#E13B2F" stroke-opacity=".95" stroke-width="3.5"/>
+<text font-size="11.5" fill="#F0E9DC" fill-opacity=".7" x="1042" y="104">escalation &#8212; the ladder</text>
+<line x1="998" y1="122" x2="1030" y2="122" stroke="#FFD24A" stroke-opacity=".95" stroke-width="3.5"/>
+<text font-size="11.5" fill="#F0E9DC" fill-opacity=".7" x="1042" y="126">your chair &#8212; yours alone</text>
+
+<text font-size="11" letter-spacing="3" fill="#9A948A" x="68" y="172">THE SURFACE &#183; YOUR SESSION</text>
+<line x1="56" y1="250" x2="1344" y2="250" stroke="#F0E9DC" stroke-opacity=".26" stroke-width="1.5" stroke-dasharray="10 8"/>
+
+<path d="M110 250H1070L1098 790H86Z" fill="#1B1B1E"/>
+<path d="M110 250H1070L1098 790H86Z" fill="url(#dgrid)"/>
+<path d="M110 250H1070L1098 790H86Z" fill="none" stroke="#F0E9DC" stroke-opacity=".3" stroke-width="2.5"/>
+<text font-size="11" letter-spacing="3" fill="#FF8A00" fill-opacity=".8" x="120" y="308">THE AGENT LAYER</text>
+<text font-size="10" letter-spacing="2.4" fill="#9A948A" fill-opacity=".85" x="400" y="300">EACH IN ITS OWN BRANCH</text>
+<text font-size="10" letter-spacing="2.4" fill="#9A948A" fill-opacity=".85" x="670" y="300">A RIVAL MAKE SIGNS</text>
+
+<path d="M246 286V375" fill="none" stroke="#F0E9DC" stroke-opacity=".5" stroke-width="2.5" marker-end="url(#darc)"/>
+<text font-size="11.5" fill="#F0E9DC" fill-opacity=".55" x="258" y="338">dispatch</text>
+
+<path d="M346 407H372V337H400" fill="none" stroke="#F0E9DC" stroke-opacity=".5" stroke-width="2.5" marker-end="url(#darc)"/>
+<path d="M346 407H400" fill="none" stroke="#F0E9DC" stroke-opacity=".5" stroke-width="2.5" marker-end="url(#darc)"/>
+<path d="M346 407H372V477H400" fill="none" stroke="#F0E9DC" stroke-opacity=".5" stroke-width="2.5" marker-end="url(#darc)"/>
+
+<path d="M600 337L666 469" fill="none" stroke="#F0E9DC" stroke-opacity=".5" stroke-width="2.5" stroke-dasharray="7 5" marker-end="url(#darc)"/>
+<path d="M600 407L666 345" fill="none" stroke="#F0E9DC" stroke-opacity=".5" stroke-width="2.5" stroke-dasharray="7 5" marker-end="url(#darc)"/>
+<path d="M600 477L666 415" fill="none" stroke="#F0E9DC" stroke-opacity=".5" stroke-width="2.5" stroke-dasharray="7 5" marker-end="url(#darc)"/>
+
+<path d="M870 337H888V407H908" fill="none" stroke="#F0E9DC" stroke-opacity=".5" stroke-width="2.5" marker-end="url(#darc)"/>
+<path d="M870 407H908" fill="none" stroke="#F0E9DC" stroke-opacity=".5" stroke-width="2.5" marker-end="url(#darc)"/>
+<path d="M870 477H888V407H908" fill="none" stroke="#F0E9DC" stroke-opacity=".5" stroke-width="2.5" marker-end="url(#darc)"/>
+
+<path d="M974 375V274H400" fill="none" stroke="#F0E9DC" stroke-opacity=".5" stroke-width="2.5" marker-end="url(#darc)"/>
+<text font-size="11.5" fill="#F0E9DC" fill-opacity=".55" x="700" y="266">merge &#8212; signed work only</text>
+
+<path class="pulse" d="M246 286V375 M346 407H400 M600 407L666 345 M870 337H888V407H908 M974 375V274H400" fill="none" stroke="#FF8A00" stroke-width="15" stroke-linecap="round" stroke-opacity=".13" stroke-dasharray="10 193.2"><animate attributeName="stroke-dashoffset" from="0" to="-1016" dur="6s" repeatCount="indefinite"/></path>
+<path class="pulse" d="M246 286V375 M346 407H400 M600 407L666 345 M870 337H888V407H908 M974 375V274H400" fill="none" stroke="#FF8A00" stroke-width="6" stroke-linecap="round" stroke-opacity=".9" stroke-dasharray="10 193.2"><animate attributeName="stroke-dashoffset" from="0" to="-1016" dur="6s" repeatCount="indefinite"/></path>
+
+<rect x="146" y="375" width="200" height="64" rx="4" fill="#242428" stroke="#F0E9DC" stroke-opacity=".85" stroke-width="3"/>
+<rect x="149" y="378" width="6" height="58" fill="#FF8A00"/>
+<text font-size="17" letter-spacing="0.3" fill="#F0E9DC" x="170" y="404">planner</text>
+<text font-size="10" fill="#FF8A00" fill-opacity=".9" x="170" y="424">briefs &#43; acceptance criteria</text>
+
+<rect x="400" y="310" width="200" height="54" rx="4" fill="#242428" stroke="#F0E9DC" stroke-opacity=".85" stroke-width="3"/>
+<rect x="403" y="313" width="6" height="48" fill="#FF8A00"/>
+<text font-size="15" letter-spacing="0.3" fill="#F0E9DC" x="422" y="334">executor-sol</text>
+<text font-size="10" fill="#9A948A" x="422" y="352">gpt make &#183; the heavy build</text>
+
+<rect x="400" y="380" width="200" height="54" rx="4" fill="#242428" stroke="#F0E9DC" stroke-opacity=".85" stroke-width="3"/>
+<rect x="403" y="383" width="6" height="48" fill="#FF8A00"/>
+<text font-size="15" letter-spacing="0.3" fill="#F0E9DC" x="422" y="404">executor-claude</text>
+<text font-size="10" fill="#9A948A" x="422" y="422">claude make &#183; creative work</text>
+
+<rect x="400" y="450" width="200" height="54" rx="4" fill="#242428" stroke="#F0E9DC" stroke-opacity=".85" stroke-width="3"/>
+<rect x="403" y="453" width="6" height="48" fill="#FF8A00"/>
+<text font-size="15" letter-spacing="0.3" fill="#F0E9DC" x="422" y="474">executor-gemini</text>
+<text font-size="10" fill="#9A948A" x="422" y="492">gemini make &#183; wide context</text>
+
+<rect x="670" y="310" width="200" height="54" rx="4" fill="#242428" stroke="#F0E9DC" stroke-opacity=".85" stroke-width="3"/>
+<rect x="673" y="313" width="6" height="48" fill="#F0E9DC" fill-opacity=".55"/>
+<text font-size="15" letter-spacing="0.3" fill="#F0E9DC" x="692" y="334">reviewer-gemini</text>
+<text font-size="10" fill="#9A948A" x="692" y="352">never audits gemini work</text>
+
+<rect x="670" y="380" width="200" height="54" rx="4" fill="#242428" stroke="#F0E9DC" stroke-opacity=".85" stroke-width="3"/>
+<rect x="673" y="383" width="6" height="48" fill="#F0E9DC" fill-opacity=".55"/>
+<text font-size="15" letter-spacing="0.3" fill="#F0E9DC" x="692" y="404">reviewer-sol</text>
+<text font-size="10" fill="#9A948A" x="692" y="422">never audits gpt work</text>
+
+<rect x="670" y="450" width="200" height="54" rx="4" fill="#242428" stroke="#F0E9DC" stroke-opacity=".85" stroke-width="3"/>
+<rect x="673" y="453" width="6" height="48" fill="#F0E9DC" fill-opacity=".55"/>
+<text font-size="15" letter-spacing="0.3" fill="#F0E9DC" x="692" y="474">reviewer-claude</text>
+<text font-size="10" fill="#9A948A" x="692" y="492">never audits claude work</text>
+
+<rect x="626" y="300" width="28" height="210" fill="#0B0B0C" stroke="#FF8A00" stroke-opacity=".55" stroke-width="2"/>
+<text font-size="10.5" letter-spacing="0.8" fill="#FF8A00" transform="translate(645 505) rotate(-90)">no maker audits its own make</text>
+
+<rect x="908" y="375" width="132" height="64" rx="4" fill="#242428" stroke="#F0E9DC" stroke-opacity=".85" stroke-width="3"/>
+<rect x="911" y="378" width="6" height="58" fill="#FF8A00"/>
+<text font-size="17" letter-spacing="0.3" fill="#F0E9DC" x="930" y="404">merge</text>
+<text font-size="10" fill="#FF8A00" fill-opacity=".9" x="930" y="424">signed work only</text>
+
+<path d="M740 504V545H500V504" fill="none" stroke="#F0E9DC" stroke-opacity=".5" stroke-width="2.5" marker-end="url(#darc)"/>
+<path class="pulse" d="M740 504V545H500V504" fill="none" stroke="#FF8A00" stroke-width="13" stroke-linecap="round" stroke-opacity=".12" stroke-dasharray="9 98"><animate attributeName="stroke-dashoffset" from="0" to="-321" dur="4.5s" repeatCount="indefinite"/></path>
+<path class="pulse" d="M740 504V545H500V504" fill="none" stroke="#FF8A00" stroke-width="5.5" stroke-linecap="round" stroke-opacity=".85" stroke-dasharray="9 98"><animate attributeName="stroke-dashoffset" from="0" to="-321" dur="4.5s" repeatCount="indefinite"/></path>
+<text font-size="12" letter-spacing="0.4" fill="#FF8A00" x="620" y="566" text-anchor="middle">revise &#8212; &#215;2 max, then the ladder</text>
+
+<path class="pulse" d="M840 504V566H875V588" fill="none" stroke="#E13B2F" stroke-width="11" stroke-linecap="round" stroke-linejoin="round" stroke-opacity=".10"><animate attributeName="stroke-opacity" values=".10;.34;.10" dur="3.4s" repeatCount="indefinite"/></path>
+<path d="M840 504V566H875V588" fill="none" stroke="#E13B2F" stroke-opacity=".9" stroke-width="2.5" marker-end="url(#darr)"/>
+<text font-size="11.5" fill="#E13B2F" x="852" y="532">still blocked</text>
+
+<rect x="690" y="588" width="370" height="172" rx="4" fill="#0B0B0C" stroke="#F0E9DC" stroke-opacity=".2" stroke-width="1.5"/>
+<path d="M690 614V588H716" fill="none" stroke="#FF8A00" stroke-opacity=".9" stroke-width="4"/>
+<path d="M1060 614V588H1034" fill="none" stroke="#FF8A00" stroke-opacity=".9" stroke-width="4"/>
+<path d="M690 734V760H716" fill="none" stroke="#FF8A00" stroke-opacity=".9" stroke-width="4"/>
+<path d="M1060 734V760H1034" fill="none" stroke="#FF8A00" stroke-opacity=".9" stroke-width="4"/>
+<text font-size="11" letter-spacing="2.5" fill="#FF8A00" x="712" y="616">CONVERGENCE &#183; LOCKED ROOM &#183; 2 PASSES</text>
+<text font-size="10.5" fill="#9A948A" x="712" y="634">two rival makes, neither one involved in the work</text>
+
+<rect x="712" y="652" width="150" height="64" rx="4" fill="#242428" stroke="#F0E9DC" stroke-opacity=".8" stroke-width="3"/>
+<rect x="715" y="655" width="6" height="58" fill="#FF8A00"/>
+<text font-size="14" fill="#F0E9DC" x="734" y="680">convergence</text>
+<text font-size="10" fill="#9A948A" x="734" y="698">first position</text>
+
+<rect x="908" y="652" width="138" height="64" rx="4" fill="#242428" stroke="#F0E9DC" stroke-opacity=".8" stroke-width="3"/>
+<rect x="911" y="655" width="6" height="58" fill="#FF8A00"/>
+<text font-size="11.5" fill="#F0E9DC" x="926" y="680">plan-counterpart</text>
+<text font-size="10" fill="#9A948A" x="926" y="698">second position</text>
+
+<path d="M862 670C874 652 896 652 908 670" fill="none" stroke="#F0E9DC" stroke-opacity=".5" stroke-width="2.5" marker-end="url(#darc)"/>
+<path d="M908 700C896 718 874 718 862 700" fill="none" stroke="#F0E9DC" stroke-opacity=".5" stroke-width="2.5" marker-end="url(#darc)"/>
+<path class="pulse" d="M862 670C874 652 896 652 908 670 M908 700C896 718 874 718 862 700" fill="none" stroke="#FF8A00" stroke-width="5" stroke-linecap="round" stroke-opacity=".85" stroke-dasharray="8 44"><animate attributeName="stroke-dashoffset" from="0" to="-104" dur="3s" repeatCount="indefinite"/></path>
+<text font-size="10.5" fill="#F0E9DC" fill-opacity=".7" x="712" y="742">one answer &#8212; or both positions, verbatim</text>
+
+<rect x="130" y="588" width="530" height="172" rx="4" fill="none" stroke="#F0E9DC" stroke-opacity=".28" stroke-width="2" stroke-dasharray="8 6"/>
+<text font-size="11" letter-spacing="2.6" fill="#FF8A00" fill-opacity=".9" x="146" y="614">SUPPORT SEATS &#183; CONSULTED, NEVER SURFACED</text>
+
+<rect x="144" y="624" width="158" height="46" rx="3" fill="#242428" stroke="#F0E9DC" stroke-opacity=".55" stroke-width="2.5"/>
+<text font-size="12" fill="#F0E9DC" x="156" y="644">context-keeper</text>
+<text font-size="9.5" fill="#9A948A" x="156" y="660">holds what you meant</text>
+
+<rect x="316" y="624" width="158" height="46" rx="3" fill="#242428" stroke="#F0E9DC" stroke-opacity=".55" stroke-width="2.5"/>
+<text font-size="12" fill="#F0E9DC" x="328" y="644">scout</text>
+<text font-size="9.5" fill="#9A948A" x="328" y="660">reads all, writes none</text>
+
+<rect x="488" y="624" width="158" height="46" rx="3" fill="#242428" stroke="#F0E9DC" stroke-opacity=".55" stroke-width="2.5"/>
+<text font-size="12" fill="#F0E9DC" x="500" y="644">researcher</text>
+<text font-size="9.5" fill="#9A948A" x="500" y="660">citations, or nothing</text>
+
+<rect x="144" y="688" width="158" height="46" rx="3" fill="#242428" stroke="#F0E9DC" stroke-opacity=".55" stroke-width="2.5"/>
+<text font-size="12" fill="#F0E9DC" x="156" y="708">crystallizer</text>
+<text font-size="9.5" fill="#9A948A" x="156" y="724">an archive to one page</text>
+
+<rect x="316" y="688" width="158" height="46" rx="3" fill="#242428" stroke="#F0E9DC" stroke-opacity=".55" stroke-width="2.5"/>
+<text font-size="12" fill="#F0E9DC" x="328" y="708">fleet-medic</text>
+<text font-size="9.5" fill="#9A948A" x="328" y="724">alive, dead, pretending</text>
+
+<rect x="488" y="688" width="158" height="46" rx="3" fill="#242428" stroke="#F0E9DC" stroke-opacity=".55" stroke-width="2.5"/>
+<text font-size="12" fill="#F0E9DC" x="500" y="708">handoff-recorder</text>
+<text font-size="9.5" fill="#9A948A" x="500" y="724">how the run ended</text>
+
+<path d="M246 439V588" fill="none" stroke="#F0E9DC" stroke-opacity=".3" stroke-width="2" stroke-dasharray="6 6"/>
+<text font-size="10.5" fill="#9A948A" x="258" y="500">asked, not surfaced</text>
+
+<rect class="pulse" x="1112" y="152" width="241" height="96" rx="8" fill="none" stroke="#FFD24A" stroke-opacity=".12" stroke-width="10"><animate attributeName="stroke-opacity" values=".12;.3;.12" dur="4s" repeatCount="indefinite"/></rect>
+<rect x="1120" y="160" width="225" height="80" rx="4" fill="#242428" stroke="#FFD24A" stroke-opacity="1" stroke-width="3.5"/>
+<path d="M1142 226V190Q1142 180 1152 180H1174Q1184 180 1184 190V226" fill="#0B0B0C" stroke="#FFD24A" stroke-opacity=".95" stroke-width="3" stroke-linejoin="round"/>
+<path d="M1142 210H1184" fill="none" stroke="#FFD24A" stroke-opacity=".95" stroke-width="3"/>
+<path d="M1146 226V234M1180 226V234" fill="none" stroke="#FFD24A" stroke-opacity=".95" stroke-width="3"/>
+<text font-size="26" letter-spacing="1" fill="#F0E9DC" x="1204" y="198">you</text>
+<text font-size="11" fill="#FFD24A" fill-opacity=".9" x="1204" y="218">the chair</text>
+<text font-size="10" fill="#9A948A" x="1204" y="233">outside the dimension</text>
+
+<path d="M1060 640H1105V290H1232V240" fill="none" stroke="#FFD24A" stroke-opacity=".8" stroke-width="3" marker-end="url(#dary)"/>
+<path class="pulse" d="M1060 640H1105V290H1232V240" fill="none" stroke="#FFD24A" stroke-width="7" stroke-linecap="round" stroke-opacity=".9" stroke-dasharray="9 613"><animate attributeName="stroke-dashoffset" from="0" to="-622" dur="7s" repeatCount="indefinite"/></path>
+<path d="M1224 250H1240M1232 242V258" fill="none" stroke="#FFD24A" stroke-opacity=".9" stroke-width="2.5"/>
+<text font-size="11.5" fill="#FFD24A" x="1112" y="282">S1 &#183; both positions, verbatim</text>
+<text font-size="10" fill="#FFD24A" fill-opacity=".6" x="1112" y="308">the only edge that leaves the plane</text>
+
+<path d="M400 226H1090V200H1120" fill="none" stroke="#FFD24A" stroke-opacity=".65" stroke-width="2" stroke-dasharray="7 6" marker-end="url(#dary)"/>
+<text font-size="11.5" fill="#FFD24A" fill-opacity=".85" x="560" y="218">intent questions skip the ladder</text>
+
+<rect x="130" y="214" width="270" height="72" rx="4" fill="#242428" stroke="#F0E9DC" stroke-opacity=".95" stroke-width="3.5"/>
+<rect x="133" y="217" width="6" height="66" fill="#FF8A00"/>
+<text font-size="22" letter-spacing="0.5" fill="#F0E9DC" x="152" y="246">maestro</text>
+<text font-size="12" fill="#FF8A00" x="152" y="266">his name is Oscar</text>
+<text font-size="10" fill="#9A948A" x="152" y="282">the boundary &#8212; conducts, touches nothing</text>
+
+<text font-size="11.5" letter-spacing="2" fill="#F0E9DC" fill-opacity=".32" transform="translate(64 776) rotate(-90)">NOTHING REACHES YOU THAT THE LAYER CAN SETTLE ITSELF</text>
+<text font-size="13" letter-spacing="1" fill="#FF8A00" fill-opacity=".9" x="96" y="822">No maker audits its own make.</text>
+<text font-size="11.5" letter-spacing="2" fill="#F0E9DC" fill-opacity=".35" x="1344" y="822" text-anchor="end">MAESTRO &#183; THE DIMENSION</text>
+</g>
+</svg>

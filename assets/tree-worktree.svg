@@ -1,140 +1,140 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 900" width="1200" height="900" role="img" aria-labelledby="ttl desc" preserveAspectRatio="xMidYMid meet">
-<title id="ttl">The Estate — the .maestro/ tree</title>
-<desc id="desc">An architectural diagram of the .maestro directory: state.json (where the house left off), ledger.jsonl (the register, with stamped entries), holds.jsonl (the drawer of your decisions), routing/ (the staff assignments board), views/ (the morning briefing), and the missions/&lt;id&gt;/ wing holding brief.json, progress.jsonl, envelopes/, artifacts/ and mailbox/.</desc>
+<title id="ttl">The Layer On Disk — the .maestro/ tree</title>
+<desc id="desc">A diagram of the .maestro directory: state.json (where the graph left off), ledger.jsonl (the trace, with stamped entries), holds.jsonl (the drawer of your decisions), routing/ (the make assignments), views/ (the morning briefing), and the missions/&lt;id&gt;/ branch holding brief.json, progress.jsonl, envelopes/, artifacts/ and mailbox/.</desc>
 <style>
   @media (prefers-reduced-motion: reduce) { .pulse { opacity: 0; } }
 </style>
 <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">
-<rect width="1200" height="900" fill="#1A1714"/>
+<rect width="1200" height="900" fill="#0B0B0C"/>
 <defs>
   <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
-    <path d="M40 0H0V40" fill="none" stroke="#F2E9D8" stroke-opacity=".05" stroke-width="1"/>
+    <path d="M40 0H0V40" fill="none" stroke="#F0E9DC" stroke-opacity=".05" stroke-width="1"/>
   </pattern>
 </defs>
 <rect width="1200" height="900" fill="url(#grid)"/>
-<rect x="14" y="14" width="1172" height="872" fill="none" stroke="#F2E9D8" stroke-opacity=".22" stroke-width="2"/>
-<rect x="24" y="24" width="1152" height="852" fill="none" stroke="#F2E9D8" stroke-opacity=".10" stroke-width="1"/>
-<path d="M24 50L24 24L50 24" fill="none" stroke="#E8842C" stroke-opacity=".7" stroke-width="3"/>
-<path d="M1176 50L1176 24L1150 24" fill="none" stroke="#E8842C" stroke-opacity=".7" stroke-width="3"/>
-<path d="M24 850L24 876L50 876" fill="none" stroke="#E8842C" stroke-opacity=".7" stroke-width="3"/>
-<path d="M1176 850L1176 876L1150 876" fill="none" stroke="#E8842C" stroke-opacity=".7" stroke-width="3"/>
-<text font-size="38" letter-spacing="8" fill="#F2E9D8" x="56" y="86">THE ESTATE</text>
-<text font-size="15" letter-spacing="1" fill="#E8842C" x="58" y="114">.maestro/ — the household keeps its own quarters</text>
-<line x1="56" y1="136" x2="1144" y2="136" stroke="#F2E9D8" stroke-opacity=".18" stroke-width="1"/>
-<rect x="846" y="46" width="298" height="68" fill="#221D19" stroke="#2E7E74" stroke-opacity=".75" stroke-width="2"/>
-<text font-size="11" letter-spacing="3" fill="#2E7E74" x="866" y="72">ONE PER PROJECT · GITIGNORED</text>
-<text font-size="12.5" fill="#F2E9D8" fill-opacity=".72" x="866" y="96">The estate survives the night.</text>
-<rect x="440" y="160" width="320" height="58" rx="4" fill="#221D19" stroke="#F2E9D8" stroke-opacity="0.9" stroke-width="3"/>
-<rect x="443" y="163" width="6" height="52" fill="#E8842C"/>
-<text font-size="20" letter-spacing="0.5" fill="#F2E9D8" x="600" y="188" text-anchor="middle">.maestro/</text>
-<text font-size="11.5" letter-spacing="0.3" fill="#F2E9D8" fill-opacity=".55" x="600" y="206" text-anchor="middle">the household&#8217;s own quarters</text>
-<path d="M600 218V252" fill="none" stroke="#F2E9D8" stroke-opacity=".55" stroke-width="3"/>
-<path d="M180 252H1020" fill="none" stroke="#F2E9D8" stroke-opacity=".55" stroke-width="3"/>
-<path d="M180 252V781" fill="none" stroke="#F2E9D8" stroke-opacity=".55" stroke-width="3"/>
-<path d="M1020 252V300" fill="none" stroke="#F2E9D8" stroke-opacity=".55" stroke-width="3"/>
-<path class="pulse" d="M600 218V252H180V781" fill="none" stroke="#E8842C" stroke-width="16" stroke-linecap="round" stroke-opacity=".16" stroke-dasharray="16 983"><animate attributeName="stroke-dashoffset" from="0" to="-999" dur="3s" repeatCount="indefinite"/></path>
-<path class="pulse" d="M600 218V252H180V781" fill="none" stroke="#E8842C" stroke-width="7" stroke-linecap="round" stroke-opacity=".85" stroke-dasharray="16 983"><animate attributeName="stroke-dashoffset" from="0" to="-999" dur="3s" repeatCount="indefinite"/></path>
-<text font-size="11" letter-spacing="3" fill="#2E7E74" x="212" y="286">THE HOUSE RECORDS</text>
-<text font-size="11" letter-spacing="3" fill="#2E7E74" x="762" y="286">THE WING</text>
-<path d="M180 332H210" fill="none" stroke="#F2E9D8" stroke-opacity=".5" stroke-width="2.5"/>
-<circle cx="180" cy="332" r="4.5" fill="#E8842C"/>
-<rect x="210" y="300" width="480" height="70" rx="4" fill="#221D19" stroke="#F2E9D8" stroke-opacity="0.9" stroke-width="3"/>
-<rect x="213" y="303" width="6" height="64" fill="#E8842C"/>
-<text font-size="20" letter-spacing="0.5" fill="#F2E9D8" x="236" y="330">state.json</text>
-<text font-size="13" letter-spacing="0.5" fill="#E8842C" x="236" y="350">where the house left off</text>
-<text font-size="11.5" letter-spacing="0.3" fill="#F2E9D8" fill-opacity=".55" x="236" y="366">active mission, what is next, how the night ended</text>
-<path d="M624 301l0 -17 8 9 9 -14 9 14 8 -9 0 17z" fill="#C9A227" stroke="#1A1714" stroke-width="1.5" stroke-linejoin="round"/>
-<text font-size="11.5" letter-spacing="0.3" fill="#F2E9D8" fill-opacity=".55" x="612" y="295" text-anchor="end">the resume pointer</text>
-<path d="M180 422H210" fill="none" stroke="#F2E9D8" stroke-opacity=".5" stroke-width="2.5"/>
-<circle cx="180" cy="422" r="4.5" fill="#E8842C"/>
-<rect x="210" y="390" width="480" height="156" rx="4" fill="#221D19" stroke="#F2E9D8" stroke-opacity="0.9" stroke-width="3"/>
-<rect x="213" y="393" width="6" height="150" fill="#E8842C"/>
-<text font-size="20" letter-spacing="0.5" fill="#F2E9D8" x="236" y="420">ledger.jsonl</text>
-<text font-size="13" letter-spacing="0.5" fill="#E8842C" x="236" y="440">the register</text>
-<text font-size="11.5" letter-spacing="0.3" fill="#F2E9D8" fill-opacity=".55" x="236" y="456">append-only. A story without a stamp is gossip.</text>
-<circle cx="246" cy="478" r="9.5" fill="none" stroke="#8C2B1E" stroke-opacity=".85" stroke-width="2.5"/>
-<path d="M241 478l3.5 4 6 -8" fill="none" stroke="#8C2B1E" stroke-opacity=".85" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-<text font-size="12.5" fill="#C9A227" fill-opacity=".75" x="264" y="482">09:12</text>
-<text font-size="12.5" fill="#F2E9D8" fill-opacity=".82" x="314" y="482">test run stamped — exit 0</text>
-<line x1="236" y1="492" x2="664" y2="492" stroke="#F2E9D8" stroke-opacity=".12" stroke-width="1"/>
-<circle cx="246" cy="506" r="9.5" fill="none" stroke="#8C2B1E" stroke-opacity=".85" stroke-width="2.5"/>
-<path d="M241 506l3.5 4 6 -8" fill="none" stroke="#8C2B1E" stroke-opacity=".85" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-<text font-size="12.5" fill="#C9A227" fill-opacity=".75" x="264" y="510">09:14</text>
-<text font-size="12.5" fill="#F2E9D8" fill-opacity=".82" x="314" y="510">inspector from another kitchen: approved</text>
-<line x1="236" y1="520" x2="664" y2="520" stroke="#F2E9D8" stroke-opacity=".12" stroke-width="1"/>
-<circle cx="246" cy="534" r="9.5" fill="none" stroke="#8C2B1E" stroke-opacity=".85" stroke-width="2.5"/>
-<path d="M241 534l3.5 4 6 -8" fill="none" stroke="#8C2B1E" stroke-opacity=".85" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-<text font-size="12.5" fill="#C9A227" fill-opacity=".75" x="264" y="538">09:15</text>
-<text font-size="12.5" fill="#F2E9D8" fill-opacity=".82" x="314" y="538">east wing brought back into the house</text>
-<line x1="236" y1="548" x2="664" y2="548" stroke="#F2E9D8" stroke-opacity=".12" stroke-width="1"/>
-<path d="M180 598H210" fill="none" stroke="#F2E9D8" stroke-opacity=".5" stroke-width="2.5"/>
-<circle cx="180" cy="598" r="4.5" fill="#E8842C"/>
-<rect x="210" y="566" width="480" height="70" rx="4" fill="#221D19" stroke="#F2E9D8" stroke-opacity="0.9" stroke-width="3"/>
-<rect x="213" y="569" width="6" height="64" fill="#E8842C"/>
-<text font-size="20" letter-spacing="0.5" fill="#F2E9D8" x="236" y="596">holds.jsonl</text>
-<text font-size="13" letter-spacing="0.5" fill="#E8842C" x="236" y="616">the drawer of your decisions</text>
-<text font-size="11.5" letter-spacing="0.3" fill="#F2E9D8" fill-opacity=".55" x="236" y="632">parked questions. Nothing lost, nothing nagging.</text>
-<path d="M180 688H210" fill="none" stroke="#F2E9D8" stroke-opacity=".5" stroke-width="2.5"/>
-<circle cx="180" cy="688" r="4.5" fill="#E8842C"/>
-<rect x="210" y="656" width="480" height="70" rx="4" fill="#221D19" stroke="#F2E9D8" stroke-opacity="0.9" stroke-width="3"/>
-<rect x="213" y="659" width="6" height="64" fill="#2E7E74"/>
-<text font-size="20" letter-spacing="0.5" fill="#F2E9D8" x="236" y="686">routing/</text>
-<text font-size="13" letter-spacing="0.5" fill="#E8842C" x="236" y="706">the staff assignments board</text>
-<text font-size="11.5" letter-spacing="0.3" fill="#F2E9D8" fill-opacity=".55" x="236" y="722">who cooks, who inspects. Reseat by repointing.</text>
-<path d="M180 778H210" fill="none" stroke="#F2E9D8" stroke-opacity=".5" stroke-width="2.5"/>
-<circle cx="180" cy="778" r="4.5" fill="#E8842C"/>
-<rect x="210" y="746" width="480" height="70" rx="4" fill="#221D19" stroke="#F2E9D8" stroke-opacity="0.9" stroke-width="3"/>
-<rect x="213" y="749" width="6" height="64" fill="#2E7E74"/>
-<text font-size="20" letter-spacing="0.5" fill="#F2E9D8" x="236" y="776">views/</text>
-<text font-size="13" letter-spacing="0.5" fill="#E8842C" x="236" y="796">the morning briefing</text>
-<text font-size="11.5" letter-spacing="0.3" fill="#F2E9D8" fill-opacity=".55" x="236" y="812">read once, aloud. The only pages Maestro opens.</text>
-<rect x="760" y="300" width="390" height="452" rx="4" fill="#26201B" stroke="#F2E9D8" stroke-opacity=".9" stroke-width="3"/>
+<rect x="14" y="14" width="1172" height="872" fill="none" stroke="#F0E9DC" stroke-opacity=".22" stroke-width="2"/>
+<rect x="24" y="24" width="1152" height="852" fill="none" stroke="#F0E9DC" stroke-opacity=".10" stroke-width="1"/>
+<path d="M24 50L24 24L50 24" fill="none" stroke="#FF8A00" stroke-opacity=".7" stroke-width="3"/>
+<path d="M1176 50L1176 24L1150 24" fill="none" stroke="#FF8A00" stroke-opacity=".7" stroke-width="3"/>
+<path d="M24 850L24 876L50 876" fill="none" stroke="#FF8A00" stroke-opacity=".7" stroke-width="3"/>
+<path d="M1176 850L1176 876L1150 876" fill="none" stroke="#FF8A00" stroke-opacity=".7" stroke-width="3"/>
+<text font-size="38" letter-spacing="8" fill="#F0E9DC" x="56" y="86">THE LAYER, ON DISK</text>
+<text font-size="15" letter-spacing="1" fill="#FF8A00" x="58" y="114">.maestro/ — the layer, written down</text>
+<line x1="56" y1="136" x2="1144" y2="136" stroke="#F0E9DC" stroke-opacity=".18" stroke-width="1"/>
+<rect x="846" y="46" width="298" height="68" fill="#1B1B1E" stroke="#FFD24A" stroke-opacity=".75" stroke-width="2"/>
+<text font-size="11" letter-spacing="3" fill="#FFD24A" x="866" y="72">ONE PER PROJECT · GITIGNORED</text>
+<text font-size="12.5" fill="#F0E9DC" fill-opacity=".72" x="866" y="96">The layer survives the night.</text>
+<rect x="440" y="160" width="320" height="58" rx="4" fill="#1B1B1E" stroke="#F0E9DC" stroke-opacity="0.9" stroke-width="3"/>
+<rect x="443" y="163" width="6" height="52" fill="#FF8A00"/>
+<text font-size="20" letter-spacing="0.5" fill="#F0E9DC" x="600" y="188" text-anchor="middle">.maestro/</text>
+<text font-size="11.5" letter-spacing="0.3" fill="#F0E9DC" fill-opacity=".55" x="600" y="206" text-anchor="middle">the layer, written down</text>
+<path d="M600 218V252" fill="none" stroke="#F0E9DC" stroke-opacity=".55" stroke-width="3"/>
+<path d="M180 252H1020" fill="none" stroke="#F0E9DC" stroke-opacity=".55" stroke-width="3"/>
+<path d="M180 252V781" fill="none" stroke="#F0E9DC" stroke-opacity=".55" stroke-width="3"/>
+<path d="M1020 252V300" fill="none" stroke="#F0E9DC" stroke-opacity=".55" stroke-width="3"/>
+<path class="pulse" d="M600 218V252H180V781" fill="none" stroke="#FF8A00" stroke-width="16" stroke-linecap="round" stroke-opacity=".16" stroke-dasharray="16 983"><animate attributeName="stroke-dashoffset" from="0" to="-999" dur="3s" repeatCount="indefinite"/></path>
+<path class="pulse" d="M600 218V252H180V781" fill="none" stroke="#FF8A00" stroke-width="7" stroke-linecap="round" stroke-opacity=".85" stroke-dasharray="16 983"><animate attributeName="stroke-dashoffset" from="0" to="-999" dur="3s" repeatCount="indefinite"/></path>
+<text font-size="11" letter-spacing="3" fill="#FFD24A" x="212" y="286">THE LAYER RECORDS</text>
+<text font-size="11" letter-spacing="3" fill="#FFD24A" x="762" y="286">THE BRANCH</text>
+<path d="M180 332H210" fill="none" stroke="#F0E9DC" stroke-opacity=".5" stroke-width="2.5"/>
+<circle cx="180" cy="332" r="4.5" fill="#FF8A00"/>
+<rect x="210" y="300" width="480" height="70" rx="4" fill="#1B1B1E" stroke="#F0E9DC" stroke-opacity="0.9" stroke-width="3"/>
+<rect x="213" y="303" width="6" height="64" fill="#FF8A00"/>
+<text font-size="20" letter-spacing="0.5" fill="#F0E9DC" x="236" y="330">state.json</text>
+<text font-size="13" letter-spacing="0.5" fill="#FF8A00" x="236" y="350">where the graph left off</text>
+<text font-size="11.5" letter-spacing="0.3" fill="#F0E9DC" fill-opacity=".55" x="236" y="366">active mission, what is next, how the night ended</text>
+<path d="M624 301l0 -17 8 9 9 -14 9 14 8 -9 0 17z" fill="#FFD24A" stroke="#0B0B0C" stroke-width="1.5" stroke-linejoin="round"/>
+<text font-size="11.5" letter-spacing="0.3" fill="#F0E9DC" fill-opacity=".55" x="612" y="295" text-anchor="end">the resume pointer</text>
+<path d="M180 422H210" fill="none" stroke="#F0E9DC" stroke-opacity=".5" stroke-width="2.5"/>
+<circle cx="180" cy="422" r="4.5" fill="#FF8A00"/>
+<rect x="210" y="390" width="480" height="156" rx="4" fill="#1B1B1E" stroke="#F0E9DC" stroke-opacity="0.9" stroke-width="3"/>
+<rect x="213" y="393" width="6" height="150" fill="#FF8A00"/>
+<text font-size="20" letter-spacing="0.5" fill="#F0E9DC" x="236" y="420">ledger.jsonl</text>
+<text font-size="13" letter-spacing="0.5" fill="#FF8A00" x="236" y="440">the trace</text>
+<text font-size="11.5" letter-spacing="0.3" fill="#F0E9DC" fill-opacity=".55" x="236" y="456">append-only. A claim without a stamp is rumor.</text>
+<circle cx="246" cy="478" r="9.5" fill="none" stroke="#FF8A00" stroke-opacity=".85" stroke-width="2.5"/>
+<path d="M241 478l3.5 4 6 -8" fill="none" stroke="#FF8A00" stroke-opacity=".85" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text font-size="12.5" fill="#FFD24A" fill-opacity=".75" x="264" y="482">09:12</text>
+<text font-size="12.5" fill="#F0E9DC" fill-opacity=".82" x="314" y="482">test run stamped — exit 0</text>
+<line x1="236" y1="492" x2="664" y2="492" stroke="#F0E9DC" stroke-opacity=".12" stroke-width="1"/>
+<circle cx="246" cy="506" r="9.5" fill="none" stroke="#FF8A00" stroke-opacity=".85" stroke-width="2.5"/>
+<path d="M241 506l3.5 4 6 -8" fill="none" stroke="#FF8A00" stroke-opacity=".85" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text font-size="12.5" fill="#FFD24A" fill-opacity=".75" x="264" y="510">09:14</text>
+<text font-size="12.5" fill="#F0E9DC" fill-opacity=".82" x="314" y="510">audit by a rival make — approved</text>
+<line x1="236" y1="520" x2="664" y2="520" stroke="#F0E9DC" stroke-opacity=".12" stroke-width="1"/>
+<circle cx="246" cy="534" r="9.5" fill="none" stroke="#FF8A00" stroke-opacity=".85" stroke-width="2.5"/>
+<path d="M241 534l3.5 4 6 -8" fill="none" stroke="#FF8A00" stroke-opacity=".85" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text font-size="12.5" fill="#FFD24A" fill-opacity=".75" x="264" y="538">09:15</text>
+<text font-size="12.5" fill="#F0E9DC" fill-opacity=".82" x="314" y="538">branch merged back to the trunk</text>
+<line x1="236" y1="548" x2="664" y2="548" stroke="#F0E9DC" stroke-opacity=".12" stroke-width="1"/>
+<path d="M180 598H210" fill="none" stroke="#F0E9DC" stroke-opacity=".5" stroke-width="2.5"/>
+<circle cx="180" cy="598" r="4.5" fill="#FF8A00"/>
+<rect x="210" y="566" width="480" height="70" rx="4" fill="#1B1B1E" stroke="#F0E9DC" stroke-opacity="0.9" stroke-width="3"/>
+<rect x="213" y="569" width="6" height="64" fill="#FF8A00"/>
+<text font-size="20" letter-spacing="0.5" fill="#F0E9DC" x="236" y="596">holds.jsonl</text>
+<text font-size="13" letter-spacing="0.5" fill="#FF8A00" x="236" y="616">the drawer of your decisions</text>
+<text font-size="11.5" letter-spacing="0.3" fill="#F0E9DC" fill-opacity=".55" x="236" y="632">parked questions. Nothing lost, nothing nagging.</text>
+<path d="M180 688H210" fill="none" stroke="#F0E9DC" stroke-opacity=".5" stroke-width="2.5"/>
+<circle cx="180" cy="688" r="4.5" fill="#FF8A00"/>
+<rect x="210" y="656" width="480" height="70" rx="4" fill="#1B1B1E" stroke="#F0E9DC" stroke-opacity="0.9" stroke-width="3"/>
+<rect x="213" y="659" width="6" height="64" fill="#FFD24A"/>
+<text font-size="20" letter-spacing="0.5" fill="#F0E9DC" x="236" y="686">routing/</text>
+<text font-size="13" letter-spacing="0.5" fill="#FF8A00" x="236" y="706">the make assignments</text>
+<text font-size="11.5" letter-spacing="0.3" fill="#F0E9DC" fill-opacity=".55" x="236" y="722">who builds, who audits. Reseat by repointing.</text>
+<path d="M180 778H210" fill="none" stroke="#F0E9DC" stroke-opacity=".5" stroke-width="2.5"/>
+<circle cx="180" cy="778" r="4.5" fill="#FF8A00"/>
+<rect x="210" y="746" width="480" height="70" rx="4" fill="#1B1B1E" stroke="#F0E9DC" stroke-opacity="0.9" stroke-width="3"/>
+<rect x="213" y="749" width="6" height="64" fill="#FFD24A"/>
+<text font-size="20" letter-spacing="0.5" fill="#F0E9DC" x="236" y="776">views/</text>
+<text font-size="13" letter-spacing="0.5" fill="#FF8A00" x="236" y="796">the morning briefing</text>
+<text font-size="11.5" letter-spacing="0.3" fill="#F0E9DC" fill-opacity=".55" x="236" y="812">read once, aloud. The only pages Oscar opens.</text>
+<rect x="760" y="300" width="390" height="452" rx="4" fill="#242428" stroke="#F0E9DC" stroke-opacity=".9" stroke-width="3"/>
 <defs><pattern id="hatch" width="12" height="12" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-  <line x1="0" y1="0" x2="0" y2="12" stroke="#E8842C" stroke-opacity=".38" stroke-width="4"/>
+  <line x1="0" y1="0" x2="0" y2="12" stroke="#FF8A00" stroke-opacity=".38" stroke-width="4"/>
 </pattern></defs>
 <rect x="763" y="303" width="384" height="12" fill="url(#hatch)"/>
-<text font-size="20" letter-spacing="0.5" fill="#F2E9D8" x="786" y="348">missions/&lt;id&gt;/</text>
-<text font-size="13" letter-spacing="0.5" fill="#E8842C" x="786" y="368">the wing under renovation</text>
-<text font-size="11.5" letter-spacing="0.3" fill="#F2E9D8" fill-opacity=".55" x="786" y="384">one job, one wing. Nothing rejoins unsigned.</text>
-<line x1="786" y1="396" x2="1124" y2="396" stroke="#F2E9D8" stroke-opacity=".16" stroke-width="1"/>
-<path d="M770 396V704" fill="none" stroke="#F2E9D8" stroke-opacity=".4" stroke-width="2.5"/>
-<path d="M770 432H790" fill="none" stroke="#F2E9D8" stroke-opacity=".4" stroke-width="2"/>
-<circle cx="770" cy="432" r="3.5" fill="#E8842C" fill-opacity=".9"/>
-<rect x="790" y="404" width="340" height="56" rx="4" fill="#221D19" stroke="#F2E9D8" stroke-opacity="0.6" stroke-width="3"/>
-<rect x="793" y="407" width="6" height="50" fill="#E8842C"/>
-<text font-size="16" fill="#F2E9D8" x="812" y="430">brief.json</text>
-<text font-size="12" fill="#E8842C" fill-opacity=".9" x="812" y="448">the errand card</text>
-<path d="M770 500H790" fill="none" stroke="#F2E9D8" stroke-opacity=".4" stroke-width="2"/>
-<circle cx="770" cy="500" r="3.5" fill="#E8842C" fill-opacity=".9"/>
-<rect x="790" y="472" width="340" height="56" rx="4" fill="#221D19" stroke="#F2E9D8" stroke-opacity="0.6" stroke-width="3"/>
-<rect x="793" y="475" width="6" height="50" fill="#E8842C"/>
-<text font-size="16" fill="#F2E9D8" x="812" y="498">progress.jsonl</text>
-<text font-size="12" fill="#E8842C" fill-opacity=".9" x="812" y="516">bricks laid, one line each</text>
-<path d="M770 568H790" fill="none" stroke="#F2E9D8" stroke-opacity=".4" stroke-width="2"/>
-<circle cx="770" cy="568" r="3.5" fill="#E8842C" fill-opacity=".9"/>
-<rect x="790" y="540" width="340" height="56" rx="4" fill="#221D19" stroke="#F2E9D8" stroke-opacity="0.6" stroke-width="3"/>
-<rect x="793" y="543" width="6" height="50" fill="#2E7E74"/>
-<text font-size="16" fill="#F2E9D8" x="812" y="566">envelopes/</text>
-<text font-size="12" fill="#E8842C" fill-opacity=".9" x="812" y="584">the receipts</text>
-<path d="M770 636H790" fill="none" stroke="#F2E9D8" stroke-opacity=".4" stroke-width="2"/>
-<circle cx="770" cy="636" r="3.5" fill="#E8842C" fill-opacity=".9"/>
-<rect x="790" y="608" width="340" height="56" rx="4" fill="#221D19" stroke="#F2E9D8" stroke-opacity="0.6" stroke-width="3"/>
-<rect x="793" y="611" width="6" height="50" fill="#2E7E74"/>
-<text font-size="16" fill="#F2E9D8" x="812" y="634">artifacts/</text>
-<text font-size="12" fill="#E8842C" fill-opacity=".9" x="812" y="652">the work itself</text>
-<path d="M770 704H790" fill="none" stroke="#F2E9D8" stroke-opacity=".4" stroke-width="2"/>
-<circle cx="770" cy="704" r="3.5" fill="#E8842C" fill-opacity=".9"/>
-<rect x="790" y="676" width="340" height="56" rx="4" fill="#221D19" stroke="#F2E9D8" stroke-opacity="0.6" stroke-width="3"/>
-<rect x="793" y="679" width="6" height="50" fill="#2E7E74"/>
-<text font-size="16" fill="#F2E9D8" x="812" y="702">mailbox/</text>
-<text font-size="12" fill="#E8842C" fill-opacity=".9" x="812" y="720">questions for the housekeeper</text>
-<rect x="760" y="768" width="390" height="80" rx="4" fill="none" stroke="#F2E9D8" stroke-opacity=".28" stroke-width="2" stroke-dasharray="8 6"/>
-<text font-size="11" letter-spacing="3" fill="#2E7E74" x="780" y="790">ALSO KEPT, QUIETLY</text>
-<text font-size="11.5" letter-spacing="0.3" fill="#F2E9D8" fill-opacity=".55" x="780" y="810">settings.json  —  the house rules</text>
-<text font-size="11.5" letter-spacing="0.3" fill="#F2E9D8" fill-opacity=".55" x="780" y="826">roster.json    —  who is on duty tonight</text>
-<text font-size="11.5" letter-spacing="0.3" fill="#F2E9D8" fill-opacity=".55" x="780" y="842">handoff.md     —  the night clerk&#8217;s note</text>
-<text font-size="13" letter-spacing="1" fill="#C9A227" fill-opacity=".85" x="68" y="864">Not in the register? It didn&#8217;t happen.</text>
-<text font-size="11.5" letter-spacing="2" fill="#F2E9D8" fill-opacity=".35" x="1138" y="864" text-anchor="end">MAESTRO · THE ESTATE</text>
-<text font-size="11.5" letter-spacing="2" fill="#F2E9D8" fill-opacity=".35" transform="translate(60 690) rotate(-90)">ONE HOUSE · ONE REGISTER · ONE PLACE TO RESUME</text>
+<text font-size="20" letter-spacing="0.5" fill="#F0E9DC" x="786" y="348">missions/&lt;id&gt;/</text>
+<text font-size="13" letter-spacing="0.5" fill="#FF8A00" x="786" y="368">the branch under construction</text>
+<text font-size="11.5" letter-spacing="0.3" fill="#F0E9DC" fill-opacity=".55" x="786" y="384">one job, one branch. Nothing rejoins unsigned.</text>
+<line x1="786" y1="396" x2="1124" y2="396" stroke="#F0E9DC" stroke-opacity=".16" stroke-width="1"/>
+<path d="M770 396V704" fill="none" stroke="#F0E9DC" stroke-opacity=".4" stroke-width="2.5"/>
+<path d="M770 432H790" fill="none" stroke="#F0E9DC" stroke-opacity=".4" stroke-width="2"/>
+<circle cx="770" cy="432" r="3.5" fill="#FF8A00" fill-opacity=".9"/>
+<rect x="790" y="404" width="340" height="56" rx="4" fill="#1B1B1E" stroke="#F0E9DC" stroke-opacity="0.6" stroke-width="3"/>
+<rect x="793" y="407" width="6" height="50" fill="#FF8A00"/>
+<text font-size="16" fill="#F0E9DC" x="812" y="430">brief.json</text>
+<text font-size="12" fill="#FF8A00" fill-opacity=".9" x="812" y="448">the dispatch brief</text>
+<path d="M770 500H790" fill="none" stroke="#F0E9DC" stroke-opacity=".4" stroke-width="2"/>
+<circle cx="770" cy="500" r="3.5" fill="#FF8A00" fill-opacity=".9"/>
+<rect x="790" y="472" width="340" height="56" rx="4" fill="#1B1B1E" stroke="#F0E9DC" stroke-opacity="0.6" stroke-width="3"/>
+<rect x="793" y="475" width="6" height="50" fill="#FF8A00"/>
+<text font-size="16" fill="#F0E9DC" x="812" y="498">progress.jsonl</text>
+<text font-size="12" fill="#FF8A00" fill-opacity=".9" x="812" y="516">one step logged, one line</text>
+<path d="M770 568H790" fill="none" stroke="#F0E9DC" stroke-opacity=".4" stroke-width="2"/>
+<circle cx="770" cy="568" r="3.5" fill="#FF8A00" fill-opacity=".9"/>
+<rect x="790" y="540" width="340" height="56" rx="4" fill="#1B1B1E" stroke="#F0E9DC" stroke-opacity="0.6" stroke-width="3"/>
+<rect x="793" y="543" width="6" height="50" fill="#FFD24A"/>
+<text font-size="16" fill="#F0E9DC" x="812" y="566">envelopes/</text>
+<text font-size="12" fill="#FF8A00" fill-opacity=".9" x="812" y="584">the receipts</text>
+<path d="M770 636H790" fill="none" stroke="#F0E9DC" stroke-opacity=".4" stroke-width="2"/>
+<circle cx="770" cy="636" r="3.5" fill="#FF8A00" fill-opacity=".9"/>
+<rect x="790" y="608" width="340" height="56" rx="4" fill="#1B1B1E" stroke="#F0E9DC" stroke-opacity="0.6" stroke-width="3"/>
+<rect x="793" y="611" width="6" height="50" fill="#FFD24A"/>
+<text font-size="16" fill="#F0E9DC" x="812" y="634">artifacts/</text>
+<text font-size="12" fill="#FF8A00" fill-opacity=".9" x="812" y="652">the work itself</text>
+<path d="M770 704H790" fill="none" stroke="#F0E9DC" stroke-opacity=".4" stroke-width="2"/>
+<circle cx="770" cy="704" r="3.5" fill="#FF8A00" fill-opacity=".9"/>
+<rect x="790" y="676" width="340" height="56" rx="4" fill="#1B1B1E" stroke="#F0E9DC" stroke-opacity="0.6" stroke-width="3"/>
+<rect x="793" y="679" width="6" height="50" fill="#FFD24A"/>
+<text font-size="16" fill="#F0E9DC" x="812" y="702">mailbox/</text>
+<text font-size="12" fill="#FF8A00" fill-opacity=".9" x="812" y="720">questions for the context daemon</text>
+<rect x="760" y="768" width="390" height="80" rx="4" fill="none" stroke="#F0E9DC" stroke-opacity=".28" stroke-width="2" stroke-dasharray="8 6"/>
+<text font-size="11" letter-spacing="3" fill="#FFD24A" x="780" y="790">ALSO KEPT, QUIETLY</text>
+<text font-size="11.5" letter-spacing="0.3" fill="#F0E9DC" fill-opacity=".55" x="780" y="810">settings.json  —  the layer&#8217;s rules</text>
+<text font-size="11.5" letter-spacing="0.3" fill="#F0E9DC" fill-opacity=".55" x="780" y="826">roster.json    —  who is on duty tonight</text>
+<text font-size="11.5" letter-spacing="0.3" fill="#F0E9DC" fill-opacity=".55" x="780" y="842">handoff.md     —  the trace clerk&#8217;s note</text>
+<text font-size="13" letter-spacing="1" fill="#FFD24A" fill-opacity=".85" x="68" y="864">Not in the trace? It didn&#8217;t happen.</text>
+<text font-size="11.5" letter-spacing="2" fill="#F0E9DC" fill-opacity=".35" x="1138" y="864" text-anchor="end">MAESTRO · THE LAYER ON DISK</text>
+<text font-size="11.5" letter-spacing="2" fill="#F0E9DC" fill-opacity=".35" transform="translate(60 690) rotate(-90)">ONE LAYER · ONE TRACE · ONE PLACE TO RESUME</text>
 </g>
 </svg>

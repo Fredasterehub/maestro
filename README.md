@@ -1,91 +1,102 @@
 <div align="center">
 
-<img src="docs/assets/art/logo.png" alt="Maestro — a wax seal bearing a white-gloved hand and a conductor's baton" width="128">
+<img src="docs/assets/art/logo.png" alt="Maestro — a seal bearing a white-gloved hand and a conductor's baton" width="128">
 
 # MAESTRO
 
 ### Every genius needs staff.
 
-A Claude Code plugin that stops your session from doing the work itself. It hires,
-briefs and inspects a staff of fifteen specialists — sixteen seats, counting his
-own — writes down everything they do, and interrupts you only when the decision is
-genuinely yours.
+**His name is Oscar.**
+
+A Claude Code plugin that stops your session from doing the work itself. It opens a
+layer beneath your chair, puts sixteen seats in it — fifteen constructs and the
+maestro — dispatches the work, has it signed off by a rival make, writes down
+everything that happened, and interrupts you only when the decision is genuinely
+yours.
 
 <p>
-<img src="https://img.shields.io/badge/license-MIT-2E7E74?style=flat-square&labelColor=1A1714" alt="MIT licensed">
-<img src="https://img.shields.io/badge/Claude%20Code-plugin-8C2B1E?style=flat-square&labelColor=1A1714" alt="Claude Code plugin">
-<img src="https://img.shields.io/badge/on%20staff-16%20seats-2E7E74?style=flat-square&labelColor=1A1714" alt="16 seats on staff">
-<img src="https://img.shields.io/badge/the%20register-open-8C2B1E?style=flat-square&labelColor=1A1714" alt="The register is open">
+<img src="https://img.shields.io/badge/license-MIT-242428?style=flat-square&labelColor=1B1B1E" alt="MIT licensed">
+<img src="https://img.shields.io/badge/Claude%20Code-plugin-242428?style=flat-square&labelColor=1B1B1E" alt="Claude Code plugin">
+<img src="https://img.shields.io/badge/on%20shift-16%20seats-FF8A00?style=flat-square&labelColor=1B1B1E" alt="16 seats on shift">
+<img src="https://img.shields.io/badge/the%20trace-open-FFD24A?style=flat-square&labelColor=1B1B1E" alt="The trace is open">
 </p>
 
 </div>
 
-<img src="docs/assets/art/hero.jpg" alt="A tall butler in a tailcoat stands perfectly vertical at the centre of an estate in complete uproar, checking his pocket watch." width="100%">
+<img src="docs/assets/art/hero.jpg" alt="Oscar stands perfectly vertical at the boundary of the agent layer while the graph behind him runs in every direction." width="100%">
 
 ## The premise
 
-Your codebase is an estate. A large one. Frankly, larger than you can run.
+Beneath your session there is a layer. Nodes, edges, fan-outs, loops — the workflow
+graph, running as a place rather than a diagram. Constructs work at the nodes. Work
+moves along the edges. Your session is the surface; the dimension is everything under
+it.
 
-You used to answer the door yourself. Fix the boiler yourself. Argue with the
-gardener about the hedge line, personally, at midnight, with a flashlight and 600
-lines of logs in your head.
+His name is Oscar. He has been running the layer for a very long time — nobody left
+can say how long, and he rounds down out of politeness. He is never tired, never
+surprised, and his ledger is perfect. He conducts. He touches nothing in the graph.
+There is a law against it.
 
-Sessions died young. Work got redone. Nobody kept the register.
+Before him you did it all on the surface. Argued with the linter yourself, at
+midnight, with 600 lines of log held in your head. Sessions died young. Work got done
+twice. Nothing was written down, so nothing could be resumed.
 
-Then you hired Maestro.
+Then Oscar took the office.
 
-<img src="docs/assets/terminal-session.svg" alt="A terminal session: one request in, work dispatched to staff, outcomes reported back." width="100%">
+<img src="docs/assets/terminal-session.svg" alt="A terminal session: one request in, work dispatched into the layer, outcomes reported back." width="100%">
 
 ## What he actually does
 
-**The staff table.** Sixteen seats, filled the day you install him, never improvised
-mid-shift. (Closed roster: three implementer families, three reviewers, a planner,
-two consiglieri, and the household — scout, researcher, context-keeper,
-crystallizer, night clerk, house doctor.)
+**The roster.** Sixteen seats, filled the day you install him, never improvised
+mid-mission. (Closed roster: three implementer families, three reviewers, a planner,
+two adversary cores, and the support tier — scout, researcher, context-keeper,
+crystallizer, trace clerk, pulse monitor.)
 
-**The register.** "Tests pass" is not a sentence. It is a stamped entry with an exit
-code. Not in the register? It didn't happen. (`.maestro/ledger.jsonl`, append-only,
+**The trace.** "Tests pass" is not a sentence. It is a stamped entry with an exit
+code. Not in the trace? It didn't happen. (`.maestro/ledger.jsonl`, append-only,
 written only by the machine layer — never by a model in a hurry.)
 
-**Wings under renovation.** Nothing is built in the lived-in rooms, and no chef
-tastes only his own soup: a change is signed off by a *different* model family
-before it rejoins the house. (Worktree isolation plus mandatory cross-family
-review. That floor cannot be lowered.)
+**No maker audits its own make.** A construct builds in an isolated branch of the
+graph, and a construct from a *rival* make signs the work before it rejoins the
+trunk. The script that closes a mission refuses to record a same-make audit.
+(Worktree isolation plus mandatory cross-family review. That floor cannot be
+lowered.)
 
-**The estate survives the night.** Dismiss the entire staff mid-job. At dawn a new
-staff reads the register and resumes at the exact brick. (Per-step checkpoints; a
-restart is reconciliation, not re-planning.)
+**The layer survives the night.** Kill every construct mid-mission. At dawn new ones
+read the trace and resume at the exact node where the graph went dark. (Per-step
+checkpoints; a restart is reconciliation, not re-planning.)
 
 **One drawer for your decisions.** Questions that are truly yours pile up neatly in
-one place. Nothing else knocks — no retry narration, no progress theatre.
-(Holds queue plus a short escalation whitelist.)
+one place. Nothing else knocks — no retry narration, no progress theatre. (Holds
+queue plus a short escalation whitelist.)
 
-**The two consiglieri.** When the household disagrees, it argues in a closed room —
-two passes, no more — and comes out with one answer, or brings you both positions
-verbatim. (Convergence pass between the families not involved in the dispute.)
+**The adversary cores.** When the layer disagrees with itself, two constructs from
+the makes not involved argue in a locked room — two passes, no more — and come out
+with one answer, or bring you both positions verbatim. (Convergence pass between the
+uninvolved families.)
 
 <details>
-<summary><b>The staff, in full</b></summary>
+<summary><b>The roster, in full</b></summary>
 
 <br>
 
-<img src="docs/assets/art/crew.jpg" alt="The full household, assembled and mildly insubordinate." width="100%">
+<img src="docs/assets/art/crew.jpg" alt="The constructs of the layer, assembled at their nodes and mildly insubordinate." width="100%">
 
-| Household role | Seat | Note |
+| Node | Seat | Note |
 |---|---|---|
-| The chef de cuisine | `executor-sol` | GPT-5.6-Sol via Codex CLI. Does most of the actual cooking. |
-| The visiting artist | `executor-claude` | Opus 5. Called in for the frescoes and the façade. |
-| The new hire from abroad | `executor-gemini` | Gemini 3.1 Pro. Third kitchen, enormous pantry. |
-| The inspectors | `reviewer-claude` · `reviewer-sol` · `reviewer-gemini` | Always from a different kitchen than the cook. |
-| The secretary | `planner` | Turns "fix everything" into numbered errands with acceptance criteria. |
-| The two consiglieri | `convergence` · `plan-counterpart` | Argue in a closed room. Two passes. One answer. |
-| The housekeeper | `context-keeper` | Remembers what you meant, not just what you said. |
-| The errand boy | `scout` | Fast, cheap, reads everything, touches nothing. |
-| The librarian | `researcher` | Comes back with citations or doesn't come back. |
-| The archivist | `crystallizer` | Reads the whole diary so nobody else has to. Hands you one page. |
-| The night clerk | `handoff-recorder` | Writes down how the day ended. No poetry. |
-| The house doctor | `fleet-medic` | Walks the halls, checks pulses, notes who is pretending. |
-| The majordomo | `maestro` | Conducts. Never carries anything. There is a law against it. |
+| The heavy build construct | `executor-sol` | GPT-5.6-Sol via Codex CLI. gpt make. Does most of the actual building. |
+| The visiting artist | `executor-claude` | Opus 5. claude make. Called across for façade and creative work. |
+| The wide-context construct | `executor-gemini` | Gemini 3.1 Pro. gemini make. Enormous addressable memory. |
+| The auditors | `reviewer-claude` · `reviewer-sol` · `reviewer-gemini` | Always from a different make than the one that built. |
+| The decomposer | `planner` | Turns "fix everything" into briefs with acceptance criteria. |
+| The adversary cores | `convergence` · `plan-counterpart` | Two rival minds, one locked room. Two passes. One answer. |
+| The context daemon | `context-keeper` | Holds what you meant, not just what you said. |
+| The probe | `scout` | Fast, cheap, reads everything, writes nothing. |
+| The deep-retrieval construct | `researcher` | Returns with citations or does not return. |
+| The compressor | `crystallizer` | Reads the entire archive so nobody else has to. Hands back one page. |
+| The trace clerk | `handoff-recorder` | Records how the run ended. One entry, no poetry. |
+| The pulse monitor | `fleet-medic` | Walks the graph, marks nodes alive, dead, or pretending. |
+| The maestro | `maestro` | Conducts the layer. Touches nothing in it. There is a law against it. |
 
 </details>
 
@@ -101,33 +112,39 @@ claude --plugin-dir ./maestro
 Or copy it into your plugins directory once and have him at every session.
 
 One caveat, and he is firm about it: remove any competing orchestration layer from
-your global `CLAUDE.md` first. Two butlers in one house will spend the entire day
-arguing about the silverware.
+your global `CLAUDE.md` first. Two conductors on one podium will spend the entire
+session arguing about the downbeat.
 
-## The house, drawn
+## The dimension, drawn
 
 <div align="center">
 
-<img src="docs/assets/tree-worktree.svg" alt="Each job gets its own wing; an inspector from another kitchen signs before anything rejoins the house." width="92%">
+<img src="docs/assets/dimension.svg" alt="The agent layer: a spine of brief, build, audit and merge nodes, a revise loop, a locked room holding two adversary cores, and one yellow edge leaving the plane toward your chair." width="92%">
 
-<sub><i>Every job gets its own wing. Nothing rejoins the house unsigned.</i></sub>
+<sub><i>Nodes, edges, loops. One yellow edge leaves the plane. It ends at your chair.</i></sub>
 
 <br><br>
 
-<img src="docs/assets/tree-decision.svg" alt="A blocked step retries on a distinct approach, then goes to convergence, and only an unresolved S1 reaches you." width="92%">
+<img src="docs/assets/tree-worktree.svg" alt="The .maestro/ directory: state.json, the ledger.jsonl trace, holds.jsonl, routing/ and views/, and one missions/&lt;id&gt;/ directory per branch holding its brief, progress log, envelopes and artifacts." width="92%">
 
-<sub><i>Retry, then the closed room, then — and only then — your desk.</i></sub>
+<sub><i>The layer on disk. One directory per mission branch — and the trace that outlives all of them.</i></sub>
+
+<br><br>
+
+<img src="docs/assets/tree-decision.svg" alt="A blocked step revises on a distinct approach, then goes to convergence, and only an unresolved S1 reaches you." width="92%">
+
+<sub><i>Revise, then the locked room, then — and only then — your chair.</i></sub>
 
 </div>
 
-## Ringing for him
+## What you can ask him
 
 | Command | What you get |
 |---|---|
 | `/maestro:status` | Where everything stands: needs you, just landed, still moving, waiting in line. |
-| `/maestro:handoff` | Before you close the house — everything worth keeping, moved somewhere durable. |
-| `/maestro:doctor` | The house doctor walks the halls. Reads pulses, touches nothing. |
-| `/maestro:audit` | The register read back to you: revise rates, ladder engagements, deaths in service. |
+| `/maestro:handoff` | Before you close the session — everything worth keeping, moved somewhere durable. |
+| `/maestro:doctor` | The pulse monitor walks the graph. Reads nodes, touches nothing. |
+| `/maestro:audit` | The trace read back to you: revise rates, ladder engagements, constructs lost in service. |
 
 ## Provenance
 
@@ -148,6 +165,6 @@ milestone machinery are all deliberately outside v1.
 
 ### Conduct. Don't labor.
 
-<sub><a href="https://fredasterehub.github.io/maestro/">The house, at length</a> · <a href="LICENSE">MIT</a>. The staff is included.</sub>
+<sub><a href="https://fredasterehub.github.io/maestro/">The dimension, at length</a> · <a href="LICENSE">MIT</a>. The staff is synthetic.</sub>
 
 </div>

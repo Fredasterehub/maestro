@@ -1,18 +1,19 @@
 /* ══════════════════════════════════════════════════════════════════
-   maestro — the household alphabet, falling.
-   Brass glyphs on charcoal. They part around the cursor the way staff
-   part in a corridor: sideways, unhurried, back into line behind you.
-   One column occasionally flashes teal. If you know, you know.
+   maestro — the layer's alphabet, falling.
+   Orange-gold glyphs on near-black. They part around the cursor the
+   way a construct steps out of a corridor: sideways, unhurried, back
+   into line behind you. One column occasionally flashes signal
+   yellow. If you know, you know.
 
    No dependencies, no network, ~4KB. Pauses when the tab is hidden.
    ══════════════════════════════════════════════════════════════════ */
 (function () {
   'use strict';
 
-  var BRASS = '201,162,39';
-  var TEAL  = '46,126,116';
+  var GOLD   = '224,154,58';   /* dim orange-gold — the falling glyphs */
+  var SIGNAL = '255,210,74';   /* signal yellow — the wink column */
 
-  /* git glyphs, brackets, seat initials, and the estate itself */
+  /* git glyphs, brackets, seat initials, and the wink itself */
   var GLYPHS = ('⎇✓⌁⎋[]{}<>/|·:;=+*#§' +
                 'SERPCKMFHGX' +
                 '荘').split('');
@@ -75,7 +76,7 @@
   }
 
   function paintBackdrop() {
-    ctx.fillStyle = '#1A1714';
+    ctx.fillStyle = '#0B0B0C';
     ctx.fillRect(0, 0, W, H);
   }
 
@@ -87,7 +88,7 @@
     for (var i = 0; i < n; i++) {
       for (var j = 0; j < rows; j++) {
         if (Math.random() > 0.16) continue;
-        ctx.fillStyle = 'rgba(' + BRASS + ',' + (0.03 + Math.random() * 0.07).toFixed(3) + ')';
+        ctx.fillStyle = 'rgba(' + GOLD + ',' + (0.03 + Math.random() * 0.07).toFixed(3) + ')';
         ctx.fillText(glyph(), i * cell + cell / 2, j * cell + cell / 2);
       }
     }
@@ -158,10 +159,10 @@
         }
 
         if (lit) {
-          ctx.fillStyle = 'rgba(' + TEAL + ',' + Math.min(0.95, a + fk * 0.55).toFixed(3) + ')';
+          ctx.fillStyle = 'rgba(' + SIGNAL + ',' + Math.min(0.95, a + fk * 0.55).toFixed(3) + ')';
           ctx.fillText(KANJI, x, y + dy);
         } else {
-          ctx.fillStyle = 'rgba(' + BRASS + ',' + a.toFixed(3) + ')';
+          ctx.fillStyle = 'rgba(' + GOLD + ',' + a.toFixed(3) + ')';
           ctx.fillText(c.buf[j], x, y + dy);
         }
       }
@@ -233,7 +234,7 @@
 
   boot();
 
-  /* ── the house keeps its composure when the art is late ────────── */
+  /* ── composure is kept when the art is late ────────────────────── */
   function hide(img) { img.classList.add('is-missing'); }
   function seat(img) {
     var frame = img.closest ? img.closest('.plate-frame') : img.parentNode;
