@@ -1,0 +1,8 @@
+{
+  "name": "maestro",
+  "version": "0.1.0",
+  "description": "Turns every main Claude Code session into a context-pristine orchestrator: delegates work to background subagents, teams, and Workflows; keeps restart-proof per-project state in .maestro/.",
+  "author": {
+    "name": "rattle.dehumanized"
+  }
+}
