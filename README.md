@@ -102,14 +102,14 @@ uninvolved families.)
 
 ## Install — Sir does not carry luggage.
 
-<img src="docs/assets/terminal-install.svg" alt="A terminal: cloning maestro and starting Claude Code with the plugin directory." width="100%">
+<img src="docs/assets/terminal-install.svg" alt="A terminal: adding the maestro marketplace and installing the plugin." width="100%">
 
 ```sh
-git clone https://github.com/Fredasterehub/maestro.git
-claude --plugin-dir ./maestro
+claude plugin marketplace add Fredasterehub/maestro
+claude plugin install maestro@maestro
 ```
 
-Or copy it into your plugins directory once and have him at every session.
+Installed once, at user scope — he is at every session from then on. `claude plugin update maestro` when a new version lands.
 
 One caveat, and he is firm about it: remove any competing orchestration layer from
 your global `CLAUDE.md` first. Two conductors on one podium will spend the entire

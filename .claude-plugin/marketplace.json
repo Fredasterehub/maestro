@@ -1,0 +1,14 @@
+{
+  "name": "maestro",
+  "description": "Maestro — context-pristine orchestration plugin for Claude Code.",
+  "owner": {
+    "name": "rattle.dehumanized"
+  },
+  "plugins": [
+    {
+      "name": "maestro",
+      "source": "./",
+      "description": "Turns every main Claude Code session into a context-pristine orchestrator: delegates work to background subagents, teams, and Workflows; keeps restart-proof per-project state in .maestro/."
+    }
+  ]
+}
