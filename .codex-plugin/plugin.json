@@ -1,0 +1,33 @@
+{
+  "name": "maestro",
+  "version": "0.1.0",
+  "description": "The Codex continuity layer for Maestro, with durable mission state and opt-in clean context-window handoffs.",
+  "author": {
+    "name": "rattle.dehumanized"
+  },
+  "repository": "https://github.com/Fredasterehub/maestro",
+  "license": "MIT",
+  "keywords": [
+    "orchestration",
+    "multi-agent",
+    "handoff",
+    "continuity"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Maestro",
+    "shortDescription": "Durable handoffs across Codex context windows",
+    "longDescription": "This Codex adaptation of Maestro records bounded, integrity-checked workflow state and can restore it automatically after an opt-in fresh model-visible context window.",
+    "developerName": "rattle.dehumanized",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Prepare a verified rollover handoff and continue in this thread.",
+      "Resume the current Maestro mission from durable state.",
+      "Prepare a cold-transfer handoff for another session."
+    ]
+  }
+}
