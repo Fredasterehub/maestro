@@ -1,5 +1,5 @@
 {
-  "description": "Maestro liaison continuity and bounded-context enforcement. SessionStart restores posture and durable state; after compact it injects the same-thread continuity handoff. PreToolUse warns on context-heavy reads/runs and denies only an explicit new_context call that lacks a fresh rollover handoff. Forced automatic compaction is never blocked. Stop blocks blind turn-ends within a bounded budget.",
+  "description": "maestro liaison enforcement. SessionStart matches startup|resume|clear|compact because the injected posture lives in context, not on disk — compaction would silently strip it mid-session, so it must be re-injected after every compact (full rationale in scripts/sessionstart-digest.sh header). PreToolUse warns, never denies. Stop blocks blind turn-ends within a bounded budget.",
   "hooks": {
     "SessionStart": [
       {
@@ -7,9 +7,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}/hooks/scripts/sessionstart-digest.sh\"",
-            "timeout": 15,
-            "additionalContextLimit": 12500
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/sessionstart-digest.sh\"",
+            "timeout": 15
           }
         ]
       }
@@ -20,17 +19,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}/hooks/scripts/pretool-warn.mjs\"",
-            "timeout": 10
-          }
-        ]
-      },
-      {
-        "matcher": "^new_context$",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}/hooks/scripts/precontext-guard.mjs\"",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/pretool-warn.mjs\"",
             "timeout": 10
           }
         ]
@@ -42,7 +31,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}/hooks/scripts/stop-guard.mjs\"",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/stop-guard.mjs\"",
             "timeout": 15
           }
         ]

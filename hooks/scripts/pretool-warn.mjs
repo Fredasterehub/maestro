@@ -54,7 +54,7 @@ function isSubagentSession(input) {
 
 function isExemptPath(resolved) {
   if (/[\\/]\.maestro[\\/]/.test(resolved)) return true;
-  const pluginRoot = process.env.PLUGIN_ROOT || process.env.CLAUDE_PLUGIN_ROOT;
+  const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
   if (pluginRoot && resolved.startsWith(pluginRoot)) return true;
   return false;
 }
