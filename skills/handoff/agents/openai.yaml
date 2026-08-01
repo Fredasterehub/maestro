@@ -1,0 +1,4 @@
+interface:
+  display_name: "Context Handoff"
+  short_description: "Preserve work across fresh Codex context windows"
+  default_prompt: "Use $handoff to preserve this task, roll into a fresh model context, and continue without asking me to open another session."

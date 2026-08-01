@@ -1,6 +1,18 @@
 ---
 name: audit
-description: This skill should be used whenever the user says "audit", "audit the process", "is the orchestration itself buggy", "why so many revisions", "why does this keep hitting the ladder", "are the reviewers actually finding real things", "process health", "how much friction is there", "is maestro working well", or wants to know whether the orchestration process itself — not any one project's code — is healthy: revise-cap hit rate, ladder engagements per mission, repeated same-theme reviewer findings, envelope validation failures, worker death rate. Runs `friction.js rates` plus bounded ledger reads and reports a plain verdict with evidence counts per pattern; zero friction on a pattern is a legitimate, explicitly reported outcome, never silence. Read-only, no repairs. Skip it for install/state health (tree, roster liveness, holds, routing digest) — that is `/maestro:doctor`.
+description: >-
+  This skill should be used whenever the user says "audit", "audit the process",
+  "is the orchestration itself buggy", "why so many revisions", "why does this
+  keep hitting the ladder", "are the reviewers actually finding real things",
+  "process health", "how much friction is there", "is maestro working well", or
+  wants to know whether the orchestration process itself — not any one project's
+  code — is healthy: revise-cap hit rate, ladder engagements per mission,
+  repeated same-theme reviewer findings, envelope validation failures, worker
+  death rate. Runs `friction.js rates` plus bounded ledger reads and reports a
+  plain verdict with evidence counts per pattern; zero friction on a pattern is
+  a legitimate, explicitly reported outcome, never silence. Read-only, no
+  repairs. Skip it for install/state health (tree, roster liveness, holds,
+  routing digest) — that is `/maestro:doctor`.
 ---
 
 # audit — process health, read-only
@@ -18,6 +30,10 @@ friction record has exactly one sanctioned writer (`friction.js`), and an
 audit that "fixes" a pattern in passing becomes an undocumented second writer
 with no trail. The one thing this skill produces besides the report is
 nothing — it runs no CLI that mutates `.maestro/`.
+
+Resolve `<plugin-root>` from the loaded skill path (two directories above this
+`skills/audit` directory). Hook-only environment variables are not guaranteed
+inside an ordinary Codex shell.
 
 Report every pattern on every run, whether or not it fired. Zero friction on
 a pattern is a legitimate, reportable outcome and is stated as exactly
@@ -38,7 +54,7 @@ enforces on every session.
 1. **Revise-cap hit rate.**
 
    ```
-   node "${CLAUDE_PLUGIN_ROOT}/machine/src/friction.js" rates <treeRoot>
+   node "<plugin-root>/machine/src/friction.js" rates <treeRoot>
    ```
 
    Read `revise_verdict_by_mission`. A mission at 2 (the cap,
@@ -79,7 +95,7 @@ enforces on every session.
    Two bounded proxies:
 
    ```
-   node "${CLAUDE_PLUGIN_ROOT}/machine/src/friction.js" rates <treeRoot>
+   node "<plugin-root>/machine/src/friction.js" rates <treeRoot>
    ```
 
    read `unparseable_lines` (malformed lines the ledger reader itself
