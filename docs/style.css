@@ -1,31 +1,49 @@
 /* ══════════════════════════════════════════════════════════════════
-   maestro — the agent layer, seen from the surface
-   Palette v2 ("hazard couture") per site-assets/LORE-v2.md.
-   Near-black ground, orange primary, signal yellow secondary, red
-   sparing. The palette is closed: no accent outside the six values
-   declared below. Single dark theme. No external requests: system
-   font stacks only.
+   maestro — the board at working light
+   Palette and manners per LORE-v3.md. Single dark theme.
+   No external requests: system font stacks only.
+
+   Two palettes coexist here and they never mix on one plane. The rain
+   is the environment and keeps its own colours; the board is the object
+   and sits on opaque plates that occlude the rain. --charcoal, --brass
+   and --teal DUPLICATE values hardcoded in rain.js (lines 12-13 and 78);
+   rain.js does not read these variables. Keep them in sync by hand — a
+   change here alone silently desyncs the page from the rain.
    ══════════════════════════════════════════════════════════════════ */
 
 :root {
-  /* palette v2, exact */
-  --orange:   #FF8A00;   /* primary accent */
-  --yellow:   #FFD24A;   /* secondary accent — signal */
-  --red:      #E13B2F;   /* sparing: failure, escalation */
-  --charcoal: #1B1B1E;   /* dark grey */
-  --cream:    #F0E9DC;   /* warm cream */
+  /* environment palette, exact — mirrors rain.js's hardcoded values */
+  --orange:   #E8842C;
+  --charcoal: #1A1714;
+  --cream:    #F2E9D8;
+  --teal:     #2E7E74;
+  --brass:    #C9A227;
+  --blood:    #8C2B1E;
+
+  /* board palette, sampled from the approved hero */
+  --board:        #0A0911;
+  --bone:         #E1DDDA;
+  --copper:       #AD7051;
+  --copper-deep:  #8B6453;
+  --amber:        #DBA23F;
+  --silver:       #C6C2BF;
+
+  /* derived from the board, for interface use */
+  --board-lift:   #131120;
+  --board-sunk:   #06060C;
+  --board-rule:   #2A2536;
+  --bone-dim:     #A8A39F;
 
   /* derived surfaces */
-  --ink:      #0B0B0C;   /* near-black ground */
-  --panel:    rgba(36, 36, 40, 0.92);   /* panel grey #242428 */
-  --panel-lift: #242428;
-  --rule:     #33333A;
-  --rule-hi:  #55555E;
-  --dim:      #9A948A;
-  /* the quietest voice still allowed to carry a sentence: AA on all three
-     grounds — 5.7:1 on --ink, 5.0:1 on --charcoal, 4.5:1 on --panel-lift.
+  --ink:      #0B0908;
+  --panel:    rgba(26, 23, 20, 0.92);
+  --panel-lift: #221E19;
+  --rule:     #45392C;
+  --rule-hi:  #6B5940;
+  --dim:      #B9AC96;
+  /* the quietest voice still allowed to carry a sentence: 4.6:1 on --ink.
      --rule-hi is a rule colour, not a text colour — it fails AA below 18px. */
-  --dim-2:    #8F8A81;
+  --dim-2:    #8A7A63;
 
   --outline:  3px;
   --drop:     7px;
@@ -49,7 +67,7 @@
 *, *::before, *::after { box-sizing: border-box; }
 
 html {
-  background: var(--ink);
+  background: var(--charcoal);
   -webkit-text-size-adjust: 100%;
   scroll-behavior: smooth;
 }
@@ -85,9 +103,9 @@ body {
   pointer-events: none;
   background:
     radial-gradient(ellipse 120% 90% at 50% 18%,
-      rgba(11, 11, 12, 0.28) 0%,
-      rgba(11, 11, 12, 0.70) 55%,
-      rgba(11, 11, 12, 0.93) 100%);
+      rgba(26, 23, 20, 0.30) 0%,
+      rgba(26, 23, 20, 0.72) 55%,
+      rgba(11, 9, 8, 0.90) 100%);
 }
 
 main, .topbar, .foot { position: relative; z-index: 2; }
@@ -120,9 +138,9 @@ main, .topbar, .foot { position: relative; z-index: 2; }
 
 code {
   font-size: 0.86em;
-  color: var(--yellow);
-  background: rgba(255, 210, 74, 0.09);
-  border: 1px solid rgba(255, 210, 74, 0.28);
+  color: var(--brass);
+  background: rgba(201, 162, 39, 0.09);
+  border: 1px solid rgba(201, 162, 39, 0.28);
   padding: 0.05em 0.34em;
 }
 
@@ -134,7 +152,7 @@ pre code {
   font-size: inherit;
 }
 
-a { color: var(--yellow); text-decoration-thickness: 2px; text-underline-offset: 3px; }
+a { color: var(--teal); text-decoration-thickness: 2px; text-underline-offset: 3px; }
 a:hover { color: var(--orange); }
 
 :focus-visible {
@@ -152,7 +170,7 @@ a:hover { color: var(--orange); }
   flex-wrap: wrap;
   padding: 0.75rem var(--gutter);
   border-bottom: 2px solid var(--rule);
-  background: rgba(11, 11, 12, 0.82);
+  background: rgba(11, 9, 8, 0.82);
 }
 
 .brand {
@@ -188,7 +206,7 @@ a:hover { color: var(--orange); }
   border-bottom: 2px solid transparent;
 }
 .topnav a:hover { color: var(--cream); border-bottom-color: var(--orange); }
-.topnav-out { color: var(--yellow) !important; }
+.topnav-out { color: var(--brass) !important; }
 
 /* ── hero ──────────────────────────────────────────────────────── */
 
@@ -205,7 +223,7 @@ a:hover { color: var(--orange); }
   font-size: 0.74rem;
   letter-spacing: 0.26em;
   text-transform: uppercase;
-  color: var(--yellow);
+  color: var(--brass);
   margin: 0 0 0.5rem;
 }
 .eyebrow--hero {
@@ -244,28 +262,6 @@ a:hover { color: var(--orange); }
   line-height: 1.15;
 }
 
-/* the character line: the office is maestro, the man is Oscar */
-.oscar {
-  display: flex;
-  align-items: center;
-  gap: 0.9rem;
-  font-family: var(--display);
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  font-size: clamp(1.15rem, 3.4vw, 2.1rem);
-  line-height: 1;
-  margin: 1.05rem 0 0;
-  color: var(--yellow);
-}
-.oscar::after {
-  content: "";
-  flex: 1;
-  height: 3px;
-  background: var(--yellow);
-  opacity: 0.5;
-}
-
 .subhead {
   max-width: var(--measure);
   margin: 1.15rem 0 0;
@@ -284,9 +280,18 @@ a:hover { color: var(--orange); }
   max-width: 56ch;
   margin: 2.4rem 0 0;
   padding-left: 1.1rem;
-  border-left: var(--outline) solid var(--yellow);
+  border-left: var(--outline) solid var(--brass);
   color: var(--dim);
   font-size: 0.95em;
+}
+
+/* the one quip the hero region is allowed */
+.hero-quip {
+  max-width: 46ch;
+  margin: 1.5rem 0 0;
+  color: var(--dim-2);
+  font-style: italic;
+  font-size: 0.95rem;
 }
 
 /* ── buttons ───────────────────────────────────────────────────── */
@@ -304,7 +309,7 @@ a:hover { color: var(--orange); }
   transition: transform 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
 }
 .btn-primary { background: var(--orange); color: var(--ink); }
-.btn-primary:hover { background: var(--yellow); color: var(--ink); }
+.btn-primary:hover { background: var(--brass); color: var(--ink); }
 .btn-ghost {
   background: transparent;
   color: var(--cream);
@@ -316,14 +321,22 @@ a:hover { color: var(--orange); }
 
 /* ── plates (art containers + placeholders) ────────────────────── */
 
+/* A plate is a window onto the board world. It is opaque, so it occludes
+   the rain rather than tinting over it; its ground is --board, a cool
+   black one step away from the rain's warm --charcoal, and that step is
+   what makes it read as an object in front of the environment. Corners
+   stay square and no filter, blend mode or opacity is ever applied to
+   board imagery — the palette is already in the pixels. */
+
 .plate { margin: 0; }
 
 .plate-frame {
   position: relative;
   aspect-ratio: var(--ratio, 16 / 9);
-  border: var(--outline) solid var(--rule-hi);
+  border: var(--outline) solid var(--copper-deep);
+  border-radius: 0;
   box-shadow: var(--drop) var(--drop) 0 var(--ink);
-  background: var(--charcoal);
+  background: var(--board);
   overflow: hidden;
 }
 
@@ -337,10 +350,10 @@ a:hover { color: var(--orange); }
   gap: 0.5rem;
   text-align: center;
   padding: 1rem;
-  background-color: var(--charcoal);
+  background-color: var(--board);
   background-image: repeating-linear-gradient(
     -45deg,
-    rgba(255, 210, 74, 0.055) 0 2px,
+    rgba(173, 112, 81, 0.07) 0 2px,
     transparent 2px 13px);
 }
 .holder-mono { width: clamp(48px, 9vw, 88px); height: auto; opacity: 0.9; }
@@ -354,7 +367,7 @@ a:hover { color: var(--orange); }
   font-family: var(--serif);
   font-style: italic;
   font-size: 0.86rem;
-  color: var(--dim-2);
+  color: #6E5F4C;
 }
 
 .plate-frame img {
@@ -370,9 +383,6 @@ a:hover { color: var(--orange); }
 .plate--diagram .plate-frame img { object-fit: contain; padding: clamp(0.5rem, 2vw, 1.25rem); }
 .plate--terminal .plate-frame { background: var(--ink); }
 .plate--terminal .plate-frame img { padding: 0; }
-/* the graph centrepiece runs edge to edge on near-black */
-.plate--dimension .plate-frame { background: var(--ink); border-color: var(--orange); }
-.plate--dimension .plate-frame img { padding: clamp(0.25rem, 1.4vw, 0.9rem); }
 /* set by rain.js: the art is late, or the art has arrived */
 .plate-frame img.is-missing { display: none; }
 .plate-frame.has-art .plate-holder { display: none; }
@@ -391,7 +401,7 @@ a:hover { color: var(--orange); }
   font-size: 0.74rem;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--yellow);
+  color: var(--brass);
   margin-right: 0.5rem;
 }
 
@@ -413,7 +423,7 @@ a:hover { color: var(--orange); }
   font-size: 0.74rem;
   letter-spacing: 0.26em;
   text-transform: uppercase;
-  color: var(--yellow);
+  color: var(--brass);
   margin: 0 0 1rem;
 }
 .sec-no span {
@@ -421,8 +431,8 @@ a:hover { color: var(--orange); }
   place-items: center;
   min-width: 2.1rem;
   padding: 0.15rem 0.4rem;
-  border: 2px solid var(--yellow);
-  color: var(--yellow);
+  border: 2px solid var(--brass);
+  color: var(--brass);
   letter-spacing: 0.08em;
 }
 .sec-no::after {
@@ -453,32 +463,6 @@ a:hover { color: var(--orange); }
   color: var(--cream);
 }
 
-/* ── the quips (he has been running a long time) ───────────────── */
-
-.quip {
-  margin: clamp(1.7rem, 4vw, 2.6rem) 0 0;
-  padding: 0.1rem 0 0.1rem 1.2rem;
-  border-left: var(--outline) solid var(--orange);
-  max-width: 56ch;
-}
-.quip blockquote { margin: 0; }
-.quip p {
-  margin: 0;
-  font-family: var(--serif);
-  font-style: italic;
-  font-size: 1.1em;
-  line-height: 1.45;
-  color: var(--cream);
-}
-.quip figcaption {
-  margin-top: 0.55rem;
-  font-family: var(--mono);
-  font-size: 0.72rem;
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
-  color: var(--dim);
-}
-
 /* ── roster ────────────────────────────────────────────────────── */
 
 .roster {
@@ -494,7 +478,7 @@ a:hover { color: var(--orange); }
   font-weight: 400;
   letter-spacing: 0.2em;
   text-transform: uppercase;
-  color: var(--yellow);
+  color: var(--brass);
   text-align: left;
   padding: 0.9rem 1.1rem;
   border-bottom: 2px solid var(--rule-hi);
@@ -502,7 +486,7 @@ a:hover { color: var(--orange); }
 }
 .roster tbody tr { border-bottom: 1px solid var(--rule); }
 .roster tbody tr:last-child { border-bottom: 0; }
-.roster tbody tr:hover { background: rgba(255, 210, 74, 0.05); }
+.roster tbody tr:hover { background: rgba(201, 162, 39, 0.05); }
 .roster th[scope="row"] {
   font-family: var(--serif);
   font-style: italic;
@@ -518,13 +502,13 @@ a:hover { color: var(--orange); }
 .roster td.seat {
   font-family: var(--mono);
   font-size: 0.8rem;
-  color: var(--yellow);
+  color: var(--brass);
   white-space: nowrap;
   width: 1%;
   line-height: 1.7;
 }
 
-.band#layer .plate--wide { margin-top: clamp(2rem, 5vw, 3.5rem); }
+.band#household .plate--wide { margin-top: clamp(2rem, 5vw, 3.5rem); }
 
 /* ── split layouts ─────────────────────────────────────────────── */
 
@@ -541,10 +525,10 @@ a:hover { color: var(--orange); }
   .split, .split--portrait, .split--install { grid-template-columns: minmax(0, 1fr); }
 }
 
-/* ── the register ──────────────────────────────────────────────── */
+/* ── the record ─────────────────────────────────────────────── */
 
 .ledger {
-  border: var(--outline) solid var(--yellow);
+  border: var(--outline) solid var(--brass);
   box-shadow: var(--drop) var(--drop) 0 var(--ink);
   background: var(--ink);
 }
@@ -554,14 +538,14 @@ a:hover { color: var(--orange); }
   gap: 1rem;
   align-items: center;
   padding: 0.6rem 0.9rem;
-  border-bottom: 2px solid var(--yellow);
+  border-bottom: 2px solid var(--brass);
   font-family: var(--mono);
   font-size: 0.72rem;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: var(--yellow);
+  color: var(--brass);
 }
-.ledger-tag { color: var(--yellow); }
+.ledger-tag { color: var(--teal); }
 .ledger-body { overflow-x: auto; }
 .ledger pre {
   margin: 0;
@@ -576,9 +560,9 @@ a:hover { color: var(--orange); }
 .ledger .v { color: var(--cream); }
 .ledger .v-open { color: var(--orange); }
 .ledger .v-warn { color: var(--orange); }
-.ledger .v-ok { color: var(--yellow); }
-.ledger .ok { color: var(--yellow); font-weight: 700; }
-.ledger .bad { color: var(--red); font-weight: 700; }
+.ledger .v-ok { color: var(--teal); }
+.ledger .ok { color: var(--teal); font-weight: 700; }
+.ledger .bad { color: var(--blood); font-weight: 700; }
 .ledger-foot {
   margin: 0;
   padding: 0.85rem 0.9rem;
@@ -587,7 +571,7 @@ a:hover { color: var(--orange); }
   color: var(--dim);
   font-style: italic;
 }
-.ledger-foot .mono { font-style: normal; font-size: 0.9em; color: var(--yellow); }
+.ledger-foot .mono { font-style: normal; font-size: 0.9em; color: var(--brass); }
 
 .notes h3 {
   font-family: var(--display);
@@ -595,7 +579,7 @@ a:hover { color: var(--orange); }
   letter-spacing: 0.06em;
   font-size: 1.4rem;
   margin: 0 0 1rem;
-  color: var(--yellow);
+  color: var(--brass);
 }
 .drawers { margin: 0 0 1.6rem; }
 .drawers dt {
@@ -618,11 +602,11 @@ a:hover { color: var(--orange); }
   padding: 1rem 1.1rem;
   background: var(--panel);
   border: 2px solid var(--rule-hi);
-  border-left: var(--outline) solid var(--red);
+  border-left: var(--outline) solid var(--blood);
   font-size: 0.95em;
   color: var(--cream);
 }
-.pull .mono { font-size: 0.82em; color: var(--yellow); }
+.pull .mono { font-size: 0.82em; color: var(--brass); }
 
 /* ── night / recovery ──────────────────────────────────────────── */
 
@@ -643,12 +627,12 @@ a:hover { color: var(--orange); }
   font-size: 0.72rem !important;
   letter-spacing: 0.2em;
   text-transform: uppercase;
-  color: var(--yellow) !important;
+  color: var(--brass) !important;
 }
 .checkpoint-line {
   font-size: 0.9rem;
-  color: var(--yellow) !important;
-  border-left: 3px solid var(--yellow);
+  color: var(--teal) !important;
+  border-left: 3px solid var(--teal);
   padding-left: 0.8rem;
   letter-spacing: 0.02em;
 }
@@ -672,17 +656,19 @@ a:hover { color: var(--orange); }
 }
 .crest svg { width: clamp(74px, 12vw, 96px); height: auto; }
 .crest .shield {
-  fill: rgba(11, 11, 12, 0.75);
+  fill: rgba(11, 9, 8, 0.75);
   stroke: var(--ink);
   stroke-width: 5;
 }
 .crest .charge { fill: none; stroke-width: 6; }
-.crest--claude  .shield { stroke: var(--orange); }
-.crest--claude  .charge { stroke: var(--orange); }
-.crest--gpt     .shield { stroke: var(--cream); }
-.crest--gpt     .charge { stroke: var(--cream); }
-.crest--gemini  .shield { stroke: var(--yellow); }
-.crest--gemini  .charge { stroke: var(--yellow); }
+/* the family marks are told apart by their charge, not by hue: bone
+   shield, copper charge, the same on all three. */
+.crest--claude  .shield,
+.crest--gpt     .shield,
+.crest--gemini  .shield { stroke: var(--bone); }
+.crest--claude  .charge,
+.crest--gpt     .charge,
+.crest--gemini  .charge { stroke: var(--copper); }
 
 .crest-name {
   font-family: var(--display);
@@ -707,9 +693,9 @@ a:hover { color: var(--orange); }
   font-size: 0.72rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--dim);
+  color: var(--dim-2);
 }
-.crest-rev b { color: var(--yellow); font-weight: 400; }
+.crest-rev b { color: var(--brass); font-weight: 400; }
 
 /* ── the ladder ────────────────────────────────────────────────── */
 
@@ -723,7 +709,7 @@ a:hover { color: var(--orange); }
   letter-spacing: 0.06em;
   font-size: 1.5rem;
   margin: 0 0 1.2rem;
-  color: var(--yellow);
+  color: var(--brass);
 }
 .rungs {
   list-style: none;
@@ -737,7 +723,7 @@ a:hover { color: var(--orange); }
   padding: 1.1rem 1.2rem;
   background: var(--panel);
   border: 2px solid var(--rule-hi);
-  border-top: var(--outline) solid var(--yellow);
+  border-top: var(--outline) solid var(--brass);
   color: var(--dim);
   font-size: 0.97em;
 }
@@ -782,14 +768,14 @@ a:hover { color: var(--orange); }
   font-size: 0.96em;
   max-width: 58ch;
 }
-.install-note code.cmd { color: var(--orange); border-color: rgba(255, 138, 0, 0.4); background: rgba(255, 138, 0, 0.08); }
+.install-note code.cmd { color: var(--teal); border-color: rgba(46, 126, 116, 0.4); background: rgba(46, 126, 116, 0.08); }
 
 .copyline {
   display: flex;
   align-items: stretch;
   gap: 0;
   margin: 0.9rem 0 0.9rem 2.65rem;
-  border: var(--outline) solid var(--yellow);
+  border: var(--outline) solid var(--brass);
   box-shadow: 5px 5px 0 var(--ink);
   background: var(--ink);
   flex-wrap: wrap;
@@ -809,8 +795,8 @@ a:hover { color: var(--orange); }
 .copy {
   flex: none;
   border: 0;
-  border-left: var(--outline) solid var(--yellow);
-  background: var(--yellow);
+  border-left: var(--outline) solid var(--brass);
+  background: var(--brass);
   color: var(--ink);
   font-family: var(--mono);
   font-size: 0.74rem;
@@ -820,8 +806,7 @@ a:hover { color: var(--orange); }
   cursor: pointer;
 }
 .copy:hover { background: var(--orange); }
-/* taken: the button goes dark and stamps itself in signal yellow */
-.copy[data-done="1"] { background: var(--ink); color: var(--yellow); }
+.copy[data-done="1"] { background: var(--teal); color: var(--cream); }
 
 .commands {
   list-style: none;
@@ -842,7 +827,7 @@ a:hover { color: var(--orange); }
   background: transparent;
   border: 0;
   padding: 0;
-  color: var(--yellow);
+  color: var(--brass);
   font-size: 0.86rem;
 }
 .commands span { color: var(--dim); font-size: 0.93rem; font-style: italic; }
@@ -855,7 +840,7 @@ a:hover { color: var(--orange); }
   grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
   align-items: start;
 }
-.plate figcaption a { color: var(--yellow); }
+.plate figcaption a { color: var(--brass); }
 .plate figcaption a:hover { color: var(--orange); }
 
 /* ── footer ────────────────────────────────────────────────────── */
@@ -863,8 +848,8 @@ a:hover { color: var(--orange); }
 .foot {
   margin-top: clamp(5rem, 12vh, 9rem);
   padding: clamp(2.5rem, 6vw, 4rem) var(--gutter) clamp(3rem, 7vw, 4.5rem);
-  border-top: var(--outline) solid var(--yellow);
-  background: rgba(11, 11, 12, 0.9);
+  border-top: var(--outline) solid var(--brass);
+  background: rgba(11, 9, 8, 0.9);
 }
 .foot > * { max-width: 1240px; margin-left: auto; margin-right: auto; }
 .foot-tag {
@@ -875,7 +860,7 @@ a:hover { color: var(--orange); }
   font-size: clamp(2.1rem, 7.4vw, 4.4rem);
   line-height: 0.95;
   margin: 0 auto 1.8rem;
-  color: var(--yellow);
+  color: var(--brass);
   transform: scaleX(var(--squeeze));
   transform-origin: left center;
 }
@@ -935,7 +920,7 @@ a:hover { color: var(--orange); }
   .btn:hover, .btn:focus-visible, .btn:active { transform: none; box-shadow: 6px 6px 0 var(--ink); }
 }
 
-/* ── print: the register, on paper ─────────────────────────────── */
+/* ── print: the record, on paper ────────────────────────────── */
 
 @media print {
   #rain, .vignette, .topnav, .copy { display: none; }
