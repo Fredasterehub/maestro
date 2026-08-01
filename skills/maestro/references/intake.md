@@ -53,8 +53,7 @@ dispatch. A deliverable is a code change **or** an investigation report — Ship
 and Scout both qualify.
 
 **Scaffolding is running the CLI**, not creating directories by hand:
-`node "<plugin-root>/machine/src/scaffold.js" <treeRoot>`. Resolve
-`<plugin-root>` as directed by the parent Maestro skill. A
+`node "${CLAUDE_PLUGIN_ROOT}/machine/src/scaffold.js" <treeRoot>`. A
 `mkdir -p .maestro/missions/<id>/artifacts` looks like the same tree and is
 not one: it has no `state.json`, so the next session has no resume pointer to
 read, and no `ledger.jsonl`, so audit has no evidence stream — the mission

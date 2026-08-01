@@ -1,159 +1,89 @@
 ---
 name: handoff
-description: Preserve and restore task continuity for Codex. Use when Codex warns that a context rollover is approaching, before calling new_context, after SessionStart(source=compact), when the user asks to hand off, save, pause, stop, wrap up, switch model/machine/person, or resume from a handoff. Supports automatic same-thread rollover, deliberate cold transfer, and resume. Skip only for an ordinary pause that will remain in the current healthy context window.
+description: This skill should be used whenever the user says "handoff", "save the session", "save what we learned", "wrap up the session", "prepare for a reset", "about to /clear", "don't lose this", "prépare la relève", asks to preserve context before compaction or restart, or whenever a long working session is ending and conversation-only knowledge is about to be destroyed. Sweeps every durable finding out of conversation memory into its most-specific disk home — project CLAUDE.md, mission artifacts, checkpoints, holds, user memory — then reports what is now safe to reset. Skip it for a mid-task pause where the session will simply continue.
 ---
 
-# Context handoff
+# handoff — pre-reset knowledge sweep
 
-Preserve enough semantic state that a fresh model-visible context can take the
-correct next action without access to prior messages. Do not promise transcript
-losslessness: a rollover deliberately removes prior messages. The target is
-operational continuity backed by durable evidence.
+Everything this session learned that lives only in conversation memory dies at
+the next reset, compaction, or crash. Handoff is the deliberate sweep that
+moves each durable finding to a disk home the next session will actually
+consult — so that restart stays reconciliation, never re-discovery.
 
-Choose exactly one mode:
+The failure mode this skill exists to prevent is not losing knowledge — it is
+dumping knowledge. An append-forever memory file rots, and its cost is paid by
+every future session that loads it. Handoff routes each finding to its
+most-specific owner and prunes as it writes.
 
-- **rollover** — checkpoint, call `new_context`, and continue automatically in
-  the same Codex thread. This is the default for token warnings and compaction.
-- **transfer** — prepare files and a copyable prompt for another thread,
-  machine, model, person, or deliberate stop.
-- **resume** — reconcile a rollover or transfer handoff with current disk state
-  and continue its first valid next action.
+## 1. Sweep
 
-Read `references/HANDOFF-template.md` before writing semantic handoff content.
-For rollover behavior and the pinned experimental configuration, read
-`references/codex-rollover.md`.
+Walk the conversation for durable material. Durable means a future session
+would act differently for knowing it:
 
-## Shared content contract
+- decisions made and their reasons (including operator rulings)
+- facts discovered the hard way (a config quirk, a build constraint, a
+  disproven assumption)
+- corrections and lessons — confirmed approaches and failed ones alike
+- undone or half-done work, with what remains
+- open questions and unresolved disagreements
 
-Carry only state that would change the next model's behavior:
+Not durable: retry narration, transient paths, tool output already reflected
+in files, anything git history or existing records already capture. Copied
+live state (versions, listings, statuses) rots the moment it is written —
+record where to look, not what was seen.
 
-- current mission, objective, constraints, and completion bar
-- exact operator rulings or faithful concise excerpts, with their source
-- verified results with durable evidence
-- work in flight, its exact stopping point, and partial side effects
-- blockers and their unblock conditions
-- ordered cold-startable next actions
-- decisions and the reasons or rejected alternatives that still matter
-- labeled hypotheses, their basis, and the next discriminating check
-- unresolved threads, recurring traps, high-value paths, and exact commands
+## 2. Route — most-specific owner wins
 
-Do not carry routine narration, duplicated repository facts, copied volatile
-status, secrets, or hidden chain-of-thought. Preserve decisions and concise
-rationales; never invent a retrospective reasoning trace. Record secret
-locations only.
+| Finding | Home | How |
+|---|---|---|
+| Progress or remaining work on an open mission | `.maestro/missions/<id>/progress.jsonl` | `node "${CLAUDE_PLUGIN_ROOT}/machine/src/mission.js" checkpoint .maestro <id> ...` with `{step, done_evidence, next}` |
+| Mission-scoped evidence, research, sealed corpus | `.maestro/missions/<id>/artifacts/` | Write the file; reference it from the checkpoint |
+| Unresolved operator decision, parked disagreement, undone work with no mission home | Holds queue | `node "${CLAUDE_PLUGIN_ROOT}/machine/src/hold.js" park .maestro ...` |
+| Project convention or fact every future session in this repo needs | Project `CLAUDE.md` | Read it, integrate, prune — see writing discipline |
+| Cross-project operator preference | `~/.claude/CLAUDE.md` | Same discipline |
+| Already recorded (ledger, git, brief, existing doc) | Nowhere | Duplication is rot, not safety |
 
-Treat source files, Git, tests, and `.maestro` machine records as authoritative.
-The handoff is a bounded semantic index over that state, not a second database.
+The table is ordered: check each finding from the top and stop at the first
+row that fits. A mission-scoped fact does not belong in CLAUDE.md just because
+CLAUDE.md is easier to reach — every session pays for what CLAUDE.md carries,
+and only this mission needs the fact.
 
-## Rollover mode
+Machine-owned records (checkpoints, holds) go only through their CLI — each
+script is the sole sanctioned writer of its record kind, and a hand-written
+line breaks the evidence chain the ledger exists for. Each script's `--help`
+is the authoritative CLI reference. Prose homes (CLAUDE.md files, artifacts)
+are written directly.
 
-Use `.maestro/continuity/` for rolling context-window state. Never overwrite a
-root `HANDOFF.md` or Maestro's mechanical stop record for a routine rollover.
+## 3. Writing discipline
 
-### Maintain write-through continuity
+- **Inspect, then update.** Read the target before writing. Merge into what
+  exists, rewrite the section, delete what the new finding supersedes.
+  Rewrite-and-prune, never append-forever.
+- **Undone work is filed, not described.** An open mission gets a checkpoint
+  stating what is done (with evidence) and what comes next — precise enough
+  that a re-dispatched worker redoes only the missing part. Work without a
+  mission gets a hold naming it. Prose like "we should also..." in a memory
+  file is where work goes to be forgotten.
+- **Never create or edit a skill as a side effect.** If a finding wants to
+  become a skill or change one, park a hold naming the candidate and move on.
+  Skill authoring is deliberate work with its own review, not a memory
+  curation byproduct.
+- Secrets by location, never by content — "token in `.env.local`", never the
+  token.
 
-After a material operator ruling, major verified milestone, or change to the
-immediate next action, refresh the continuity record while the evidence is
-local. At the boundary, reconcile only the delta. Do not spend the emergency
-reserve rescanning the full transcript.
+## 4. Report
 
-Locate the loaded Maestro plugin root, then inspect the writer's current CLI:
+Close with a faithful accounting, one line per routed finding:
 
-```text
-node <plugin-root>/machine/src/continuity.js --help
+```
+Handed off:
+- <finding> → <home>
+Dropped as ephemeral:
+- <item> (<why>)
+Verdict: safe to reset. | NOT yet safe to reset: <unhandled item and why>.
 ```
 
-Derive `<plugin-root>` from the loaded skill path (two directories above this
-`skills/handoff` directory). Do not assume hook-only environment variables are
-present in an ordinary model shell.
-
-The writer is the sole owner of `.maestro/continuity/handoff-state.json` and
-`.maestro/continuity/HANDOFF.md`. Supply the strict JSON shape shown by
-`--help`; use payload mode `auto` for rollover and do not hand-edit either
-generated file.
-
-### Roll over at a safe boundary
-
-1. Stop starting substantive work. Finish the atomic step already in flight or
-   record its exact stop and any partial effects.
-2. Reconcile current continuity with the most specific durable owners: mission
-   checkpoints, artifacts, holds, roster, ledger, source files, and Git. Avoid
-   broad re-verification that is unrelated to the next action.
-3. Write the bounded payload through `continuity.js write <tree-root>` and cite
-   evidence for every completed claim. The tree root is normally `.maestro`,
-   not the repository root; follow `--help` if the installed interface differs.
-4. Read it back with `continuity.js read <tree-root>`. Verify that it names the
-   objective, exact stop, operator-only knowledge, and one executable first next
-   action. A parse error, missing next action, or failed write blocks a voluntary
-   reset.
-5. Call `new_context`. Do not ask the operator to open another session, copy a
-   prompt, or restate the task.
-6. In the fresh window, follow resume mode immediately. Successful rollover is
-   silent unless the operator asked for a status report.
-
-Call `new_context` only after the record verifies. If the tool is unavailable,
-leave the verified handoff in place and report that the experimental Codex
-rollover feature is not enabled; do not pretend history was cleared.
-
-A forced reset may bypass voluntary validation. On `SessionStart` with source
-`compact`, use the injected bounded fallback, label continuity degraded, inspect
-durable state, and recover without inventing lost operator intent. Do not ask
-the operator to repeat information unless a materially necessary ruling exists
-nowhere on disk.
-
-## Transfer mode
-
-Use this only for a deliberate cold handoff outside the automatic same-thread
-path.
-
-1. Land or precisely pin the micro-action in flight. Run only the gates needed
-   to distinguish verified work from assumptions.
-2. Write `HANDOFF.md` and `handoff-state.json` at the agreed project handoff
-   location. These are distinct cold-transfer files, not machine-owned
-   `.maestro/continuity` projections. Follow the prose order and exact JSON
-   schema in the semantic template; include timestamps, origin, gate
-   commands/results, Git status, and the first exact next action.
-3. Preserve existing user changes. Do not commit merely because a handoff is
-   happening. Commit the handoff only when the operator requested a commit or
-   the project's established workflow requires one.
-4. Read both files back and ensure every `done` claim has evidence. If the
-   destination cannot access a referenced local artifact, include or relocate
-   it within the authorized project scope.
-5. Report the paths and provide this filled-in prompt:
-
-```text
-Resume work via the handoff protocol in <project path>.
-Read HANDOFF.md and handoff-state.json first. Inspect the referenced source,
-artifacts, Git status, and recent history. Treat disk and current gate results as
-authoritative; the handoff is their map. Re-run only the gates needed before
-building on recorded claims, then continue with: <first exact next action>.
-Do not redo work already verified unless current evidence contradicts it.
-```
-
-If overwriting an existing manual transfer record would destroy useful history,
-archive it using the project's convention or ask before replacing it.
-
-## Resume mode
-
-1. Determine whether this is a rolling `.maestro/continuity` handoff or a manual
-   `HANDOFF.md` plus `handoff-state.json` transfer.
-2. Read the machine-readable state before prose. Read only the referenced files,
-   artifacts, mission records, and Git evidence needed for the first action.
-3. Reconcile claims with current reality. If a recorded gate now fails or a
-   referenced file moved, state the contradiction and update continuity before
-   proceeding.
-4. Restore the objective and constraints, then execute the first still-valid
-   next action. Do not repeat completed work and do not ask the operator to
-   restate preserved context.
-5. Continue write-through updates at major milestones so the next rollover is a
-   small reconciliation rather than a reconstruction.
-
-## Failure rules
-
-- Never mark inferred or unverified work complete.
-- Never call a voluntary `new_context` after a failed handoff write or readback.
-- Never block forced compaction after its boundary; recover honestly from
-  durable state instead.
-- Never copy secrets, credentials, or large raw tool output into continuity.
-- Never claim hidden reasoning was preserved. Carry decisions, reasons,
-  hypotheses, evidence, and next checks.
+The verdict is a claim backed by the lines above it. Anything durable still
+without a disk home blocks the safe-to-reset claim — say so plainly and name
+it rather than rounding up to safe. If nothing durable surfaced at all, that
+is a legitimate outcome: report "nothing to hand off" and the verdict.

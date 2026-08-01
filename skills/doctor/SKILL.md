@@ -1,15 +1,6 @@
 ---
 name: doctor
-description: >-
-  This skill should be used whenever the user says "doctor", "health check",
-  "check maestro", "is the state healthy", "run preflight", "something looks
-  broken", "why is the state stale", after a crash or messy restart, before
-  trusting `.maestro/` state that may have been hand-edited, or when workers
-  seem out of sync with the recorded roster. Runs environment preflight and
-  prints a complete state-health report — tree, state.json, roster liveness,
-  holds, routing digest — naming the exact fix for every problem found while
-  performing none of them. Read-only door. Skip it when the user wants a status
-  recap — that is `/maestro:status`.
+description: This skill should be used whenever the user says "doctor", "health check", "check maestro", "is the state healthy", "run preflight", "something looks broken", "why is the state stale", after a crash or messy restart, before trusting `.maestro/` state that may have been hand-edited, or when workers seem out of sync with the recorded roster. Runs environment preflight and prints a complete state-health report — tree, state.json, roster liveness, holds, routing digest — naming the exact fix for every problem found while performing none of them. Read-only door. Skip it when the user wants a status recap — that is `/maestro:status`.
 ---
 
 # doctor — state health, read-only
@@ -27,10 +18,6 @@ its job, not a repair.
 Each machine script's `--help` is the authoritative CLI reference; the
 invocations below follow the machine spec.
 
-Resolve `<plugin-root>` from the loaded skill path (two directories above this
-`skills/doctor` directory). Hook-only environment variables are not guaranteed
-inside an ordinary Codex shell.
-
 ## Checks — run and report all of them
 
 Report every check even when it passes. A report that only lists problems
@@ -40,7 +27,7 @@ legitimate outcome and is stated per check, not implied by silence.
 1. **Environment preflight.** With the tree present:
 
    ```
-   node "<plugin-root>/machine/src/preflight.js" run .maestro
+   node "${CLAUDE_PLUGIN_ROOT}/machine/src/preflight.js" run .maestro
    ```
 
    probes node, git, codex (version and login status), gemini, and gh and
@@ -68,13 +55,13 @@ legitimate outcome and is stated per check, not implied by silence.
    reconciliation. Report counts: alive, finished, unknown/zombie (rostered
    but no live task), unrostered (live task no seat claims). Report "unknown"
    rather than guessing from a stale entry. Any drift → fix:
-   `node "<plugin-root>/machine/src/roster.js" reconcile .maestro`
+   `node "${CLAUDE_PLUGIN_ROOT}/machine/src/roster.js" reconcile .maestro`
    (named, not run — reconcile writes roster.json).
 
 5. **Holds.**
 
    ```
-   node "<plugin-root>/machine/src/hold.js" list .maestro
+   node "${CLAUDE_PLUGIN_ROOT}/machine/src/hold.js" list .maestro
    ```
 
    Report unresolved count, severities, the oldest hold's age, and which

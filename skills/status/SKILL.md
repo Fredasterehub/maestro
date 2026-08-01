@@ -1,15 +1,6 @@
 ---
 name: status
-description: >-
-  This skill should be used whenever the user asks "where are we", "status",
-  "what's going on", "catch me up", "recap", "fleet status", "what needs me",
-  "what did I miss", returns to the session after time away, or whenever a
-  status digest is owed — after a restart, at the end of an away-mode stretch,
-  or when the operator seems unsure what is in flight. Renders the complete
-  four-bucket status digest (needs-your-action / recently done /
-  self-progressing / queued) from machine views, strictly read-only. Skip it
-  when the question is about one specific task's detail — answer that directly
-  from its envelope.
+description: This skill should be used whenever the user asks "where are we", "status", "what's going on", "catch me up", "recap", "fleet status", "what needs me", "what did I miss", returns to the session after time away, or whenever a status digest is owed — after a restart, at the end of an away-mode stretch, or when the operator seems unsure what is in flight. Renders the complete four-bucket status digest (needs-your-action / recently done / self-progressing / queued) from machine views, strictly read-only. Skip it when the question is about one specific task's detail — answer that directly from its envelope.
 ---
 
 # status — four-bucket status digest
@@ -25,16 +16,12 @@ trusted as a recap. When the snapshot reveals something that needs doing, name
 the route (a hold to resolve, `/maestro:doctor`, a dispatch) as the item's
 next decision; do not take it during this skill.
 
-Resolve `<plugin-root>` from the loaded skill path (two directories above this
-`skills/status` directory). Hook-only environment variables are not guaranteed
-inside an ordinary Codex shell.
-
 ## Source
 
 Regenerate the projections, then read only what they name:
 
 ```
-node "<plugin-root>/machine/src/project.js" views .maestro
+node "${CLAUDE_PLUGIN_ROOT}/machine/src/project.js" views .maestro
 ```
 
 Read the view files the command reports (under `.maestro/views/`). Views are
