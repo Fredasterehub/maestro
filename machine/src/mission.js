@@ -1126,9 +1126,25 @@ function standingVerdictsOf(records, missionId, citedRouteSeq) {
   return { own, byMission };
 }
 
-// Whether two recorded identities name the same artifact.
+// What "the same artifact" means when a finding is matched to the work being
+// closed: the CONTENT, not the commit that carries it. source_tree is the bytes
+// HEAD points at and patch_digest is the canonical patch that produced them, so
+// two identities agreeing on both are the same work under a different name.
+//
+// source_head is deliberately excluded, and that exclusion is the whole point:
+// `git commit --allow-empty` mints a fresh source_head while leaving tree and
+// patch byte-identical, which under a four-field match was a two-second escape
+// from a standing revise — relabel the head, bind a fresh review route to the
+// "new" identity, approve it. Matching on content refuses that and leaves the
+// genuine repair (which changes the tree) exactly as legal as before.
+//
+// dirty is excluded for the opposite reason: it describes the worktree the
+// identity was measured in, not the work, and a close never reaches here on a
+// dirty identity (reviewedIdentityOf refuses one outright).
+const CONTENT_IDENTITY_FIELDS = ['source_tree', 'patch_digest'];
+
 function namesSameArtifact(recorded, identity) {
-  return !IDENTITY_FIELDS.some((field) => recorded[field] !== identity[field]);
+  return !CONTENT_IDENTITY_FIELDS.some((field) => recorded[field] !== identity[field]);
 }
 
 // The one escape a standing revise has outside its own verdict chain:
@@ -1190,12 +1206,16 @@ function requireReviseAnswered(records, ownerMissionId, routeSeq, last, label, r
 // design prefers: two verdicts naming the byte-identical artifact are about the
 // same work by construction, never a coincidence.
 //
-// The limit of the rule is the third escape. `namesSameArtifact` decides what
-// "the artifact changed" means, and it is content, not head (see T2 below), so
-// an empty commit cannot buy a fresh identity — but a one-character
-// reformatting commit genuinely changes the tree, and nothing on the record can
-// tell that from a repair. What the rule does buy is that overturning a finding
-// on UNCHANGED bytes always costs a recorded gate run and a stated reason.
+// The limit of the rule is that third escape, and `namesSameArtifact` is what
+// decides how wide it is. It is content, so no relabelling of the same bytes
+// reaches it: an empty commit buys a fresh source_head and nothing else. What
+// remains is a commit that genuinely changes the tree while changing nothing
+// that matters — a reformatting, a stray newline — and nothing on the record
+// can tell that from a repair, because the record holds hashes and not
+// meaning. That is the honest statement of the limit: the fence costs a real
+// tree change, and a real tree change is cheap. What the rule does buy is that
+// overturning a finding on UNCHANGED bytes always costs a recorded gate run
+// and a stated reason, in the mission that recorded the finding.
 function requireNoStandingRevise(records, missionId, verdicts, identity, citedRouteSeq) {
   for (const [routeSeq, outcomes] of verdicts.own) {
     const last = outcomes[outcomes.length - 1];

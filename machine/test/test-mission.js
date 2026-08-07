@@ -1585,6 +1585,52 @@ const mxGateSeq = fx.runGreenGate(root, 'mx', 'tests', mxRepo);
   assert.strictEqual(stateOf().missions.mfix.status, 'done');
 }
 
+// --- close: an empty commit is a relabel, not a second round -----------------
+// The cheapest thing that ever looked like "the artifact changed":
+// `git commit --allow-empty` mints a fresh source_head while source_tree and
+// patch_digest stay byte-identical, so a head-keyed match would let the very
+// bytes the reviewer rejected close under a new name. The match is on content.
+{
+  openM('mempty');
+  const repo = fx.newWorkRepo(tmp);
+  const rejected = fx.artifactIdentity(repo);
+  const chain = fx.reserveChain(root, 'mempty', rejected);
+  const revise = fx.recordReview(root, 'mempty', {
+    review_route_seq: chain.reviewSeq,
+    review_dispatch_seq: chain.reviewSeq,
+    verdict: 'revise',
+    artifact_identity: rejected,
+  });
+  assert.strictEqual(revise.status, 0, revise.stderr);
+
+  const empty = spawnSync('git', ['-C', repo, 'commit', '-q', '--allow-empty', '-m', 'relabel'], { encoding: 'utf8' });
+  assert.strictEqual(empty.status, 0, empty.stderr);
+  const relabelled = fx.artifactIdentity(repo);
+  assert.notStrictEqual(relabelled.source_head, rejected.source_head, 'the head is fresh');
+  assert.strictEqual(relabelled.source_tree, rejected.source_tree, 'the tree is the rejected one');
+  assert.strictEqual(relabelled.patch_digest, rejected.patch_digest, 'the patch is the rejected one');
+
+  const round2 = reserveReview(root, fx.reviewRouteInput('mempty', chain.authorSeq, chain.authorSeq, relabelled));
+  const approve = fx.recordReview(root, 'mempty', {
+    review_route_seq: round2.seq,
+    review_dispatch_seq: round2.seq,
+    verdict: 'approve',
+    artifact_identity: relabelled,
+  });
+  assert.strictEqual(approve.status, 0, approve.stderr);
+  const gateSeq = fx.runGreenGate(root, 'mempty', 'tests', repo);
+  fx.land(repo, 'merge');
+  const r = fx.runClose(
+    root,
+    'mempty',
+    repo,
+    fx.closeInputOf({ authorSeq: chain.authorSeq, reviewSeq: round2.seq }, gateSeq)
+  );
+  assert.strictEqual(r.status, 1, 'an empty-commit relabel must not escape a standing revise');
+  assert.match(r.stderr, /carries a standing revise \(seq \d+\) against the very artifact being closed/);
+  assert.strictEqual(stateOf().missions.mempty.status, 'open');
+}
+
 // --- close: the evidence rule is re-derived, not trusted to the writer -------
 // Each of these is refused by record-review and hand-appended past it; close
 // derives the same rule from the records, because the writer is exactly what a
