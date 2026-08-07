@@ -43,6 +43,17 @@
 // that record, it does not re-run anything, so a hand-appended gate record is
 // believed here exactly as far as the ledger is.
 //
+// The same sentence bounds the fence below, and it is worth saying out loud
+// rather than leaving to be found: every refusal here is scoped to ONE
+// ledger.jsonl — the one under the treeRoot this process was handed. A close
+// run against a different maestro tree reads a different ledger, sees none of
+// this one's findings, and closes over them without ever lying about anything,
+// because nothing it could read says they exist. Nothing derivable inside this
+// machine reaches past that: there is no registry of trees, a tree is a
+// directory scaffold.js will create on request, and a record can only be
+// believed where it can be read. Whatever closes that gap is above this layer
+// — one tree per project, chosen and held by whoever runs it.
+//
 // record-review is the sole producer of the verdict close depends on: a
 // review-outcome record binding the review route, the verdict, and the exact
 // identity that was reviewed. A revise is recorded the same way as an approve
@@ -54,7 +65,9 @@
 // the artifact, not the route and not the mission: a finding against an
 // artifact is answered by evidence or by changing the artifact, never by
 // reviewing the byte-identical artifact again somewhere quieter, and neither a
-// second route nor a second mission is quiet enough.
+// second route nor a second mission is quiet enough. A second TREE is, and
+// that is the boundary named above: the fence is as wide as the ledger it
+// reads, and no wider.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -1237,6 +1250,19 @@ function requireReviseAnswered(records, ownerMissionId, routeSeq, last, label, r
 // tree change, and a real tree change is cheap. What the rule does buy is that
 // overturning a finding on UNCHANGED bytes always costs a recorded gate run
 // and a stated reason, in the mission that recorded the finding.
+//
+// The other limit is where this scan can look, and it has moved twice already:
+// review round one scoped the rule to the cited route, round two to every
+// route of this mission, round three (here) to every mission in this ledger.
+// Each time the same attack was re-run one boundary out, and each time the
+// boundary was still inside the ledger, which is why widening it was
+// derivable at all. The next boundary out is not: a close run against a second
+// maestro tree reads a second ledger.jsonl and cannot see these findings, and
+// standing up a tree costs no more than minting a mission id did. That is
+// where this fence stops. It is stated in the module header rather than
+// patched here, because no scan of THIS ledger can reach a record that is not
+// in it — the answer is one tree per project, held by whoever runs the fleet,
+// and it is not a check this module can make.
 function requireNoStandingRevise(records, missionId, verdicts, identity, citedRouteSeq) {
   for (const [routeSeq, outcomes] of verdicts.own) {
     const last = outcomes[outcomes.length - 1];
