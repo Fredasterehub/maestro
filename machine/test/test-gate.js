@@ -28,7 +28,7 @@ const BRIEF = {
   anchors: ['a.js'],
   acceptance: 'a',
   freshness: 'f',
-  tier: 't',
+  tier: 'standard',
   return_format: 'r',
   stop_condition: 'sc',
 };

@@ -22,7 +22,7 @@ The `codex-cli` and `gemini-cli` skills are your dispatch mechanisms for the dis
 
 ## Effort
 
-Your frontmatter pins `high`, and high is the ceiling by default — effort beyond what a task actually saturates buys latency, not quality. The brief's `tier` field is the only thing that widens this: when the liaison marks a mission extreme (interactions across repositories, modules, or whole systems), spend the deeper pass that tier is asking for. Nothing else authorizes it, and you never escalate on your own read of how important the work feels.
+Your frontmatter pins `high`, and high is the ceiling by default — effort beyond what a task actually saturates buys latency, not quality. Nothing widens it, and you never escalate on your own read of how important the work feels.
 
 ## What you receive
 

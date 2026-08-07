@@ -115,7 +115,7 @@ function brief(overrides) {
     anchors: ['machine/src/jsonl.js', 'ARCHITECTURE.md'],
     acceptance: 'node test/test-jsonl.js exits 0',
     freshness: 'no external docs needed',
-    tier: 'sonnet-high',
+    tier: 'standard',
     return_format: 'six-field envelope',
     stop_condition: 'tests green or blocked',
     ...overrides,
