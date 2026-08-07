@@ -490,6 +490,52 @@ const mxGateSeq = fx.runGreenGate(root, 'mx', 'tests', mxRepo);
   assert.match(r.stderr, /tested a different artifact than the review/);
 }
 
+// --- close: a gate sharing only one content field with the review is not ---
+// --- the same artifact, though the disjunctive work predicate calls it so --
+//
+// checkGateIdentity is a CHAIN link — the gate must name the exact artifact
+// the review judged, field by field over all four IDENTITY_FIELDS — and is
+// deliberately NOT namesSameArtifact, the disjunctive predicate the standing-
+// revise scan uses to ask "is this about the same change" (mission.js's own
+// comment above CONTENT_IDENTITY_FIELDS says so explicitly). A gate identity
+// that shares source_tree with the reviewed identity but differs in
+// source_head and patch_digest is exactly the case where the two predicates
+// diverge: namesSameArtifact would call it the same work (one content field
+// matches), so a widening of checkGateIdentity to that predicate would let
+// this gate close a review it never tested. Hand-appended, like the legacy-
+// gate fixture below: a real gate.js run cannot be made to report a
+// mismatched identity for an unrelated commit while still sharing exactly
+// one content field with the review by construction.
+{
+  openM('mgateshare');
+  const repo = fx.newWorkRepo(tmp);
+  const identity = fx.artifactIdentity(repo);
+  const chain = fx.reserveChain(root, 'mgateshare', identity);
+  fx.recordApprove(root, 'mgateshare', chain, identity);
+  const shared = {
+    source_head: 'f'.repeat(40),
+    source_tree: identity.source_tree,
+    patch_digest: 'sha256:' + 'e'.repeat(64),
+    dirty: false,
+  };
+  const gate = appendRecord(path.join(root, 'ledger.jsonl'), {
+    kind: 'gate',
+    payload: {
+      gate_id: 'tests',
+      cmd: ['true'],
+      exit_code: 0,
+      mission_id: 'mgateshare',
+      artifact_identity: shared,
+      identity_check: { verified: true, changed: [], error: null },
+    },
+    correlation_id: 'mgateshare',
+  });
+  fx.land(repo, 'merge');
+  const r = fx.runClose(root, 'mgateshare', repo, fx.closeInputOf(chain, gate.seq));
+  assert.strictEqual(r.status, 1, 'a gate sharing only the tree with the review must not close');
+  assert.match(r.stderr, /tested a different artifact than the review/);
+}
+
 // --- close: a gate that mutated the tree it tested is not pass evidence ------
 // The same record check-honesty refuses — close and the audit agree.
 {
