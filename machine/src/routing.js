@@ -498,7 +498,111 @@ function migrateClaudeLadder(config) {
   return out;
 }
 
-const MIGRATIONS = [migrateSolSplit, migrateDegradedReview, migrateClaudeLadder];
+// r4 -> r5: the GPT author ladder and its tiered hosts become data. The two
+// remaining author rungs design §4.2 pins (executor-luna, executor-terra) and
+// the gpt standard review rung §6.1 pins (reviewer-terra) join the seat table,
+// each with the host profile §5 tiers for its worker — the host is the lowest
+// that can faithfully dispatch that worker, so it rises with the worker rather
+// than sitting at sonnet-high for everything. The gpt lane is operator-down
+// today, so nothing here routes yet; dormant is a lane state, never an
+// unfinished table, and re-enabling the lane is a settings write with no code
+// change behind it.
+//
+// reviewer-terra takes the standard-and-below rung its qualification bound
+// names, which is the row design §6.2 has always specified and r4 could only
+// write as absence: claude-authored recon/mechanical/standard work leads with
+// the gpt lane and falls to gemini behind it, and gemini-authored work of those
+// classes gains the gpt lane behind the always-on claude floor. The expert and
+// apex rows are unchanged — the Sol rungs already carry them.
+//
+// The degraded overrides stay what they have always been: the intersection each
+// mode leaves behind. codex_down needs no edit at all — every seat this
+// migration adds is a gpt seat, and the gpt lane being out is exactly what that
+// table already removes — while gemini_down gains reviewer-terra wherever it
+// survives, which finally fills the claude standard rows r4 had to leave empty
+// (§6.2's "gpt only" row) for want of a gpt standard rung.
+//
+// The codex_down seat substitutions carry the new author rungs onto their
+// same-class Claude counterparts, and reviewer-terra onto reviewer-claude. That
+// last mapping is lawful ONLY as an explicit degraded-path transition (§8): for
+// claude-authored work reviewFor drops a substitute landing in the author's own
+// family and takes the relabeled degraded transition instead, so the mapping can
+// never quietly relabel a same-family review as cross-family.
+function migrateGptLadder(config) {
+  const out = JSON.parse(JSON.stringify(config));
+  // Same discipline as every migration before it (§11 — each entry is
+  // independently testable): a wrong-shaped source is refused by name rather
+  // than stamped forward. The r3->r4 output is what distinguishes a revision-4
+  // shape — the tiered Claude review rungs and the class-keyed rows — and both
+  // persist into r5, so this stays idempotent at its own boundary.
+  for (const table of ['seats', 'review_routing', 'degraded']) {
+    if (!isPlainObject(out[table])) {
+      throw new Error(`r4->r5 migration: config has no ${table} table — not a revision-4 shape`);
+    }
+  }
+  for (const required of ['reviewer-claude-expert', 'reviewer-claude-apex']) {
+    if (!isPlainObject(out.seats[required])) {
+      throw new Error(
+        `r4->r5 migration: config has no seats["${required}"] — not a revision-4 shape (the r3->r4 Claude ladder has not been applied)`
+      );
+    }
+  }
+  if (!isClassKeyedRouting(out.review_routing)) {
+    throw new Error(
+      'r4->r5 migration: config has one flat review row per author family — not a revision-4 shape (the r3->r4 class-keyed ladders have not been applied)'
+    );
+  }
+  if (!isPlainObject(out.review_qualification)) {
+    throw new Error('r4->r5 migration: config has no review_qualification table — not a revision-4 shape');
+  }
+
+  // Host profiles are design §5's tier table verbatim; worker model and effort
+  // are §4.2's and §6.1's. Every seat file mirrors these values, never the
+  // other way around. reviewer-terra keeps `scope: 'scoped'` for the same
+  // reason its Sol siblings do: diff-scoped review is a property of what the
+  // seat means, not of the tier it sits at.
+  Object.assign(out.seats, {
+    'executor-luna': { model: 'gpt-5.6-luna', family: 'gpt', effort: 'low', host: 'sonnet-5', host_effort: 'low' },
+    'executor-terra': { model: 'gpt-5.6-terra', family: 'gpt', effort: 'medium', host: 'sonnet-5', host_effort: 'medium' },
+    'reviewer-terra': { model: 'gpt-5.6-terra', family: 'gpt', effort: 'high', host: 'sonnet-5', host_effort: 'medium', scope: 'scoped' },
+  });
+
+  // The three standard-and-below classes share one review rung (§6), so the
+  // insertion is the same row edit three times: gpt lane first for claude
+  // authors (§6.2's "reviewer-terra → reviewer-gemini"), gpt lane second for
+  // gemini authors, behind the always-on claude floor. Insertion is
+  // position-preserving and skips a row that already names the seat, which is
+  // what keeps this migration idempotent at its own boundary (§11) — a second
+  // application over its own output must add nothing, not a duplicate rung.
+  const lead = (row) => (row.includes('reviewer-terra') ? row : ['reviewer-terra', ...row]);
+  const trail = (row) => (row.includes('reviewer-terra') ? row : [...row, 'reviewer-terra']);
+  for (const klass of ['recon', 'mechanical', 'standard']) {
+    out.review_routing.claude[klass] = lead(out.review_routing.claude[klass]);
+    out.review_routing.gemini[klass] = trail(out.review_routing.gemini[klass]);
+    // With gemini out, the gpt rung is what survives of the claude row — the
+    // row r4 had to leave empty until this seat existed — and it joins the
+    // gemini-authored row behind the claude floor that already holds it.
+    out.degraded.gemini_down.review_routing.claude[klass] = ['reviewer-terra'];
+    out.degraded.gemini_down.review_routing.gemini[klass] = trail(out.degraded.gemini_down.review_routing.gemini[klass]);
+  }
+  // Standard-and-below by the same §6.1 rung that seats it there — the bound is
+  // what keeps expert and apex work off this seat, exactly as gemini's does.
+  out.review_qualification['reviewer-terra'] = 'standard';
+
+  // Same-class substitutes: a downed gpt lane sends each author rung to the
+  // Claude seat of its own class (§4.1/§4.2), never up or down a tier. The
+  // reviewer mapping is the §8 degraded-path transition described above.
+  Object.assign(out.degraded.codex_down.seats, {
+    'executor-luna': 'executor-claude-mech',
+    'executor-terra': 'executor-claude-standard',
+    'reviewer-terra': 'reviewer-claude',
+  });
+
+  out.revision = 5;
+  return out;
+}
+
+const MIGRATIONS = [migrateSolSplit, migrateDegradedReview, migrateClaudeLadder, migrateGptLadder];
 
 // The revision of the highest migration actually shipped — each slice that
 // pushes a MIGRATIONS entry raises this in the same commit, by construction.

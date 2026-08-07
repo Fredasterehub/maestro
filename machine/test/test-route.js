@@ -408,10 +408,14 @@ function reviewInput(authorRouteSeq, overrides) {
   );
   assert.strictEqual(recordsOf(m, 'route').length, 0, 'nothing reached disk on the refusal');
 
-  // Underivable is refused, not defaulted — the same three ways as the reviewer.
+  // Underivable is refused, not defaulted — the same three ways as the
+  // reviewer. The unknown seat is a synthetic name rather than a
+  // not-yet-shipped one: dormant ladder seats land in the config revision by
+  // revision (the r4->r5 migration seated executor-luna), so borrowing one
+  // would quietly turn this fence into a no-op the day its seat arrives.
   assert.throws(
-    () => reserve(root, authorInput({ mission_id: m, requested_seat: 'executor-luna', resolved_seat: 'executor-luna' })),
-    /the family of author seat "executor-luna" cannot be derived — the routing config's seat table records no seat/
+    () => reserve(root, authorInput({ mission_id: m, requested_seat: 'executor-phantom', resolved_seat: 'executor-phantom' })),
+    /the family of author seat "executor-phantom" cannot be derived — the routing config's seat table records no seat/
   );
   assert.throws(
     () =>
@@ -541,13 +545,13 @@ function reviewInput(authorRouteSeq, overrides) {
         root,
         reviewInput(author.seq, {
           mission_id: m,
-          reviewer_seat: 'reviewer-terra',
+          reviewer_seat: 'reviewer-phantom',
           reviewer_family: 'gpt',
           reviewer_model: 'gpt-5.6-terra',
           replacement_reason: 'a seat this config does not carry',
         })
       ),
-    /cannot be derived — the routing config's seat table records no seat "reviewer-terra"/
+    /cannot be derived — the routing config's seat table records no seat "reviewer-phantom"/
   );
 
   // An alias is a compatibility pointer, never a routable seat: routing.js
@@ -620,7 +624,7 @@ function reviewInput(authorRouteSeq, overrides) {
   assert.deepStrictEqual(seatFamily(root, 'reviewer-gemini'), { family: 'gemini', reason: null });
   assert.deepStrictEqual(seatFamily(root, 'reviewer-degraded-sonnet'), { family: 'claude', reason: null });
   assert.deepStrictEqual(seatFamily(root, 'reviewer-sol-expert-rev'), { family: 'gpt', reason: null });
-  assert.strictEqual(seatFamily(root, 'reviewer-terra').family, null);
+  assert.strictEqual(seatFamily(root, 'reviewer-phantom').family, null);
   assert.strictEqual(seatFamily(root, 'reviewer-sol').family, null, 'an alias resolves to no family');
   // No routing table is no family either — the fence never fails open on a
   // tree that cannot say who a seat is.
@@ -1271,14 +1275,17 @@ function reviewInput(authorRouteSeq, overrides) {
 //
 // The blocks above exercise each rule against hand-written profiles. This one
 // runs a whole mission through the CLI on the routing table the tree actually
-// carries: every seat profile is read out of the r4 config, every reserved
+// carries: every seat profile is read out of the active config, every reserved
 // reviewer comes from routing.js's own resolution, and the route records carry
 // the real dated config, digest and revision. So the ladder the config
 // describes and the ladder route.js polices are proven to be the same one.
 //
-// Expert class, because that is where the whole ladder is constructible today:
-// the standard rungs resolve the hosted gemini reviewer, whose config entry
-// records no worker effort, and a reserved review needs one.
+// Expert class, because that is the Claude ladder this walk is about — it holds
+// the repair, escalation and convergence rungs the §9 rules act on. (Until r5
+// it was also the only constructible class: the standard rungs resolved the
+// hosted gemini reviewer, whose config entry records no worker effort, and a
+// reserved review needs one. r5's gpt standard rung records both, so that
+// obstacle is gone; widening the walk is not this step's work.)
 {
   const m = openMission();
   const init = routingInit; // initialized once at the top of this file
@@ -1312,7 +1319,7 @@ function reviewInput(authorRouteSeq, overrides) {
       ...over,
     });
 
-  assert.strictEqual(config.revision, 4, 'this walk is over the r4 ladder');
+  assert.strictEqual(config.revision, 5, 'this walk is over the r5 ladder');
   assert.strictEqual(reviewer('expert').seat, 'reviewer-sol-expert-rev', 'expert claude work is reviewed on the expert rung');
 
   // 1. The expert default is reserved and its review capacity is honoured.
@@ -1390,9 +1397,8 @@ function reviewInput(authorRouteSeq, overrides) {
   assert.strictEqual(converged.superseded.transition, 'convergence');
 
   // The mechanical rung is seated and routable on the same table, though its
-  // zero-repair rule is proven above rather than here: mechanical claude work
-  // resolves the hosted gemini reviewer, which records no worker effort, so a
-  // review capacity for it is not constructible until r5 seats that rung.
+  // zero-repair rule is proven above rather than here — this walk stays on the
+  // expert class where §9's repair and escalation rungs live.
   assert.deepStrictEqual(seat('executor-claude-mech'), { model: 'sonnet-5', family: 'claude', effort: 'low' });
 }
 

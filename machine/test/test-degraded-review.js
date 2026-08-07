@@ -414,10 +414,15 @@ const BRIEF = {
   });
   setPreflight(root, { codex: { routing: 'present' }, gemini: { routing: 'absent' } });
 
-  const bundle = reviewFor(root, 'claude', 'standard');
+  // Expert class, because that is the row the injected substitution actually
+  // sits on: with gemini down the expert ladder is reviewer-sol-expert-rev
+  // alone, and that seat is what the fixture reroutes onto a claude one. (The
+  // standard class would prove nothing here — its own gpt rung answers it
+  // without ever reaching a substitution.)
+  const bundle = reviewFor(root, 'claude', 'expert');
   assert.strictEqual(bundle.independence, 'degraded-path', 'a same-family substitution must never be labeled cross-family');
   assert.notStrictEqual(bundle.seat, 'reviewer-mystery-claude', 'the laundered seat must never be returned');
-  assert.strictEqual(bundle.seat, 'reviewer-degraded-opus', 'resolution must fall to the honest degraded path instead');
+  assert.strictEqual(bundle.seat, 'reviewer-degraded-sonnet', 'resolution must fall to the honest degraded path instead');
 
   // Non-claude author: the analogous substitution leaves every candidate
   // same-family, and the degraded path is scoped to claude-authored work —
