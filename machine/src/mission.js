@@ -1365,13 +1365,19 @@ function requireNoStandingRevise(records, missionId, verdicts, identity, citedRo
   // a foreign chain ABOUT THIS WORK refuses the close rather than passing
   // quietly — and a foreign mess about other work never reaches this close.
   //
-  // A foreign record naming nothing is skipped rather than refused: it could
-  // be about anything, and refusing on it would let one junk line in another
-  // mission freeze every close in the tree. Skipped, though, means it never
-  // reaches the predicate — `carriesFullIdentity` gates both reads below, so
-  // `{}` is unreadable here exactly as it is everywhere else, and the only
-  // difference between the two sides is what unreadable costs: a refusal on
-  // this mission's own route, nothing at all on a stranger's.
+  // A foreign record naming nothing, or naming only some of the four fields,
+  // is skipped rather than refused: it could be about anything, and refusing
+  // on it would let one junk line in another mission freeze every close in
+  // the tree. Skipped, though, means it never reaches the predicate —
+  // `carriesFullIdentity` gates both reads below, so a partial identity is
+  // unreadable here exactly as `{}` is everywhere else. This is not caution
+  // beyond what the rule needs: loosen the guard to match on a partial
+  // identity and the resulting block becomes an unanswerable wall, because
+  // answering it in the stranger's own mission — a superseding verdict, or
+  // `route.js supersede` — is judged by the very same readability rule
+  // (`checkOverturnEvidence`'s own full-identity check on the record it
+  // cites), and a partial identity fails that too. A record the evidence
+  // rule refuses to read cannot be a record the fence enforces.
   for (const [foreignId, byRoute] of verdicts.byMission) {
     if (foreignId === missionId) continue;
     for (const [routeSeq, outcomes] of byRoute) {

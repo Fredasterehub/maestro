@@ -1375,6 +1375,55 @@ const mxGateSeq = fx.runGreenGate(root, 'mx', 'tests', mxRepo);
   assert.strictEqual(stateOf().missions.mvictim.status, 'open');
 }
 
+// --- close: a foreign revise naming a PARTIAL identity does not block --------
+// The foreign-scan guard requires a FULL identity, not merely a readable
+// object: a revise recording `source_head`, `source_tree` (matching the
+// artifact being closed) and `dirty`, but no `patch_digest`, fails
+// `carriesFullIdentity` and is skipped exactly as `{}` is — one field short
+// rather than four. record-review's own writer refuses any identity that
+// isn't the full four fields (`assertExactKeys`), so this record only reaches
+// the ledger by hand-append, the same way the mnoid fixture above does.
+// Loosening the guard to `isPlainObject` would let `namesSameArtifact` match
+// on the shared tree alone and block this close — the case the comment above
+// the foreign-scan loop calls an unanswerable wall, since answering it would
+// itself be refused by the same full-identity rule on the evidence it cites.
+{
+  openM('mforeignv');
+  const repo = fx.newWorkRepo(tmp);
+  const identity = fx.artifactIdentity(repo);
+  const victim = fx.reserveChain(root, 'mforeignv', identity);
+  const partial = {
+    source_head: identity.source_head,
+    source_tree: identity.source_tree,
+    dirty: identity.dirty,
+  };
+  appendRaw('review-outcome', 'mforeignv', {
+    mission_id: 'mforeignv',
+    review_route_seq: victim.reviewSeq,
+    review_dispatch_seq: victim.reviewSeq,
+    verdict: 'revise',
+    artifact_identity: partial,
+    supersedes_seq: null,
+    reason: null,
+    evidence_seq: null,
+  });
+
+  openM('mforeignc');
+  const clean = fx.reserveChain(root, 'mforeignc', identity);
+  const approve = fx.recordReview(root, 'mforeignc', {
+    review_route_seq: clean.reviewSeq,
+    review_dispatch_seq: clean.reviewSeq,
+    verdict: 'approve',
+    artifact_identity: identity,
+  });
+  assert.strictEqual(approve.status, 0, approve.stderr);
+  const gateSeq = fx.runGreenGate(root, 'mforeignc', 'tests', repo);
+  fx.land(repo, 'merge');
+  const r = fx.runClose(root, 'mforeignc', repo, fx.closeInputOf(clean, gateSeq));
+  assert.strictEqual(r.status, 0, `a partial foreign identity must not block: ${r.stderr}`);
+  assert.strictEqual(stateOf().missions.mforeignc.status, 'done');
+}
+
 // --- close: a foreign revise that WAS answered does not block ----------------
 // The other half of the cross-mission rule, and the half that decides whether
 // it is a fence or a wall. A finding recorded in another mission is honoured
