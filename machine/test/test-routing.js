@@ -372,6 +372,25 @@ function setPreflight(root, perProvider) {
   assert.ok(errors.some((e) => /"reviewer-degraded-opus", which never appears in a cross-family row/.test(e)), errors.join('; '));
 }
 
+// --- the verbatim notices are pinned by validation ---------------------------
+{
+  const config = buildDefaultConfig('2026-08-07');
+  config.degraded_review.notice = 'whatever';
+  const { ok, errors } = validateRoutingConfig(config);
+  assert.strictEqual(ok, false, 'a diverged degraded-review notice must fail validation — the design text is verbatim authoritative');
+  assert.ok(errors.some((e) => /verbatim degraded-path notice text/.test(e)), errors.join('; '));
+  assert.strictEqual(validateRoutingConfig(buildDefaultConfig('2026-08-07')).ok, true, 'the shipped text itself validates');
+}
+
+// --- an incomplete review_routing table is a named refusal, not a TypeError --
+{
+  const config = buildDefaultConfig('2026-08-07');
+  delete config.review_routing.gemini;
+  const { ok, errors } = validateRoutingConfig(config);
+  assert.strictEqual(ok, false, 'a review_routing table missing a family must fail validation');
+  assert.ok(errors.some((e) => /review_routing\.gemini must be an array/.test(e)), errors.join('; '));
+}
+
 // --- the degraded path is scoped to claude-authored work ---------------------
 {
   // A gpt author whose effective row empties must refuse, never receive a

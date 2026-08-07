@@ -281,6 +281,18 @@ function migrateDegradedReview(config) {
       throw new Error(`r2->r3 migration: config has no ${table} table — not a revision-2 shape`);
     }
   }
+  // Same discipline as migrateSolSplit: MIGRATIONS is exported and each
+  // entry is independently testable (§11), so a wrong-shaped source is
+  // refused by name rather than stamped forward. The Sol split's own
+  // output seats are what distinguish a revision-2 shape from revision 1 —
+  // they persist into r3, so this stays idempotent at its own boundary.
+  for (const required of ['reviewer-sol-expert-rev', 'reviewer-sol-apex-rev']) {
+    if (!isPlainObject(out.seats[required])) {
+      throw new Error(
+        `r2->r3 migration: config has no seats["${required}"] — not a revision-2 shape (the r1->r2 Sol split has not been applied)`
+      );
+    }
+  }
   Object.assign(out.seats, {
     'reviewer-degraded-opus': { model: 'opus-5', family: 'claude', effort: 'medium' },
     'reviewer-degraded-sonnet': { model: 'sonnet-5', family: 'claude', effort: 'high' },
@@ -385,9 +397,16 @@ function checkDegradedReviewBlock(block, seats, errors) {
       errors.push(`degraded_review.${key} is not a permitted field — the block carries notice, fallback_notice, and rows only (no ceiling field exists)`);
     }
   }
-  for (const field of ['notice', 'fallback_notice']) {
-    if (typeof block[field] !== 'string' || block[field].trim() === '') {
-      errors.push(`degraded_review.${field} must be a non-empty string`);
+  // The design (§8) calls both notices verbatim and several copies of the
+  // text ship; dated configs are digest-pinned, but revise validates
+  // arbitrary source configs, so a hand-shaped divergence is refused here
+  // rather than allowed to relabel what a degraded review claims.
+  for (const [field, verbatim] of [
+    ['notice', DEGRADED_REVIEW_NOTICE],
+    ['fallback_notice', DEGRADED_REVIEW_FALLBACK_NOTICE],
+  ]) {
+    if (block[field] !== verbatim) {
+      errors.push(`degraded_review.${field} must be the design's verbatim degraded-path notice text — diverging copies are refused`);
     }
   }
   if (!isPlainObject(block.rows)) {
@@ -672,7 +691,8 @@ function operatorDownNotice(lane) {
 // Effective review routing under the active degraded modes: each family's
 // base list survives filtered through every active mode's override, order
 // preserved. With both providers down the claude row goes empty — which
-// review-for refuses rather than scale the review floor down.
+// review-for answers with the explicit degraded-path transition, relabeled
+// and notice-carrying, never a cross-family claim scaled down.
 function composeReviewRouting(config, modes) {
   const effective = {};
   for (const family of FAMILIES) {

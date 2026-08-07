@@ -82,6 +82,20 @@ function revision1Tree(name, dateStr) {
   }
 }
 
+// --- each migration refuses a source below its own boundary -----------------
+{
+  // §11 makes every MIGRATIONS entry independently testable, so each must
+  // refuse a wrong-shaped source by name rather than stamp it forward: the
+  // r2->r3 migration applied straight to a revision-1 config (no Sol
+  // split) must throw, never emit a config labeled revision 3 that never
+  // received revision 2's content.
+  assert.throws(
+    () => MIGRATIONS[1](buildRevision1Config('2026-08-01')),
+    /not a revision-2 shape/,
+    'migrateDegradedReview must refuse a revision-1 source instead of stamping revision 3 onto it'
+  );
+}
+
 // --- init writes the current revision directly, never revision 1 -----------
 {
   const root = freshTree('init-current');
