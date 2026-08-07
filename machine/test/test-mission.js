@@ -2765,6 +2765,32 @@ function closeRecordOf(missionId) {
     .pop();
 }
 
+// One small ledger record per non-winning dispatch (F2's fix), joined by
+// mission_id the same way the close record's own comment says an auditor
+// would.
+function dispatchOutcomesOf(missionId) {
+  return ledgerOf().records.filter((rec) => rec.kind === 'dispatch-outcome' && rec.mission_id === missionId);
+}
+
+// --- close: the closed vocabulary is structural, not conventional (F6) -----
+{
+  const missionModule = require(path.join(__dirname, '..', 'src', 'mission.js'));
+  assert.deepStrictEqual(
+    new Set(missionModule.TERMINAL_OUTCOMES),
+    new Set([
+      'revised',
+      'blocked',
+      'superseded',
+      'runtime-failed',
+      'provider-rerouted',
+      'quota-rerouted',
+      'profile-escalated',
+      'safety-refused',
+    ]),
+    'TERMINAL_OUTCOMES must be exactly design §16.3\'s eight words'
+  );
+}
+
 // --- close: a single-attempt mission writes no terminal outcomes -----------
 {
   const missionId = 'mterm-single';
@@ -2772,10 +2798,13 @@ function closeRecordOf(missionId) {
   const { r } = closeWinningChain(missionId);
   assert.strictEqual(r.status, 0, r.stderr);
   const closeRecord = closeRecordOf(missionId);
-  assert.deepStrictEqual(closeRecord.terminal_outcomes, [], 'nothing else to account for');
+  assert.strictEqual(closeRecord.terminal_outcome_count, 0, 'nothing else to account for');
+  assert.deepStrictEqual(dispatchOutcomesOf(missionId), [], 'no dispatch-outcome records for a single-attempt mission');
 }
 
-// --- close: every vocabulary word, each reached by its own fixture ---------
+// --- close: every producible vocabulary word, each reached by its own
+// fixture; "blocked" is exercised separately below as an outcome nobody can
+// currently forge, not as one this test can reach ---------------------------
 {
   const missionId = 'mterm';
   const openSeq = openM(missionId);
@@ -2797,6 +2826,10 @@ function closeRecordOf(missionId) {
   }
 
   const runtimeFailedSeq = supersededAuthor('same-profile-resume', 'infrastructure', {});
+  // F4 regression: same-profile-resume rerouted nothing, whichever
+  // unavailability caused it — a quota-caused resume reads the same as an
+  // infrastructure-caused one, not as "quota-rerouted".
+  const quotaResumeRuntimeFailedSeq = supersededAuthor('same-profile-resume', 'quota', {});
   const providerReroutedSeq = supersededAuthor('same-class-provider-reroute', 'infrastructure', {});
   const quotaReroutedSeq = supersededAuthor('same-class-provider-reroute', 'quota', {});
   const safetyRefusedSeq = supersededAuthor('same-class-provider-reroute', 'safety-refusal', {});
@@ -2819,26 +2852,14 @@ function closeRecordOf(missionId) {
   });
   assert.strictEqual(revised.status, 0, revised.stderr);
 
-  // "blocked": no supersession, no review at all — only the worker's own
-  // envelope names its fate.
-  const blockedAuthor = authorLineage(missionId, {});
-  const blockedEnvelope = mission(['record-envelope', root, missionId, 'executor-claude'], {
-    state: 'blocked',
-    result: 'stuck',
-    evidence: 'cannot proceed without a decision',
-    risks: 'none',
-    artifact: '',
-    question: 'which direction should this take',
-  });
-  assert.strictEqual(blockedEnvelope.status, 0, blockedEnvelope.stderr);
-
   const { r, author: winAuthor, review: winReview } = closeWinningChain(missionId);
   assert.strictEqual(r.status, 0, r.stderr);
 
   const closeRecord = closeRecordOf(missionId);
-  const byDispatch = new Map(closeRecord.terminal_outcomes.map((o) => [o.dispatch_seq, o.outcome]));
+  const byDispatch = new Map(dispatchOutcomesOf(missionId).map((o) => [o.dispatch_seq, o.outcome]));
 
   assert.strictEqual(byDispatch.get(runtimeFailedSeq), 'runtime-failed');
+  assert.strictEqual(byDispatch.get(quotaResumeRuntimeFailedSeq), 'runtime-failed');
   assert.strictEqual(byDispatch.get(providerReroutedSeq), 'provider-rerouted');
   assert.strictEqual(byDispatch.get(quotaReroutedSeq), 'quota-rerouted');
   assert.strictEqual(byDispatch.get(safetyRefusedSeq), 'safety-refused');
@@ -2846,22 +2867,109 @@ function closeRecordOf(missionId) {
   assert.strictEqual(byDispatch.get(supersededGenericSeq), 'superseded');
   assert.strictEqual(byDispatch.get(revisedAuthor.dispatchSeq), 'revised');
   assert.strictEqual(byDispatch.get(revisedReview.dispatchSeq), 'revised');
-  assert.strictEqual(byDispatch.get(blockedAuthor.dispatchSeq), 'blocked');
   assert.strictEqual(byDispatch.has(winAuthor.dispatchSeq), false, 'the winning author dispatch names no terminal outcome');
   assert.strictEqual(byDispatch.has(winReview.dispatchSeq), false, 'the winning review dispatch names no terminal outcome');
-  assert.strictEqual(closeRecord.terminal_outcomes.length, 9, 'exactly the nine non-winning dispatches, no more');
+  assert.strictEqual(closeRecord.terminal_outcome_count, 9, 'exactly the nine non-winning dispatches, no more');
+  assert.strictEqual(dispatchOutcomesOf(missionId).length, 9, 'one dispatch-outcome record per non-winning dispatch');
+}
+
+// --- close: a mission with many non-winning attempts still closes (F2) -----
+// Each outcome is its own ledger line, so this does not depend on the
+// close record's own size — reproducing review-slice7b.md's measured
+// ~9893-byte failure at 80 embedded entries would need an embedded array,
+// which no longer exists.
+{
+  const missionId = 'mterm-many';
+  const openSeq = openM(missionId);
+  const seqs = [];
+  for (let i = 0; i < 80; i++) {
+    const predecessor = authorLineage(missionId, {});
+    supersede(root, {
+      mission_id: missionId,
+      predecessor_route_seq: predecessor.route.seq,
+      transition: 'same-class-provider-reroute',
+      reason: 'infrastructure',
+      evidence_seq: openSeq,
+      replacement: fx.authorRouteInput(missionId, { attempt: 2 }),
+    });
+    seqs.push(predecessor.dispatchSeq);
+  }
+  const { r } = closeWinningChain(missionId);
+  assert.strictEqual(r.status, 0, r.stderr);
+  const closeRecord = closeRecordOf(missionId);
+  assert.strictEqual(closeRecord.terminal_outcome_count, 80);
+  const outcomes = dispatchOutcomesOf(missionId);
+  assert.strictEqual(outcomes.length, 80);
+  assert.ok(
+    outcomes.every((o) => o.outcome === 'provider-rerouted'),
+    'all eighty resolve, each its own small record'
+  );
+  assert.deepStrictEqual(
+    new Set(outcomes.map((o) => o.dispatch_seq)),
+    new Set(seqs),
+    'every non-winning dispatch this mission registered got exactly one outcome record'
+  );
 }
 
 // --- close: an unclassifiable dispatch refuses, naming itself ---------------
 {
   const missionId = 'mterm-refuse';
   openM(missionId);
-  const stray = authorLineage(missionId, {}); // no supersession, no review, no envelope
+  const stray = authorLineage(missionId, {}); // no supersession, no review
 
   const { r } = closeWinningChain(missionId);
   assert.strictEqual(r.status, 1, 'an unclassifiable dispatch must refuse the close');
   assert.match(r.stderr, new RegExp(`dispatch ${stray.dispatchSeq} `));
   assert.strictEqual(stateOf().missions[missionId].status, 'open', 'a refused close leaves the mission open');
+  assert.deepStrictEqual(dispatchOutcomesOf(missionId), [], 'a refused close writes no dispatch-outcome records');
+}
+
+// --- close: the envelope fence (F1) — no envelope ever produces "blocked",
+// or anything else, for a dispatch neither route nor review stream
+// classifies. Reproduces review-slice7b.md's P2/P3/P4 shape: a late/foreign/
+// bare-CLI envelope naming the stray dispatch's own seat must not turn its
+// refusal into a false "blocked".
+{
+  const missionId = 'mterm-envelope-fence';
+  openM(missionId);
+  const stray = authorLineage(missionId, {}); // no supersession, no review
+
+  // A bare CLI call naming the stray's seat — indistinguishable, by design,
+  // from a real worker's report, which is exactly why it must not be read.
+  const envelope = mission(['record-envelope', root, missionId, 'executor-claude'], {
+    state: 'blocked',
+    result: 'stuck',
+    evidence: 'cannot proceed without a decision',
+    risks: 'none',
+    artifact: '',
+    question: 'which direction should this take',
+  });
+  assert.strictEqual(envelope.status, 0, envelope.stderr);
+
+  const { r } = closeWinningChain(missionId);
+  assert.strictEqual(r.status, 1, 'a blocked envelope must not manufacture a terminal outcome');
+  assert.match(r.stderr, new RegExp(`dispatch ${stray.dispatchSeq} `));
+  assert.doesNotMatch(r.stderr, /"blocked"|as blocked/);
+  assert.strictEqual(stateOf().missions[missionId].status, 'open');
+}
+
+// --- close: two dispatch records on one route refuse rather than let the
+// loser inherit the winner's fate (F3) ---------------------------------------
+{
+  const missionId = 'mterm-dup-route';
+  openM(missionId);
+  const first = authorLineage(missionId, {});
+  // A second registration against the identical route_seq — roster.js's own
+  // uniqueness is task_id plus a live seat, not route_seq, so this is a
+  // lawful (if malformed) sequence of real writer calls, not a hand-append.
+  const secondSeq = fx.registerDispatch(root, missionId, first.route.seq, 'executor-claude', 'claude');
+
+  const { r } = closeWinningChain(missionId);
+  assert.strictEqual(r.status, 1, 'two dispatches on one route must refuse rather than pick a fate for either');
+  assert.match(r.stderr, new RegExp(`route ${first.route.seq}.*2 dispatch records`));
+  assert.match(r.stderr, new RegExp(`${first.dispatchSeq}`));
+  assert.match(r.stderr, new RegExp(`${secondSeq}`));
+  assert.strictEqual(stateOf().missions[missionId].status, 'open');
 }
 
 // --- argv fail-closed --------------------------------------------------------
