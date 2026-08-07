@@ -18,6 +18,10 @@ its job, not a repair.
 Each machine script's `--help` is the authoritative CLI reference; the
 invocations below follow the machine spec.
 
+Resolve `<plugin-root>` from the loaded skill path (two directories above this
+`skills/doctor` directory). Hook-only environment variables are not guaranteed
+inside an ordinary Codex shell.
+
 ## Checks — run and report all of them
 
 Report every check even when it passes. A report that only lists problems
@@ -27,7 +31,7 @@ legitimate outcome and is stated per check, not implied by silence.
 1. **Environment preflight.** With the tree present:
 
    ```
-   node "${CLAUDE_PLUGIN_ROOT}/machine/src/preflight.js" run .maestro
+   node "<plugin-root>/machine/src/preflight.js" run .maestro
    ```
 
    probes node, git, codex (version and login status), gemini, and gh and
@@ -55,13 +59,13 @@ legitimate outcome and is stated per check, not implied by silence.
    reconciliation. Report counts: alive, finished, unknown/zombie (rostered
    but no live task), unrostered (live task no seat claims). Report "unknown"
    rather than guessing from a stale entry. Any drift → fix:
-   `node "${CLAUDE_PLUGIN_ROOT}/machine/src/roster.js" reconcile .maestro`
+   `node "<plugin-root>/machine/src/roster.js" reconcile .maestro`
    (named, not run — reconcile writes roster.json).
 
 5. **Holds.**
 
    ```
-   node "${CLAUDE_PLUGIN_ROOT}/machine/src/hold.js" list .maestro
+   node "<plugin-root>/machine/src/hold.js" list .maestro
    ```
 
    Report unresolved count, severities, the oldest hold's age, and which

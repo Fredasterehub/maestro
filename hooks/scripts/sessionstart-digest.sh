@@ -47,7 +47,7 @@ cat >/dev/null 2>&1 || true
 
 POSTURE=""
 if [ -n "$PLUGIN_ROOT" ] && [ -f "$PLUGIN_ROOT/hooks/posture.md" ]; then
-  POSTURE=$(cat "$PLUGIN_ROOT/hooks/posture.md" 2>/dev/null) || POSTURE=""
+  POSTURE=$(head -c 7000 "$PLUGIN_ROOT/hooks/posture.md" 2>/dev/null) || POSTURE=""
   # The posture cites machine CLIs as ${CLAUDE_PLUGIN_ROOT}/... — a variable
   # only hooks resolve, not the session's own shell. Interpolate it here so
   # the injected text carries an absolute path the session can actually run.
@@ -101,35 +101,39 @@ if (state && typeof state === 'object') {
 
 try {
   const rows = fs.readFileSync(m('holds.jsonl'), 'utf8').split('\n').filter(Boolean);
-  let open = 0;
+  const records = [];
   for (const row of rows) {
     try {
-      const h = JSON.parse(row);
-      if (h && typeof h === 'object') {
-        if (h.status != null ? String(h.status) !== 'resolved' : h.resolved !== true) open++;
-      }
+      const record = JSON.parse(row);
+      if (record && typeof record === 'object' && !Array.isArray(record)) records.push(record);
     } catch {}
   }
-  lines.push(`holds: ${open} open of ${rows.length} recorded`);
+  const resolved = new Set(
+    records
+      .filter((r) => r.kind === 'resolve' && Number.isSafeInteger(r.park_seq))
+      .map((r) => r.park_seq)
+  );
+  const parks = records.filter((r) => r.kind === 'park' && Number.isSafeInteger(r.seq));
+  const open = parks.filter((r) => !resolved.has(r.seq));
+  lines.push(`holds: ${open.length} open of ${parks.length} parked`);
 } catch {
   lines.push('holds: none recorded');
 }
 
 const roster = readJson(m('roster.json'));
-if (roster && typeof roster === 'object') {
-  let entries = Array.isArray(roster) ? roster
-    : Array.isArray(roster.seats) ? roster.seats
-    : Array.isArray(roster.workers) ? roster.workers
-    : Object.values(roster);
-  entries = entries.filter((e) => e && typeof e === 'object');
+if (roster && typeof roster === 'object' && Array.isArray(roster.entries)) {
+  const entries = roster.entries.filter((entry) => entry && typeof entry === 'object' && !Array.isArray(entry));
   const counts = {};
-  for (const e of entries) { const s = String(e.status || 'unknown'); counts[s] = (counts[s] || 0) + 1; }
-  const parts = Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(', ');
+  for (const entry of entries) {
+    const status = String(entry.status || 'unknown');
+    counts[status] = (counts[status] || 0) + 1;
+  }
+  const parts = Object.entries(counts).map(([status, count]) => `${count} ${status}`).join(', ');
   let line = `roster: ${entries.length} seat(s)${parts ? ` (${parts})` : ''}`;
-  if (counts.alive) line += ' — session-bound workers do not survive restarts: reconcile against live tasks before trusting "alive"';
+  if (counts.alive) line += ' — reconcile session-bound workers against live tasks before trusting "alive"';
   lines.push(line);
 } else {
-  lines.push('roster: empty');
+  lines.push('roster: empty or unrecognized');
 }
 
 process.stdout.write(lines.join('\n'));
@@ -158,6 +162,7 @@ fi
 CONTEXT="${POSTURE}
 
 ${DIGEST}"
+CONTEXT=$(printf '%s' "$CONTEXT" | head -c 12500) || true
 
 # --- emit --------------------------------------------------------------------
 

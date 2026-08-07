@@ -36,9 +36,9 @@ record where to look, not what was seen.
 
 | Finding | Home | How |
 |---|---|---|
-| Progress or remaining work on an open mission | `.maestro/missions/<id>/progress.jsonl` | `node "${CLAUDE_PLUGIN_ROOT}/machine/src/mission.js" checkpoint .maestro <id> ...` with `{step, done_evidence, next}` |
+| Progress or remaining work on an open mission | `.maestro/missions/<id>/progress.jsonl` | `node "<plugin-root>/machine/src/mission.js" checkpoint .maestro <id> ...` with `{step, done_evidence, next}` |
 | Mission-scoped evidence, research, sealed corpus | `.maestro/missions/<id>/artifacts/` | Write the file; reference it from the checkpoint |
-| Unresolved operator decision, parked disagreement, undone work with no mission home | Holds queue | `node "${CLAUDE_PLUGIN_ROOT}/machine/src/hold.js" park .maestro ...` |
+| Unresolved operator decision, parked disagreement, undone work with no mission home | Holds queue | `node "<plugin-root>/machine/src/hold.js" park .maestro ...` |
 | Project convention or fact every future session in this repo needs | Project `CLAUDE.md` | Read it, integrate, prune — see writing discipline |
 | Cross-project operator preference | `~/.claude/CLAUDE.md` | Same discipline |
 | Already recorded (ledger, git, brief, existing doc) | Nowhere | Duplication is rot, not safety |
@@ -53,6 +53,10 @@ script is the sole sanctioned writer of its record kind, and a hand-written
 line breaks the evidence chain the ledger exists for. Each script's `--help`
 is the authoritative CLI reference. Prose homes (CLAUDE.md files, artifacts)
 are written directly.
+
+Resolve `<plugin-root>` from the loaded skill path (two directories above this
+`skills/handoff` directory). Hook-only environment variables are not
+guaranteed inside an ordinary Codex shell.
 
 ## 3. Writing discipline
 

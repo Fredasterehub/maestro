@@ -56,20 +56,24 @@ exist so that never has to happen. `<treeRoot>` is the project's `.maestro/`
 directory. Each script's `--help` is the authority on exact flags and
 arguments — this table is a map, not a manual.
 
+Resolve `<plugin-root>` from the loaded skill path (two directories above this
+`skills/maestro` directory). Hook-only plugin-root environment variables are
+not guaranteed inside an ordinary model shell.
+
 ```
-node "${CLAUDE_PLUGIN_ROOT}/machine/src/scaffold.js"   <treeRoot>                            # create the genesis-seeded .maestro/ tree (no subcommand); also gitignores .maestro/ in the project
-node "${CLAUDE_PLUGIN_ROOT}/machine/src/preflight.js"  run <treeRoot>                        # probe node/codex/gemini/git/gh -> state.json.preflight
-node "${CLAUDE_PLUGIN_ROOT}/machine/src/validators.js" validate-brief|validate-envelope|validate-deviation|validate-friction|validate-stop   # document JSON via stdin; never throws, reports {ok, errors}
-node "${CLAUDE_PLUGIN_ROOT}/machine/src/mission.js"    open|record-envelope|record-consult|checkpoint|close <treeRoot> ...   # mission lifecycle; close refuses without cross-family approve + passing gate
-node "${CLAUDE_PLUGIN_ROOT}/machine/src/gate.js"       run-gate|check-honesty <treeRoot> ... # run-gate is the ONLY producer of "tests pass" evidence
-node "${CLAUDE_PLUGIN_ROOT}/machine/src/hold.js"       park|list|resolve <treeRoot> ...      # S2/S3 parks and the operator decision queue
-node "${CLAUDE_PLUGIN_ROOT}/machine/src/deviate.js"    record-deviation <treeRoot>           # deviation record {reported_by, expected, actual, summary} via stdin
-node "${CLAUDE_PLUGIN_ROOT}/machine/src/friction.js"   record|rates <treeRoot> ...           # friction ledger: ladder-engaged|seat-degraded|worker-died|revise-verdict; rates = the evidence /maestro:audit reads
-node "${CLAUDE_PLUGIN_ROOT}/machine/src/stop.js"       write-stop <treeRoot> ...             # the only stop writer; fails closed outside the stop vocabulary; renders handoff.md
-node "${CLAUDE_PLUGIN_ROOT}/machine/src/roster.js"     register|heartbeat|mark|reconcile|retire <treeRoot> ...   # fleet registry over live tasks
-node "${CLAUDE_PLUGIN_ROOT}/machine/src/routing.js"    init|active|review-for <treeRoot> ... # active = effective routing (families, degraded tables); review-for <family> = routed reviewer
-node "${CLAUDE_PLUGIN_ROOT}/machine/src/settings.js"   read|write <treeRoot>                 # schema-clamped project knobs (landing mode, fleet ceiling, review floor); write takes a patch via stdin
-node "${CLAUDE_PLUGIN_ROOT}/machine/src/project.js"    views <treeRoot>                      # regenerate bounded projections in views/ — the only .maestro surfaces to read
+node "<plugin-root>/machine/src/scaffold.js"   <treeRoot>                            # create the genesis-seeded .maestro/ tree (no subcommand); also gitignores .maestro/ in the project
+node "<plugin-root>/machine/src/preflight.js"  run <treeRoot>                        # probe node/codex/gemini/git/gh -> state.json.preflight
+node "<plugin-root>/machine/src/validators.js" validate-brief|validate-envelope|validate-deviation|validate-friction|validate-stop   # document JSON via stdin; never throws, reports {ok, errors}
+node "<plugin-root>/machine/src/mission.js"    open|record-envelope|record-consult|checkpoint|close <treeRoot> ...   # mission lifecycle; close refuses without cross-family approve + passing gate
+node "<plugin-root>/machine/src/gate.js"       run-gate|check-honesty <treeRoot> ... # run-gate is the ONLY producer of "tests pass" evidence
+node "<plugin-root>/machine/src/hold.js"       park|list|resolve <treeRoot> ...      # S2/S3 parks and the operator decision queue
+node "<plugin-root>/machine/src/deviate.js"    record-deviation <treeRoot>           # deviation record {reported_by, expected, actual, summary} via stdin
+node "<plugin-root>/machine/src/friction.js"   record|rates <treeRoot> ...           # friction ledger: ladder-engaged|seat-degraded|worker-died|revise-verdict; rates = the evidence /maestro:audit reads
+node "<plugin-root>/machine/src/stop.js"       write-stop <treeRoot> ...             # the only stop writer; fails closed outside the stop vocabulary; renders handoff.md
+node "<plugin-root>/machine/src/roster.js"     register|heartbeat|mark|reconcile|retire <treeRoot> ...   # fleet registry over live tasks
+node "<plugin-root>/machine/src/routing.js"    init|active|review-for <treeRoot> ... # active = effective routing (families, degraded tables); review-for <family> = routed reviewer
+node "<plugin-root>/machine/src/settings.js"   read|write <treeRoot>                 # schema-clamped project knobs (landing mode, fleet ceiling, review floor); write takes a patch via stdin
+node "<plugin-root>/machine/src/project.js"    views <treeRoot>                      # regenerate bounded projections in views/ — the only .maestro surfaces to read
 ```
 
 Read state through `views/` projections and the session-start digest, not by
@@ -86,8 +90,8 @@ operator will act on, and that artifact needs somewhere to live that survives
 the session.
 
 ```
-node "${CLAUDE_PLUGIN_ROOT}/machine/src/scaffold.js" <treeRoot>
-node "${CLAUDE_PLUGIN_ROOT}/machine/src/preflight.js" run <treeRoot>
+node "<plugin-root>/machine/src/scaffold.js" <treeRoot>
+node "<plugin-root>/machine/src/preflight.js" run <treeRoot>
 ```
 
 Then open the mission through `mission.js open`. The reason for the ordering:

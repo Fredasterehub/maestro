@@ -74,6 +74,7 @@ function rosterAliveSeats(root) {
   }
   if (!roster || typeof roster !== 'object') return [];
   let entries = Array.isArray(roster) ? roster
+    : Array.isArray(roster.entries) ? roster.entries
     : Array.isArray(roster.seats) ? roster.seats
     : Array.isArray(roster.workers) ? roster.workers
     : Object.values(roster);
@@ -83,8 +84,14 @@ function rosterAliveSeats(root) {
 // Returns true when the transcript's last assistant message shows a live
 // supervision path — and also true when the transcript cannot be judged at
 // all (fail open: never block on evidence we could not read).
-function supervisionVisible(transcriptPath) {
+function supervisionVisible(input) {
   try {
+    // Codex exposes the stable final text directly. Prefer it over parsing the
+    // transcript, whose format the hook contract explicitly marks unstable.
+    if (typeof input.last_assistant_message === 'string') {
+      return SUPERVISION_TEXT_RE.test(input.last_assistant_message);
+    }
+    const transcriptPath = input.transcript_path;
     if (typeof transcriptPath !== 'string' || !transcriptPath) return true;
     const st = fs.statSync(transcriptPath);
     const start = Math.max(0, st.size - TRANSCRIPT_TAIL_BYTES);
@@ -146,7 +153,7 @@ try {
     process.exit(0);
   }
 
-  if (supervisionVisible(input.transcript_path)) {
+  if (supervisionVisible(input)) {
     writeBudget(root, BUDGET_START); // condition clean — reset
     process.exit(0);
   }
