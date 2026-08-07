@@ -1321,7 +1321,7 @@ function reviewInput(authorRouteSeq, overrides) {
       ...over,
     });
 
-  assert.strictEqual(config.revision, 6, 'this walk is over the r6 ladder');
+  assert.strictEqual(config.revision, routing.CURRENT_ROUTING_REVISION, 'this walk is over the shipped ladder, whatever revision it currently is');
   assert.strictEqual(reviewer('expert').seat, 'reviewer-sol-expert-rev', 'expert claude work is reviewed on the expert rung');
 
   // 1. The expert default is reserved and its review capacity is honoured.
@@ -1509,6 +1509,11 @@ function reviewInput(authorRouteSeq, overrides) {
   assert.strictEqual(geminiAuthor.worker_model, 'gemini-3.1-pro-preview');
   assert.strictEqual(typeof geminiAuthor.worker_effort, 'string');
   assert.notStrictEqual(geminiAuthor.worker_effort, '');
+
+  // Restore: this block borrowed the file-wide shared `root` fixture's lane
+  // state, and every block after it resolves reviewers against the default
+  // posture (both lanes 'auto') unless it says otherwise.
+  settings.write(root, { provider_lanes: { gpt: 'auto', gemini: 'auto' } });
 }
 
 // --- a crash between the two writes leaves an orphan, never a dangling pointer

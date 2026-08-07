@@ -69,11 +69,11 @@ function setPreflight(root, perProvider) {
 
   const config = JSON.parse(fs.readFileSync(path.join(root, 'routing', init.active_config), 'utf8'));
   // Literals, not the module's own constant, so this can actually fail:
-  // the highest shipped migration is r5->r6, so the current revision is 6
+  // the highest shipped migration is r6->r7, so the current revision is 7
   // and init stamps exactly that — never a label above or below the
   // content. Each slice that ships a migration raises both literals.
-  assert.strictEqual(CURRENT_ROUTING_REVISION, 6);
-  assert.strictEqual(config.revision, 6);
+  assert.strictEqual(CURRENT_ROUTING_REVISION, 7);
+  assert.strictEqual(config.revision, 7);
   // Class-keyed ladders (design §6.1/§6.2), now carrying the gpt standard rung
   // r5 seats: claude-authored recon/mechanical/standard leads with
   // reviewer-terra and falls to gemini behind it, and gemini-authored work of
