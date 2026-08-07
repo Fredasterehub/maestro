@@ -32,9 +32,14 @@
 // nothing: the seat is registered, supervision can see it, reconcile can
 // retire it. Ledger-first would leave a dispatch record for a seat no roster
 // entry backs — a mission that reads as dispatched with nothing to supervise,
-// which is corruption of exactly the picture recovery rebuilds. Everything
-// that CAN be refused is refused before either write, so the gap holds only
-// the append itself.
+// which is corruption of exactly the picture recovery rebuilds.
+//
+// Every refusal this module can decide is decided before either write: the
+// registration's shape, the route it references, the contradictions against
+// that route, and whether the resulting record fits the ledger's line ceiling.
+// What remains inside the gap is not a refusal but a failure — a lock timeout,
+// a full disk, a killed process. Each of those loses this one record, none of
+// them reaches roster.json, and none of them could have been decided earlier.
 //
 // EVIDENCE_LEVEL IS `unknown`, and honestly so: no writer anywhere in
 // machine/src reports what a worker's runtime actually was, so the outcome
@@ -46,7 +51,12 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { readJson, updateJson } = require('./atomic-json.js');
-const { appendRecord, readRecords } = require('./jsonl.js');
+const {
+  appendRecord,
+  readRecords,
+  LINE_CEILING,
+  SCHEMA_VERSION: LEDGER_SCHEMA_VERSION,
+} = require('./jsonl.js');
 const { ROUTE_KIND, SUPERSEDED_KIND, CLASS_ORDER } = require('./route.js');
 
 const ROSTER_BASENAME = 'roster.json';
@@ -246,9 +256,19 @@ function dispatchFactsOf(records, route) {
     mission_id: route.mission_id,
     seat: route.reviewer_seat,
     family: route.reviewer_family,
+    // The class and attempt of the work under review are properties of the
+    // attempt itself, so they describe this dispatch as truly as the author's.
     class: author.task_class,
     attempt: author.attempt,
-    resumed: author.resumed,
+    // A resume is not such a property: it is a fact about one worker's own
+    // run, and no record establishes a reviewer's. Review routes never stamp
+    // `resumed` and have no resume transition to reach one by (route.js only
+    // supersedes a review route through same-class-provider-reroute), so this
+    // ships the honest unknown. Borrowing the author's value would state one
+    // subject's fact under another subject's name — the silent-forever defect
+    // this whole record exists to prevent, and null is the same answer the
+    // unsourced-field rule gives everywhere else here.
+    resumed: null,
     // Requested against resolved, on the reviewer's own dimension: the
     // capacity the author route reserved, against the seat that reviews.
     requested_seat: isNonEmptyString(reserved.seat) ? reserved.seat : null,
@@ -259,9 +279,12 @@ function dispatchFactsOf(records, route) {
     host_effort: route.reviewer_host_effort,
     routing_config: route.routing_config,
     routing_digest: route.routing_digest,
-    // A review route records no revision of its own; the mission's is the
-    // author route's.
-    routing_revision: author.routing_revision,
+    // A review route records no revision of its own. The author route's
+    // revision numbers the AUTHOR's config, so it travels here only when both
+    // routes name the same config; after a mid-mission migration it would
+    // otherwise pair a new filename with an old revision number and describe
+    // neither.
+    routing_revision: route.routing_config === author.routing_config ? author.routing_revision : null,
     degraded_modes: author.degraded_modes,
   };
 }
@@ -273,9 +296,38 @@ function dispatchFactsOf(records, route) {
 function checkAgainstRoute(input, facts, routeSeq) {
   for (const key of ['seat', 'family', 'mission_id', 'class', 'attempt', 'resumed']) {
     if (!Object.prototype.hasOwnProperty.call(input, key)) continue;
+    // A null fact means no record establishes that subject for this phase, so
+    // there is nothing for the registration to contradict. Its word stays on
+    // the roster entry, where the fleet picture keeps unverified bookkeeping,
+    // and the ledger record still ships the unknown — refusing here instead
+    // would make a truthful worker choose between mislabelling itself and
+    // giving up its dispatch record.
+    if (facts[key] === null) continue;
     if (input[key] === facts[key]) continue;
     throw new Error(
       `registration ${key} ${JSON.stringify(input[key])} contradicts the route record at seq ${routeSeq}, which records ${JSON.stringify(facts[key])} — the record decides, and a registration that disagrees with it is refused rather than recorded`
+    );
+  }
+}
+
+// The ledger refuses a line over its byte ceiling, and that refusal is
+// knowable before anything is written — so it happens there, not in the gap
+// between the two writes. Measured against the widest header the record could
+// ever carry (a seq is at most MAX_SAFE_INTEGER wide, a ts is fixed width), so
+// the estimate can over-count but never under-count.
+function checkAppendable(payload, kind, correlationId, label) {
+  const widest = {
+    schema_version: LEDGER_SCHEMA_VERSION,
+    seq: Number.MAX_SAFE_INTEGER,
+    kind,
+    ts: new Date().toISOString(),
+    correlation_id: correlationId,
+    ...payload,
+  };
+  const bytes = Buffer.byteLength(JSON.stringify(widest) + '\n', 'utf8');
+  if (bytes > LINE_CEILING) {
+    throw new Error(
+      `${label} would serialize to ${bytes} bytes, over the ledger's ${LINE_CEILING}-byte line ceiling — refused before the roster write, so no seat is registered whose dispatch record could never be appended`
     );
   }
 }
@@ -340,6 +392,22 @@ function register(treeRoot, input) {
   entry.last_seen = now;
   entry.status = 'alive';
 
+  // Built before the roster write so the last decidable refusal — whether the
+  // ledger would take this line — is made while nothing has been written.
+  let dispatch = null;
+  if (references) {
+    dispatch = {
+      kind: DISPATCH_KIND,
+      payload: dispatchPayloadOf(facts, entry, input.route_seq, facts.phase),
+      correlation_id: isNonEmptyString(facts.mission_id) ? facts.mission_id : null,
+    };
+    // The label quotes the task id, so an oversized one is elided rather than
+    // echoed back at full length into an error message.
+    const shown =
+      input.task_id.length > 60 ? `${input.task_id.slice(0, 60)}… (${input.task_id.length} characters)` : input.task_id;
+    checkAppendable(dispatch.payload, dispatch.kind, dispatch.correlation_id, `the dispatch record for task_id "${shown}"`);
+  }
+
   updateJson(
     rosterPath(treeRoot),
     (current) => {
@@ -364,12 +432,8 @@ function register(treeRoot, input) {
   // ...and only now the telemetry. A crash here loses this record and leaves
   // both files intact (see the module header); the reverse order would leave a
   // dispatch nothing backs.
-  if (references) {
-    appendRecord(ledgerPath(treeRoot), {
-      kind: DISPATCH_KIND,
-      payload: dispatchPayloadOf(facts, entry, input.route_seq, facts.phase),
-      correlation_id: isNonEmptyString(facts.mission_id) ? facts.mission_id : null,
-    });
+  if (dispatch !== null) {
+    appendRecord(ledgerPath(treeRoot), dispatch);
   }
   return entry;
 }
@@ -700,9 +764,14 @@ commands:
               a crash between the two writes loses one telemetry datum and
               never corrupts either file. seat, family, mission_id, class,
               attempt and resumed are CHECKED against the route record and
-              refused on contradiction, never taken as given. Without
-              route_seq nothing is appended: with no record to source from,
-              every field would be the caller's own word.
+              refused on contradiction, never taken as given. A dimension the
+              route does not establish is not checked and is recorded null:
+              on a REVIEW registration that is "resumed", since no record
+              anywhere carries a reviewer's resume status — the claim stays on
+              the roster entry as fleet bookkeeping and never enters the
+              ledger as if it had been sourced. Without route_seq nothing is
+              appended at all: with no record to source from, every field
+              would be the caller's own word.
   heartbeat   refreshes last_seen on an alive entry; a non-alive entry is
               refused (re-classify through mark instead).
   mark        sets status to one of alive | zombie | dead | finished and

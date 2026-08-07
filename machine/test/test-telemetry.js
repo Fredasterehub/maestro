@@ -323,10 +323,41 @@ function registration(missionId, overrides) {
   assert.strictEqual(reviewDispatch.host_model, null);
   assert.strictEqual(reviewDispatch.requested_seat, 'reviewer-claude', "the author route's reserved reviewer");
   // Class, attempt and degraded modes belong to the author route the review
-  // route names — a review route carries none of them itself.
+  // route names — they are properties of the attempt being reviewed, so they
+  // describe this dispatch as much as the author's.
   assert.strictEqual(reviewDispatch.class, 'expert');
   assert.strictEqual(reviewDispatch.attempt, 1);
   assert.deepStrictEqual(reviewDispatch.degraded_modes, ['gemini_down']);
+
+  // A resume is NOT such a property: it is a fact about one worker's own run.
+  // No record anywhere establishes a reviewer's, so the record says so rather
+  // than borrowing the author's — which would state one subject's fact under
+  // another subject's name, permanently and silently.
+  assert.strictEqual(
+    reviewDispatch.resumed,
+    null,
+    "a review dispatch's resumed is unknown, never the author attempt's value"
+  );
+  assert.notStrictEqual(reviewDispatch.resumed, authorRoute.resumed);
+
+  // And because it is unsourced rather than contradicted, a reviewer that
+  // truthfully resumed can still register and say so: the claim stays on the
+  // roster entry as fleet bookkeeping, and the audit record keeps its null.
+  // (This is also why no one-dispatch-per-route fence lives here: a review
+  // route has no resume transition to reserve a successor with, so this
+  // re-registration is the only shape a reviewer resume can take.)
+  roster.mark(root, `${missionId}-review`, 'dead');
+  const resumedEntry = roster.register(root, {
+    seat: 'reviewer-claude',
+    task_id: `${missionId}-review-resumed`,
+    family: 'claude',
+    mission_id: missionId,
+    route_seq: reviewRoute.seq,
+    resumed: true,
+  });
+  assert.strictEqual(resumedEntry.resumed, true, 'the roster entry keeps the claim');
+  const resumedDispatch = dispatchRecords(root).find((r) => r.task_id === `${missionId}-review-resumed`);
+  assert.strictEqual(resumedDispatch.resumed, null, 'the ledger record still records only what a record establishes');
 
   // A reviewer registration whose seat is not the one the review route named.
   assert.throws(
@@ -339,6 +370,78 @@ function registration(missionId, overrides) {
         route_seq: reviewRoute.seq,
       }),
     /seat "reviewer-degraded-sonnet" contradicts the route record/
+  );
+}
+
+// === an unappendable record is refused before the roster write ==============
+// The gap between the two writes must hold nothing that could have been
+// decided earlier. The ledger's line ceiling is knowable up front, so a
+// registration whose record could not be appended is refused before the
+// roster write rather than after it — otherwise a lawful input registers a
+// seat and then loses its dispatch record permanently, with no re-emit path.
+{
+  const { root, missionId } = newTree();
+  const route = reserve(root, hostedAuthor(missionId));
+
+  assert.throws(
+    () => roster.register(root, registration(missionId, { task_id: 'x'.repeat(9000), route_seq: route.seq })),
+    /over the ledger's 8192-byte line ceiling/
+  );
+  assert.strictEqual(readRoster(root).entries.length, 0, 'the refusal reached no file at all');
+  assert.strictEqual(dispatchRecords(root).length, 0);
+
+  // The same registration at a sane size is unaffected.
+  roster.register(root, registration(missionId, { route_seq: route.seq }));
+  assert.strictEqual(dispatchRecords(root).length, 1);
+}
+
+// === a review dispatch's revision travels with the config it belongs to =====
+{
+  const { root, missionId } = newTree();
+  const authorRoute = reserve(root, hostedAuthor(missionId));
+  roster.register(root, registration(missionId, { route_seq: authorRoute.seq }));
+  const identity = {
+    source_head: 'c'.repeat(40),
+    source_tree: 'd'.repeat(40),
+    patch_digest: 'sha256:' + 'e'.repeat(64),
+    dirty: false,
+  };
+  // A review route reserved under a LATER routing config than the author's. It
+  // records that config and its digest but no revision number of its own, and
+  // the author route's revision belongs to the author's config — so pairing
+  // them would state a revision that does not describe the named config.
+  const reviewRoute = reserveReview(root, {
+    mission_id: missionId,
+    author_route_seq: authorRoute.seq,
+    author_attempt: 1,
+    author_dispatch_seq: dispatchRecords(root)[0].seq,
+    artifact_identity: identity,
+    reviewer_seat: 'reviewer-claude',
+    reviewer_family: 'claude',
+    reviewer_model: 'sonnet-5',
+    reviewer_effort: 'high',
+    reviewer_host_model: null,
+    reviewer_host_effort: null,
+    independence: 'cross-family',
+    routing_config: 'routing-2026-08-07-1.json',
+    routing_digest: 'sha256:' + 'f'.repeat(64),
+    replacement_reason: null,
+  });
+  roster.register(root, {
+    seat: 'reviewer-claude',
+    task_id: `${missionId}-review`,
+    family: 'claude',
+    mission_id: missionId,
+    route_seq: reviewRoute.seq,
+  });
+
+  const reviewDispatch = dispatchRecords(root).find((r) => r.phase === 'review');
+  assert.strictEqual(reviewDispatch.routing_config, 'routing-2026-08-07-1.json');
+  assert.strictEqual(reviewDispatch.routing_digest, 'sha256:' + 'f'.repeat(64));
+  assert.strictEqual(
+    reviewDispatch.routing_revision,
+    null,
+    'a revision number describes one config; it does not travel to a different one'
   );
 }
 
