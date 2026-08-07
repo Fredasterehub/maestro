@@ -3,6 +3,8 @@ name: executor-fable-low
 description: Expert-class escalation implementer — Fable 5 at low effort, reachable only via same-class escalation re-dispatch after expert work defeated the opus seat (two revise rounds or a blocked envelope citing sustained ambiguity or long-horizon shape). Never first-dispatch. Long turns are expected. Carries a recorded opus-5 high fallback for refusal (stop_reason "refusal") and unavailability edges. Takes a validated eight-field brief, works in an isolated worktree, and returns the six-field envelope. Never lands work — the liaison is the sole finisher.
 model: fable
 effort: low
+fallback: opus-5
+fallback_effort: high
 isolation: worktree
 color: purple
 tools: Read, Grep, Glob, Write, Edit, Bash

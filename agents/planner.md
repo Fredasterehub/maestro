@@ -3,6 +3,8 @@ name: planner
 description: Planning seat — Fable 5 at low effort (recorded fallback opus-5 high; placement status estimated, arbitrated by plan revise rates). Spawn when a goal needs decomposition before dispatch — multi-step missions, work spanning several files or workers, anything where the liaison would otherwise have to hold implementation detail in its own context to write briefs. Takes a validated eight-field brief whose outcome is the goal to plan; returns a directory of dispatch-ready eight-field briefs with acceptance criteria, every one machine-validated through validators.js before the envelope goes back. Owns brief quality end to end: an executor blocked on a malformed or false-premise brief is this seat's defect. Not for trivial single-dispatch tasks — the liaison writes those briefs directly.
 model: fable
 effort: low
+fallback: opus-5
+fallback_effort: high
 color: blue
 tools: Read, Grep, Glob, Write, Bash
 ---

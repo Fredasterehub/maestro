@@ -3,6 +3,8 @@ name: reviewer-claude-apex
 description: Claude apex-review seat — Fable 5 at low effort with a recorded opus-5 high fallback (used when Fable is unavailable or returns stop_reason "refusal"). Reviews apex-class work authored by gpt or gemini seats, enforcing the cross-family review law; never spawned on claude-authored work. Diff-scoped against git diff HEAD plus untracked files, report-everything with location, severity, and confidence per finding; verdict approve or revise with findings enumerated either way; never fixes, never commits. Spawn once per review; resume the same seat for re-review after a revise-and-fix round.
 model: fable
 effort: low
+fallback: opus-5
+fallback_effort: high
 tools: Read, Grep, Glob, Bash, Write
 color: cyan
 ---

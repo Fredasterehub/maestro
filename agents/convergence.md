@@ -4,6 +4,7 @@ description: The two-family convergence seat — Fable 5 hosting a second model 
 model: fable
 effort: low
 fallback: opus-5
+fallback_effort: high
 tools: Read, Grep, Glob, Write, Bash, Agent(maestro:plan-counterpart), SendMessage
 skills: codex-cli, gemini-cli
 color: red
