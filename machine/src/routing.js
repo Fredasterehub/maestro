@@ -645,36 +645,19 @@ function readPreflight(treeRoot) {
 // The operator lane state and the degraded-review posture, in ONE settings
 // read (two reads would let a settings write between them mix two snapshots
 // into one legality decision), through settings' own clamped read boundary —
-// never a hand parse of settings.json. Until Slice 3a lands these knobs in
-// settings' SCHEMA, clampDoc drops them as {rule: "unknown"} clamps whose
-// `from` field carries the on-disk value; that report is the clamps
-// channel's documented contract, so consuming it here is reading settings'
-// own output, not reaching around it. Recovery is what keeps a lane the
-// operator has declared down from publishing as "auto" against the data on
-// disk. Both values are consumed conservatively — only the exact tokens
-// "operator-down" and "hold" ever change behaviour, so a malformed
-// hand-edit degrades nothing and holds nothing, same as a fresh tree. Once
-// the schema carries the keys, the clamped value wins and the recovery arm
-// goes dead; it can be deleted with 3a.
+// never a hand parse of settings.json. Both knobs are settings SCHEMA keys
+// (Slice 3a), so they survive sanctioned writes of unrelated knobs and the
+// clamped read always carries them. Both are consumed conservatively — only
+// the exact tokens "operator-down" and "hold" ever change behaviour, so a
+// malformed hand-edit degrades nothing and holds nothing, same as a fresh
+// tree.
 function readOperatorSettings(treeRoot) {
-  const { settings, clamps } = readSettings(treeRoot);
-  const recovered = {};
-  for (const clamp of clamps) {
-    if (clamp.rule === 'unknown' && (clamp.key === 'provider_lanes' || clamp.key === 'degraded_review')) {
-      recovered[clamp.key] = clamp.from;
-    }
-  }
-  const lanes = Object.prototype.hasOwnProperty.call(settings, 'provider_lanes')
-    ? settings.provider_lanes
-    : recovered.provider_lanes;
-  const posture = Object.prototype.hasOwnProperty.call(settings, 'degraded_review')
-    ? settings.degraded_review
-    : recovered.degraded_review;
+  const { settings } = readSettings(treeRoot);
   return {
-    lanes: isPlainObject(lanes) ? lanes : {},
+    lanes: isPlainObject(settings.provider_lanes) ? settings.provider_lanes : {},
     // The hold posture is operator-selectable and never the default:
     // anything but an explicit "hold" resolves the degraded path.
-    posture: posture === 'hold' ? 'hold' : 'degraded-path',
+    posture: settings.degraded_review === 'hold' ? 'hold' : 'degraded-path',
   };
 }
 

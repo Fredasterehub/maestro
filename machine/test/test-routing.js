@@ -286,10 +286,9 @@ function setPreflight(root, perProvider) {
   const { root } = initTree('operator-down');
   // Preflight healthy: the degradation must come from settings alone.
   setPreflight(root, { codex: { routing: 'present' }, gemini: { routing: 'present' } });
-  // provider_lanes is not in settings' SCHEMA yet (it lands with 3a), so
-  // clampDoc drops it as a rule:"unknown" clamp; routing.js recovers the
-  // value from the clamps channel. The live tree already carries this key —
-  // publishing the lane as "auto" against it was finding N1.
+  // provider_lanes is a settings SCHEMA knob (3a), read through settings'
+  // clamped boundary. The live tree already carries this key — publishing
+  // the lane as "auto" against it was finding N1.
   fs.writeFileSync(
     path.join(root, 'settings.json'),
     JSON.stringify({ provider_lanes: { gpt: 'operator-down' } }) + '\n'
@@ -314,6 +313,27 @@ function setPreflight(root, perProvider) {
   assert.strictEqual(degraded.status, 0, degraded.stderr);
   assert.strictEqual(degraded.stdout.trim(), 'reviewer-degraded-opus');
   assert.match(degraded.stderr, /NOT cross-family review/);
+}
+
+// --- the lane state survives sanctioned settings writes (round-two R1) -------
+{
+  // R1's failure was that settings.write rebuilt the file from SCHEMA keys
+  // alone and stripped provider_lanes, so the recovered lane state silently
+  // reverted on any unrelated write. With the 3a knobs in SCHEMA the key is
+  // durable: an unrelated write must leave the operator-down lane on disk
+  // and operating.
+  const settingsMod = require(path.join(__dirname, '..', 'src', 'settings.js'));
+  const { root } = initTree('lane-durability');
+  setPreflight(root, { codex: { routing: 'present' }, gemini: { routing: 'present' } });
+  settingsMod.write(root, { provider_lanes: { gpt: 'operator-down' } });
+  settingsMod.write(root, { fleet_ceiling: 5 }); // the unrelated knob from R1's own reproduction
+
+  const onDisk = JSON.parse(fs.readFileSync(path.join(root, 'settings.json'), 'utf8'));
+  assert.strictEqual(onDisk.provider_lanes.gpt, 'operator-down', 'a sanctioned write of an unrelated knob must not strip the lane state off disk');
+
+  const active = JSON.parse(run(['active', root]).stdout);
+  assert.strictEqual(active.provider_lanes.gpt, 'operator-down', 'the lane state survives the write and keeps operating');
+  assert.deepStrictEqual(active.degraded_modes, ['codex_down']);
 }
 
 // --- the hold posture operates through the same settings channel -------------
