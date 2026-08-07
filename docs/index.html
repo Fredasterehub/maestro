@@ -136,7 +136,7 @@
       <div class="ledger-bar"><span>.maestro/ledger.jsonl</span><span class="ledger-tag">append-only</span></div>
       <div class="ledger-body">
 <pre><code><span class="ln">01</span> {<span class="k">"seq"</span>:41,<span class="k">"kind"</span>:<span class="v-open">"mission-open"</span>,<span class="k">"payload"</span>:{<span class="k">"mission_id"</span>:<span class="v">"m-014"</span>,<span class="k">"title"</span>:<span class="v">"rate-limit /export"</span>}}
-<span class="ln">02</span> {<span class="k">"seq"</span>:42,<span class="k">"kind"</span>:<span class="v">"route-reserved"</span>,<span class="k">"payload"</span>:{<span class="k">"class"</span>:<span class="v">"standard"</span>,<span class="k">"seat"</span>:<span class="v">"executor-claude-standard"</span>,<span class="k">"reviewer"</span>:<span class="v">"reviewer-gemini"</span>}}
+<span class="ln">02</span> {<span class="k">"seq"</span>:42,<span class="k">"kind"</span>:<span class="v">"route"</span>,<span class="k">"payload"</span>:{<span class="k">"phase"</span>:<span class="v">"author"</span>,<span class="k">"task_class"</span>:<span class="v">"standard"</span>,<span class="k">"resolved_seat"</span>:<span class="v">"executor-claude-standard"</span>,<span class="k">"reserved_review"</span>:{<span class="k">"seat"</span>:<span class="v">"reviewer-gemini"</span>}}}
 <span class="ln">03</span> {<span class="k">"seq"</span>:43,<span class="k">"kind"</span>:<span class="v">"gate"</span>,<span class="k">"payload"</span>:{<span class="k">"cmd"</span>:<span class="v">"npm test"</span>,<span class="k">"exit_code"</span>:<span class="bad">1</span>}}
 <span class="ln">04</span> {<span class="k">"seq"</span>:44,<span class="k">"kind"</span>:<span class="v-warn">"revise-verdict"</span>,<span class="k">"payload"</span>:{<span class="k">"seat"</span>:<span class="v">"reviewer-gemini"</span>,<span class="k">"detail"</span>:<span class="v">"round 1"</span>}}
 <span class="ln">05</span> {<span class="k">"seq"</span>:45,<span class="k">"kind"</span>:<span class="v">"gate"</span>,<span class="k">"payload"</span>:{<span class="k">"cmd"</span>:<span class="v">"npm test"</span>,<span class="k">"exit_code"</span>:<span class="ok">0</span>}}
@@ -223,7 +223,7 @@
         </g>
       </svg>
       <p class="crest-name">gpt</p>
-      <p class="crest-note">implements, reviews</p>
+      <p class="crest-note">implements, reviews — ships dormant</p>
       <p class="crest-rev">reviewed by <b>claude</b> · <b>gemini</b></p>
     </li>
     <li class="crest crest--gemini">
