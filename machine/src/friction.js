@@ -30,9 +30,16 @@ const { validateFriction, FRICTION_KINDS } = require('./validators.js');
 // The join side of §16.5 reads across every kind these three modules are the
 // sole writer of, never restating a kind string or a closed vocabulary this
 // codebase already names once — the same discipline validators.js's
-// FRICTION_KINDS import above already follows.
-const { CLASS_ORDER, ROUTE_KIND, SUPERSEDED_KIND, ESCALATION_TRANSITIONS } = require('./route.js');
+// FRICTION_KINDS import above already follows. DISPATCH_OUTCOME_KIND in
+// particular is read rather than re-derived from route-superseded's own
+// transition/reason pair: mission.js's closeMission already classified every
+// non-winning dispatch once (its own closed TERMINAL_OUTCOMES vocabulary),
+// and a second, independent classification of the same fact here is a second
+// place for that mapping to drift out of sync with the one the close itself
+// used — repair round 1, F4.
+const { CLASS_ORDER, ROUTE_KIND, SUPERSEDED_KIND } = require('./route.js');
 const { DISPATCH_KIND, OUTCOME_KIND: PROFILE_OUTCOME_KIND } = require('./roster.js');
+const { DISPATCH_OUTCOME_KIND } = require('./mission.js');
 // review-outcome and mission-close have no dedicated export — mission.js's
 // own classify() and closePayloadOf reference them as the same literal
 // strings, so this matches the existing convention rather than inventing one.
@@ -42,6 +49,13 @@ const MISSION_CLOSE_KIND = 'mission-close';
 // becomes worth proposing — never where a status is promoted, which is why
 // this module never writes anything back for it.
 const EXPERIMENT_PROPOSAL_THRESHOLD = 20;
+// Two provider-reroute transitions read off dispatch-outcome (F4); this stays
+// only for the one thing dispatch-outcome cannot tell us — whether a mission
+// ever opened a convergence route at all (§16.5's "fraction still reaching
+// convergence"), which has no terminal-outcome word of its own since
+// convergence is a fresh adjudication route, not a fate the superseded
+// dispatch itself is classified into.
+const CONVERGENCE_TRANSITION = 'convergence';
 
 const LEDGER_BASENAME = 'ledger.jsonl';
 const UNKNOWN_MISSION = '(unknown mission)';
@@ -101,8 +115,32 @@ function emptyKindCounts() {
   return counts;
 }
 
+// `dispatched` and `closed` are DIFFERENT UNITS and must never be divided
+// into a rate (repair round 1, F5): `dispatched` counts author ATTEMPTS at
+// this class (excluding resumes — a resume "is not a new attempt",
+// route.js's own words), `closed` counts MISSIONS whose winning attempt's
+// class is this one at the time it won. A mission that escalated from
+// standard to expert reads `standard.dispatched: 1` and `expert.closed: 1` —
+// one mission, two cells, on purpose. `initial_dispatches` and
+// `initial_class_closes` share ONE unit (missions) on purpose, so
+// `initial_class_closes / initial_dispatches` is a ratio the data actually
+// supports: of the missions whose FIRST attempt was dispatched in this
+// class, how many eventually closed, whatever class they closed under.
+// `first_pass_unknown` is closes counted in `closed` whose dispatch/route
+// record this join could not locate — reported as its own count, never
+// folded silently into a `mission_first_pass`/`attempt_first_pass` zero
+// (repair round 1, F11).
 function emptyClassCell() {
-  return { dispatched: 0, closed: 0, mission_first_pass: 0, attempt_first_pass: 0, degraded_path_closes: 0 };
+  return {
+    dispatched: 0,
+    closed: 0,
+    initial_dispatches: 0,
+    initial_class_closes: 0,
+    mission_first_pass: 0,
+    attempt_first_pass: 0,
+    degraded_path_closes: 0,
+    first_pass_unknown: 0,
+  };
 }
 
 function meanOf(values) {
@@ -112,20 +150,24 @@ function meanOf(values) {
 // The fable-low PROFILE, not any one seat's name: `executor-fable-low`,
 // `planner` and `convergence` all pin fable-5/low (design §4/§16.5), and a
 // rescue is a fact about the profile's own behaviour under escalation, not
-// about which seat happened to carry it this time.
+// about which seat happened to carry it this time. `startsWith`, not a bare
+// substring test, so a future model whose name merely CONTAINS "fable" (or a
+// seat's own name leaking into a model-shaped field) does not silently join
+// this population.
 function isFableLowProfile(model, effort) {
-  return typeof model === 'string' && /fable/i.test(model) && effort === 'low';
+  return typeof model === 'string' && model.toLowerCase().startsWith('fable') && effort === 'low';
 }
 
 // computeAttemptRates(records) -> { by_class, rescue, experiment_proposals },
 // joined across the dispatch, route, route-superseded, review-outcome,
-// mission-close and profile-outcome streams by dispatch_seq / route_seq /
-// mission_id — never by asserting a shape none of those writers promised.
-// Anything this join cannot locate (a winning dispatch_seq with no
-// "dispatch" record behind it, a fable-low fallback whose mission never
-// closed) is left OUT of the count it would have fed rather than guessed at:
-// a missing join is a fact this module cannot state, not a zero to report in
-// its place.
+// dispatch-outcome, mission-close and profile-outcome streams by
+// dispatch_seq / route_seq / mission_id — never by asserting a shape none of
+// those writers promised. Anything this join cannot locate (a winning
+// dispatch_seq with no "dispatch" record behind it, a rescue whose dispatch
+// record cannot be found to time it) is left OUT of the count it would have
+// fed, or surfaced in its own "could not resolve" counter, rather than
+// guessed at: a missing join is a fact this module cannot state, not a zero
+// to report in its place.
 function computeAttemptRates(records) {
   const dispatchesBySeq = new Map();
   const authorDispatches = [];
@@ -134,6 +176,12 @@ function computeAttemptRates(records) {
     dispatchesBySeq.set(r.seq, r);
     if (r.phase === 'author') authorDispatches.push(r);
   }
+  // A resume "is not a new attempt" (route.js's own words at the writer that
+  // enforces it) — it repeats the same attempt number under the same
+  // profile, so it is excluded from every attempt-count below (repair round
+  // 1, F5). It is still a real dispatch and still eligible to WIN a close;
+  // only the counting of attempts excludes it.
+  const freshAuthorDispatches = authorDispatches.filter((d) => d.resumed !== true);
 
   const routesBySeq = new Map();
   for (const r of records) {
@@ -142,6 +190,7 @@ function computeAttemptRates(records) {
 
   const supersessions = records.filter((r) => isPlainObject(r) && r.kind === SUPERSEDED_KIND);
   const reviewOutcomes = records.filter((r) => isPlainObject(r) && r.kind === REVIEW_OUTCOME_KIND);
+  const dispatchOutcomes = records.filter((r) => isPlainObject(r) && r.kind === DISPATCH_OUTCOME_KIND);
   const closes = records.filter((r) => isPlainObject(r) && r.kind === MISSION_CLOSE_KIND);
   const profileOutcomes = records.filter((r) => isPlainObject(r) && r.kind === PROFILE_OUTCOME_KIND);
 
@@ -155,11 +204,34 @@ function computeAttemptRates(records) {
     if (held === undefined || c.seq > held.seq) closeByMission.set(c.mission_id, c);
   }
 
+  // A route that was itself superseded is a route mission.js's own close
+  // logic disregards when judging the AUTHOR it belonged to
+  // (mission.js:1722-1739's supersededReviewSeqs filter) — attempt_first_pass
+  // mirrors that exclusion exactly (repair round 1, F3), rather than reading
+  // every review-outcome record a reroute chain ever touched.
+  const supersededRouteSeqs = new Set(supersessions.map((s) => s.predecessor_route_seq));
+
   const by_class = {};
   for (const cls of CLASS_ORDER) by_class[cls] = emptyClassCell();
-  for (const d of authorDispatches) {
+
+  for (const d of freshAuthorDispatches) {
     if (!by_class[d.class]) by_class[d.class] = emptyClassCell();
     by_class[d.class].dispatched += 1;
+  }
+
+  // The mission's OWN first attempt, per mission — the earliest fresh
+  // (non-resumed) attempt-1 dispatch by ledger seq. This is a MISSION fact
+  // (one per mission), the same unit `closed` counts in, unlike `dispatched`
+  // above which counts ATTEMPTS — see emptyClassCell's comment (F5).
+  const initialDispatchByMission = new Map();
+  for (const d of freshAuthorDispatches) {
+    if (d.attempt !== 1) continue;
+    const held = initialDispatchByMission.get(d.mission_id);
+    if (held === undefined || d.seq < held.seq) initialDispatchByMission.set(d.mission_id, d);
+  }
+  for (const d of initialDispatchByMission.values()) {
+    if (!by_class[d.class]) by_class[d.class] = emptyClassCell();
+    by_class[d.class].initial_dispatches += 1;
   }
 
   const cellCloses = new Map(); // "class::seat" -> closes
@@ -174,6 +246,12 @@ function computeAttemptRates(records) {
       by_class[cls].degraded_path_closes += 1;
     }
 
+    const initial = initialDispatchByMission.get(close.mission_id);
+    if (initial !== undefined) {
+      if (!by_class[initial.class]) by_class[initial.class] = emptyClassCell();
+      by_class[initial.class].initial_class_closes += 1;
+    }
+
     if (isNonEmptyString(close.author_seat)) {
       const key = `${cls}::${close.author_seat}`;
       cellCloses.set(key, (cellCloses.get(key) || 0) + 1);
@@ -181,16 +259,22 @@ function computeAttemptRates(records) {
 
     const authorRoute = routesBySeq.get(close.author_route_seq);
     const winningDispatch = dispatchesBySeq.get(close.winning_author_dispatch_seq);
-    if (authorRoute === undefined || winningDispatch === undefined) continue;
+    if (authorRoute === undefined || winningDispatch === undefined) {
+      // The join this close needs cannot be made — surfaced on its own
+      // counter (F11), never folded silently into a first-pass zero.
+      by_class[cls].first_pass_unknown += 1;
+      continue;
+    }
 
-    // attempt_first_pass: the winning attempt's OWN review history. A
-    // reviewer reroute (same-class-provider-reroute) opens a new review
-    // route that keeps the same author_route_seq, so filtering on that one
-    // field already walks the whole reroute chain — no need to follow
-    // route-superseded separately here.
+    // attempt_first_pass: the winning attempt's OWN review history — every
+    // review route ever opened against the winning author route (a reviewer
+    // reroute opens a new one that keeps the same author_route_seq, so
+    // filtering on that field alone walks the whole reroute chain) EXCEPT
+    // one route.js itself superseded, since mission.js's own close disregards
+    // a replaced reviewer's verdict when judging the author (F3).
     const ownReviewRouteSeqs = new Set();
     for (const route of routesBySeq.values()) {
-      if (route.phase === 'review' && route.author_route_seq === close.author_route_seq) {
+      if (route.phase === 'review' && route.author_route_seq === close.author_route_seq && !supersededRouteSeqs.has(route.seq)) {
         ownReviewRouteSeqs.add(route.seq);
       }
     }
@@ -200,20 +284,23 @@ function computeAttemptRates(records) {
     if (attemptRevises === 0) by_class[cls].attempt_first_pass += 1;
 
     // mission_first_pass: the winning attempt is the mission's first AND the
-    // whole mission spent zero revise rounds, zero provider reroutes and
-    // zero profile escalations — read off route-superseded's own transition
-    // and reason (§9's closed vocabulary), never off a friction ping that may
-    // or may not have been separately recorded for the same event.
+    // whole mission spent zero revise rounds (every review-outcome "revise"
+    // recorded anywhere on the mission — a real revise round is a fact of
+    // the mission's history whether or not the route it landed on was later
+    // superseded, which is why this reads wider than attempt_first_pass's
+    // own-route filter above), zero provider reroutes and zero profile
+    // escalations. The latter two are read off the SAME "dispatch-outcome"
+    // records mission.js's own close already wrote for every non-winning
+    // dispatch (§16.3), not re-derived from route-superseded's
+    // transition/reason pair a second time (F4) — mission.js is this
+    // vocabulary's sole writer and its classification is the one this rate
+    // must agree with.
     const missionRevises = reviewOutcomes.filter(
       (ro) => ro.mission_id === close.mission_id && ro.verdict === 'revise'
     ).length;
-    const missionSupersessions = supersessions.filter((s) => s.mission_id === close.mission_id);
-    const providerReroutes = missionSupersessions.filter(
-      (s) => s.transition !== 'same-profile-resume' && s.reason === 'infrastructure'
-    ).length;
-    const profileEscalations = missionSupersessions.filter(
-      (s) => ESCALATION_TRANSITIONS.includes(s.transition) && s.reason === 'quality'
-    ).length;
+    const missionDispatchOutcomes = dispatchOutcomes.filter((o) => o.mission_id === close.mission_id);
+    const providerReroutes = missionDispatchOutcomes.filter((o) => o.outcome === 'provider-rerouted').length;
+    const profileEscalations = missionDispatchOutcomes.filter((o) => o.outcome === 'profile-escalated').length;
     const missionFirstPass =
       winningDispatch.attempt === 1 && missionRevises === 0 && providerReroutes === 0 && profileEscalations === 0;
     if (missionFirstPass) by_class[cls].mission_first_pass += 1;
@@ -232,43 +319,86 @@ function computeAttemptRates(records) {
     a.class === b.class ? a.seat.localeCompare(b.seat) : a.class.localeCompare(b.class)
   );
 
-  // Fable-low rescue metrics (§16.5/§16.6): every measure below is stated
-  // over the fable-low population alone, in its own terms — NEVER a raw
-  // comparison against opus. Production routing is selection-biased (opus
-  // sees ordinary work; fable-low sees work an escalation already required),
-  // so a ratio between the two would measure the routing, not the models.
-  const fableLow = profileOutcomes.filter((p) => isFableLowProfile(p.requested_worker_model, p.requested_worker_effort));
-  const fallbacks = fableLow.filter((p) => p.fallback_used === true);
-  const refusals = fallbacks.filter((p) => isNonEmptyString(p.fallback_reason) && /refus/i.test(p.fallback_reason));
+  // --- fable-low rescue metrics (§16.5/§16.6) ---------------------------
+  //
+  // Every measure below is stated over the fable-low population alone, in
+  // its own terms — NEVER a raw comparison against opus. Production routing
+  // is selection-biased (opus sees ordinary work; fable-low sees work an
+  // escalation already required), so a ratio between the two would measure
+  // the routing, not the models.
+  //
+  // The population that matters is split in two, and conflating them is
+  // exactly the defect repair round 1 found (F1): `fallback_used: true`
+  // means fable-low did NOT run — §16.2's own attribution rule counts that
+  // as OPUS execution. `fable_low_ran` (`fallback_used: false`) is the
+  // population where fable-low actually executed, and "was it rescued" —
+  // did that execution's own dispatch go on to win the close — is a question
+  // about THAT population, never about the fallback one.
+  const fableLowDispatches = freshAuthorDispatches.filter((d) => isFableLowProfile(d.worker_model, d.worker_effort));
+  const fableLowOutcomes = profileOutcomes.filter((p) => isFableLowProfile(p.requested_worker_model, p.requested_worker_effort));
+  const fallbacks = fableLowOutcomes.filter((p) => p.fallback_used === true);
+  const fableLowRan = fableLowOutcomes.filter((p) => p.fallback_used === false);
+  // The record's own authoritative boolean (roster.js derives it from
+  // route.js's closed reason vocabulary, never from the caller) — never a
+  // regex over the free-text fallback_reason a fallback happens to carry
+  // (F2): a refusal is not always a fallback (P3 — refused, then rerouted to
+  // an entirely different route, fallback_used stays false) and a fallback's
+  // free-text reason is not always a refusal in route.js's sense.
+  const refusals = fableLowOutcomes.filter((p) => p.safety_refusal === true);
 
   let rescuedCount = 0;
-  let convergenceCount = 0;
   const rescueTimesMs = [];
-  for (const p of fallbacks) {
+  for (const p of fableLowRan) {
     const close = closeByMission.get(p.mission_id);
-    if (close !== undefined && close.winning_author_dispatch_seq === p.dispatch_seq) {
-      rescuedCount += 1;
-      const dispatch = dispatchesBySeq.get(p.dispatch_seq);
-      if (dispatch !== undefined && isNonEmptyString(dispatch.ts) && isNonEmptyString(close.ts)) {
-        rescueTimesMs.push(new Date(close.ts).getTime() - new Date(dispatch.ts).getTime());
-      }
-    }
-    if (supersessions.some((s) => s.mission_id === p.mission_id && s.transition === 'convergence')) {
-      convergenceCount += 1;
+    if (close === undefined || close.winning_author_dispatch_seq !== p.dispatch_seq) continue;
+    rescuedCount += 1;
+    const dispatch = dispatchesBySeq.get(p.dispatch_seq);
+    if (dispatch !== undefined && isNonEmptyString(dispatch.ts) && isNonEmptyString(close.ts)) {
+      rescueTimesMs.push(new Date(close.ts).getTime() - new Date(dispatch.ts).getTime());
     }
   }
+  // "Fraction still reaching convergence": of the executions where fable-low
+  // actually ran, how many of those missions nonetheless opened a
+  // convergence route — the escalation profile ran and the disagreement
+  // still required adjudication.
+  const convergenceCount = fableLowRan.filter((p) =>
+    supersessions.some((s) => s.mission_id === p.mission_id && s.transition === CONVERGENCE_TRANSITION)
+  ).length;
+
+  // Every field this block reads (requested/actual model+effort,
+  // fallback_used, safety_refusal) lives on a profile-outcome record whose
+  // evidence_level ships `unknown` on every writer today (roster.js: "no
+  // writer anywhere in machine/src reports what a worker's runtime actually
+  // was") — surfaced here as data, not just prose, so a consumer can see the
+  // caveat travels with the numbers (F7).
+  const evidenceLevels = new Set(fableLowOutcomes.map((p) => p.evidence_level));
+  const evidenceLevel = evidenceLevels.size === 0 ? null : evidenceLevels.size === 1 ? [...evidenceLevels][0] : 'mixed';
 
   const rescue = {
-    fable_low_dispatches: fableLow.length,
+    // Every author-phase dispatch requesting the fable-low profile, read off
+    // the "dispatch" records roster.js's register always writes — real
+    // regardless of whether a profile-outcome was ever recorded for it
+    // (F12). Every rate below, which needs fallback_used/safety_refusal, is
+    // necessarily scoped to the smaller `fable_low_outcomes_recorded`
+    // population instead; the gap between the two is itself a finding worth
+    // reporting, not silently absorbed into either count.
+    fable_low_dispatches: fableLowDispatches.length,
+    fable_low_outcomes_recorded: fableLowOutcomes.length,
     fallback_count: fallbacks.length,
-    fallback_rate: fableLow.length > 0 ? fallbacks.length / fableLow.length : null,
+    fallback_rate: fableLowOutcomes.length > 0 ? fallbacks.length / fableLowOutcomes.length : null,
     refusal_count: refusals.length,
-    refusal_rate: fableLow.length > 0 ? refusals.length / fableLow.length : null,
+    refusal_rate: fableLowOutcomes.length > 0 ? refusals.length / fableLowOutcomes.length : null,
     rescued_count: rescuedCount,
-    rescue_rate: fallbacks.length > 0 ? rescuedCount / fallbacks.length : null,
+    rescue_rate: fableLowRan.length > 0 ? rescuedCount / fableLowRan.length : null,
     time_to_rescue_ms: meanOf(rescueTimesMs),
+    // Disclosed alongside the mean rather than left implicit: a dispatch
+    // record this join could not find for a rescued execution drops that
+    // one sample from the mean without dropping it from rescued_count, so
+    // the two are not guaranteed equal (F10).
+    time_to_rescue_sample_size: rescueTimesMs.length,
     convergence_count: convergenceCount,
-    convergence_fraction: fallbacks.length > 0 ? convergenceCount / fallbacks.length : null,
+    convergence_fraction: fableLowRan.length > 0 ? convergenceCount / fableLowRan.length : null,
+    evidence_level: evidenceLevel,
     // No writer anywhere in machine/src records a dollar or token cost (the
     // dispatch, profile-outcome and mission-close payloads carry none) — so
     // this is reported absent rather than approximated from a proxy (e.g.
@@ -289,13 +419,15 @@ function computeAttemptRates(records) {
 // this stream is shared with every other ledger writer.
 //
 // §16.5's read side widens this beyond the friction kinds alone: by_class
-// (dispatched/closed/mission_first_pass/attempt_first_pass/degraded_path_closes
-// per task class, joined through the dispatch, route, review-outcome and
-// mission-close streams — see computeAttemptRates), rescue (fable-low's own
-// terms, never a comparison against opus), and experiment_proposals (§16.6 —
-// a proposal, never a promotion). Every one of these is derived from a record
-// one of this codebase's other sole writers already produced; nothing here
-// asserts a fact none of them recorded.
+// (dispatched/closed/initial_dispatches/initial_class_closes/
+// mission_first_pass/attempt_first_pass/degraded_path_closes/
+// first_pass_unknown per task class, joined through the dispatch, route,
+// review-outcome, dispatch-outcome and mission-close streams — see
+// computeAttemptRates), rescue (fable-low's own terms, never a comparison
+// against opus), and experiment_proposals (§16.6 — a proposal, never a
+// promotion). Every one of these is derived from a record one of this
+// codebase's other sole writers already produced; nothing here asserts a
+// fact none of them recorded.
 function computeRates(treeRoot) {
   requireTree(treeRoot);
   const { records, errors } = readRecords(path.join(treeRoot, LEDGER_BASENAME));
@@ -355,18 +487,36 @@ commands:
              experiment_proposals }. by_kind and every by_mission entry carry
            all eleven kinds even at zero — zero friction is a legitimate,
            reportable outcome. by_class carries every task class even at
-           zero: dispatched, closed, mission_first_pass (winning attempt is
-           the mission's first AND zero revise rounds/provider reroutes/
-           profile escalations mission-wide), attempt_first_pass (the
-           winning attempt's own review history alone — a different, smaller
-           number than mission_first_pass, and never reported as the same
-           one), degraded_path_closes. rescue reports fable-low's own
-           fallback/refusal/rescue/time-to-rescue/convergence figures, each
-           in its own terms — never a comparison against opus — plus
-           incremental_cost_per_rescue, always null: no writer in this
-           codebase records a cost. experiment_proposals lists every
-           (class, seat) cell at 20+ closes — a proposal to run an
-           experiment, never a promotion of that cell's status.
+           zero: dispatched (attempts registered at this class, excluding
+           resumes) and closed (missions whose winning class was this one)
+           are DIFFERENT UNITS from an escalated mission and must never be
+           divided into a rate; initial_dispatches and initial_class_closes
+           share one unit (missions) on purpose — of the missions that
+           started in this class, how many eventually closed, whichever
+           class they closed under. mission_first_pass (winning attempt is
+           the mission's first AND zero revise rounds/provider
+           reroutes/profile escalations mission-wide) and attempt_first_pass
+           (the winning attempt's own review history alone) are named and
+           counted separately — attempt_first_pass is always >=
+           mission_first_pass, never the other way, and neither is ever
+           reported as the other. first_pass_unknown counts closes this join
+           could not resolve a first-pass fact for (never folded into a
+           first-pass zero). rescue reports fable-low's own
+           fallback/refusal/rescue/time-to-rescue/convergence figures, scoped
+           to the population that actually ran under that profile — never
+           the population that fell back to opus, and never a comparison
+           against opus — plus fable_low_dispatches vs
+           fable_low_outcomes_recorded (the coverage gap where an outcome was
+           never recorded), evidence_level (every field these rates read
+           ships this profile-outcome caveat, closed vocabulary, "unknown" on
+           every writer today), and incremental_cost_per_rescue, always null:
+           no writer in this codebase records a cost. experiment_proposals
+           lists every (class, seat) cell at 20+ closes — a returned field,
+           not a ledger record: no kind in FRICTION_KINDS names it, and
+           minting one is outside this module's surface. A proposal to run an
+           experiment, never a promotion of that cell's status; recomputed
+           fresh on every call, so a cell already proposed is proposed again
+           on the next run rather than tracked as acted on.
 
 Errors go to stderr with exit 1; nothing reaches disk on a refusal.
 `;
