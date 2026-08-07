@@ -615,14 +615,40 @@ function readPreflight(treeRoot) {
   return { recorded: true, modes, capability };
 }
 
-// The operator lane state, read through settings' own clamped read boundary
-// (never a hand parse of settings.json). Until the provider_lanes knob
-// lands in settings' SCHEMA, the read returns no such key and every lane is
-// effectively "auto" — the guard below makes that the same non-degrading
-// answer a fresh tree gives.
-function readProviderLanes(treeRoot) {
-  const { settings } = readSettings(treeRoot);
-  return isPlainObject(settings.provider_lanes) ? settings.provider_lanes : {};
+// The operator lane state and the degraded-review posture, in ONE settings
+// read (two reads would let a settings write between them mix two snapshots
+// into one legality decision), through settings' own clamped read boundary —
+// never a hand parse of settings.json. Until Slice 3a lands these knobs in
+// settings' SCHEMA, clampDoc drops them as {rule: "unknown"} clamps whose
+// `from` field carries the on-disk value; that report is the clamps
+// channel's documented contract, so consuming it here is reading settings'
+// own output, not reaching around it. Recovery is what keeps a lane the
+// operator has declared down from publishing as "auto" against the data on
+// disk. Both values are consumed conservatively — only the exact tokens
+// "operator-down" and "hold" ever change behaviour, so a malformed
+// hand-edit degrades nothing and holds nothing, same as a fresh tree. Once
+// the schema carries the keys, the clamped value wins and the recovery arm
+// goes dead; it can be deleted with 3a.
+function readOperatorSettings(treeRoot) {
+  const { settings, clamps } = readSettings(treeRoot);
+  const recovered = {};
+  for (const clamp of clamps) {
+    if (clamp.rule === 'unknown' && (clamp.key === 'provider_lanes' || clamp.key === 'degraded_review')) {
+      recovered[clamp.key] = clamp.from;
+    }
+  }
+  const lanes = Object.prototype.hasOwnProperty.call(settings, 'provider_lanes')
+    ? settings.provider_lanes
+    : recovered.provider_lanes;
+  const posture = Object.prototype.hasOwnProperty.call(settings, 'degraded_review')
+    ? settings.degraded_review
+    : recovered.degraded_review;
+  return {
+    lanes: isPlainObject(lanes) ? lanes : {},
+    // The hold posture is operator-selectable and never the default:
+    // anything but an explicit "hold" resolves the degraded path.
+    posture: posture === 'hold' ? 'hold' : 'degraded-path',
+  };
 }
 
 // Named for what it is: an operator toggle, not a probe failure — the
@@ -655,7 +681,7 @@ function composeReviewRouting(config, modes) {
 function effectiveRouting(treeRoot) {
   const { config, activeFile, digest } = loadRouting(treeRoot);
   const { recorded, modes: preflightModes, capability } = readPreflight(treeRoot);
-  const lanes = readProviderLanes(treeRoot);
+  const { lanes, posture } = readOperatorSettings(treeRoot);
   // Effective = preflight present AND NOT operator-down: either cause
   // activates the same degraded table through the same composition — an
   // operator-down lane is never a parallel path. Each cause contributes its
@@ -706,6 +732,10 @@ function effectiveRouting(treeRoot) {
     degraded_review: isPlainObject(config.degraded_review) ? config.degraded_review : null,
     capability,
     base_review_routing: config.review_routing,
+    // Read in the same settings snapshot as provider_lanes, so one
+    // resolution never mixes two settings states. Internal, like
+    // base_review_routing — the CLI strips it from printed output.
+    degraded_review_posture: posture,
   };
 }
 
@@ -936,14 +966,6 @@ function capabilityUnavailable(seat, capability) {
   return typeof seat.effort === 'string' && Array.isArray(entry.efforts) && !entry.efforts.includes(seat.effort);
 }
 
-// The hold posture is operator-selectable and never the default: anything
-// but an explicit "hold" — including a settings schema that does not carry
-// the knob yet — resolves the degraded path.
-function readDegradedReviewPosture(treeRoot) {
-  const { settings } = readSettings(treeRoot);
-  return settings.degraded_review === 'hold' ? 'hold' : 'degraded-path';
-}
-
 // Author-aware, class-aware reviewer resolution (execution-plan.md §8): read
 // the author family, enumerate the class candidates, drop the
 // lane-or-capability-unavailable, drop the author's own effective family,
@@ -1008,7 +1030,7 @@ function reviewFor(treeRoot, authorFamily, taskClass, authorModel) {
 
   // No cross-family candidate survives: the explicit degraded transition —
   // relabeled, never a quiet mapping onto a same-family seat.
-  if (readDegradedReviewPosture(treeRoot) === 'hold') {
+  if (effective.degraded_review_posture === 'hold') {
     throw new Error(
       `routing: no cross-family reviewer is effectively available for ${authorFamily}-authored ${taskClass} ` +
         'work and settings degraded_review is "hold" — the operator-selected hold posture refuses the degraded ' +
@@ -1181,6 +1203,7 @@ function main(argv) {
     } else if (command === 'active') {
       const effective = effectiveRouting(treeRoot);
       delete effective.base_review_routing; // internal comparison surface, not part of the printed contract
+      delete effective.degraded_review_posture; // internal to reviewFor's settings-snapshot atomicity, same status
       process.stdout.write(JSON.stringify(effective, null, 2) + '\n');
     } else if (command === 'review-for') {
       // Class defaults to standard for the back-compat one-line form; the

@@ -260,6 +260,55 @@ function setPreflight(root, perProvider) {
   assert.strictEqual(active.seat_substitutions['plan-counterpart'], 'reviewer-claude');
 }
 
+// --- operator-down lanes compose like probe-down ones (settings channel) -----
+{
+  const { root } = initTree('operator-down');
+  // Preflight healthy: the degradation must come from settings alone.
+  setPreflight(root, { codex: { routing: 'present' }, gemini: { routing: 'present' } });
+  // provider_lanes is not in settings' SCHEMA yet (it lands with 3a), so
+  // clampDoc drops it as a rule:"unknown" clamp; routing.js recovers the
+  // value from the clamps channel. The live tree already carries this key —
+  // publishing the lane as "auto" against it was finding N1.
+  fs.writeFileSync(
+    path.join(root, 'settings.json'),
+    JSON.stringify({ provider_lanes: { gpt: 'operator-down' } }) + '\n'
+  );
+
+  const active = JSON.parse(run(['active', root]).stdout);
+  assert.strictEqual(active.provider_lanes.gpt, 'operator-down', 'a lane the operator declared down is never published as auto');
+  assert.deepStrictEqual(active.degraded_modes, ['codex_down'], 'operator-down activates the same degraded table a probe failure does');
+  assert.strictEqual(active.notices.length, 1);
+  assert.match(active.notices[0], /operator-down/, 'the notice names the operator toggle, not a probe failure');
+  assert.ok(!('degraded_review_posture' in active), 'the settings-snapshot posture is internal, not printed');
+
+  const claude = run(['review-for', root, 'claude']);
+  assert.strictEqual(claude.stdout.trim(), 'reviewer-gemini', 'claude work reroutes off the operator-down gpt lane');
+
+  // Both lanes operator-down: the composed state is the degraded transition.
+  fs.writeFileSync(
+    path.join(root, 'settings.json'),
+    JSON.stringify({ provider_lanes: { gpt: 'operator-down', gemini: 'operator-down' } }) + '\n'
+  );
+  const degraded = run(['review-for', root, 'claude']);
+  assert.strictEqual(degraded.status, 0, degraded.stderr);
+  assert.strictEqual(degraded.stdout.trim(), 'reviewer-degraded-opus');
+  assert.match(degraded.stderr, /NOT cross-family review/);
+}
+
+// --- the hold posture operates through the same settings channel -------------
+{
+  const { root } = initTree('hold-posture');
+  setPreflight(root, {}); // both providers route as absent
+  fs.writeFileSync(path.join(root, 'settings.json'), JSON.stringify({ degraded_review: 'hold' }) + '\n');
+  const held = run(['review-for', root, 'claude']);
+  assert.strictEqual(held.status, 1, 'an operator-selected hold must refuse, not resolve');
+  assert.match(held.stderr, /operator-selected hold posture refuses the degraded path/);
+
+  // Only the exact token holds; the explicit non-default resolves normally.
+  fs.writeFileSync(path.join(root, 'settings.json'), JSON.stringify({ degraded_review: 'degraded-path' }) + '\n');
+  assert.strictEqual(run(['review-for', root, 'claude']).stdout.trim(), 'reviewer-degraded-opus');
+}
+
 // --- revise: a failed dated-config write consumes no immutable name ----------
 //
 // The failure is imposed from outside the process (RLIMIT_FSIZE of 0, with
