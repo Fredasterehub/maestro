@@ -113,7 +113,7 @@ const { readJson, writeJson, updateJson } = require('./atomic-json.js');
 const { validateBrief, validateEnvelope } = require('./validators.js');
 const { assertContained } = require('./contain.js');
 const { IDENTITY_FIELDS } = require('./gate.js');
-const { seatFamily, FAMILY_DERIVATION, SUPERSEDED_KIND, ESCALATION_TRANSITIONS } = require('./route.js');
+const { seatFamily, FAMILY_DERIVATION, SUPERSEDED_KIND, ESCALATION_TRANSITIONS, REASONS } = require('./route.js');
 const { DISPATCH_KIND } = require('./roster.js');
 
 const MISSION_STATUSES = { OPEN: 'open', DONE: 'done' };
@@ -1551,7 +1551,11 @@ const TERMINAL_OUTCOMES = [
 // close record keeps only the count (terminal_outcome_count) — a consumer
 // (7c's friction.js, or an auditor) joins the rest by scanning this ledger
 // for kind "dispatch-outcome" and this mission_id, the same join design §16.5
-// already names for dispatch telemetry.
+// already names for dispatch telemetry. Written idempotently per dispatch_seq
+// (see closeMission below), so a close retried after a crash mid-write never
+// leaves two full sets of these records for one mission — a join that counts
+// rows rather than distinct dispatch_seqs would otherwise double-count every
+// outcome the retry re-derived.
 const DISPATCH_OUTCOME_KIND = 'dispatch-outcome';
 
 // THE ENVELOPE FENCE. recordEnvelope's ledger record (this module's own
@@ -1590,6 +1594,13 @@ function dispatchesOfMission(records, missionId) {
 // classifying the loser by the winner's evidence would silently launder a
 // registration defect into a fabricated fact. Refused here instead, naming
 // the route both dispatches claim.
+//
+// MUST be called against every dispatch this mission registered, winners
+// included — never only the non-winning ones filtered downstream. Two
+// dispatches on the WINNING route make the winning sequence itself ambiguous
+// (which of the two actually ran under the profile the close record
+// attributes?), and the close record's attribution of that route is its
+// primary claim, not a side detail this check can afford to skip.
 function requireOneDispatchPerRoute(dispatches, missionId) {
   const byRoute = new Map();
   for (const dispatch of dispatches) {
@@ -1652,6 +1663,18 @@ function classify(records, missionId, dispatch) {
   );
   if (superseded) {
     const { transition, reason } = superseded;
+    // The reason is validated against route.js's own closed vocabulary
+    // BEFORE any transition-based branch runs — not after, and not folded
+    // into one of the branches below. A same-profile-resume record carrying
+    // an invalid or absent reason must refuse exactly as any other
+    // transition does; a check reachable only on some transitions is a
+    // refusal that silently stops firing on the others, which is exactly the
+    // fabricated outcome this step exists to prevent.
+    if (!REASONS.includes(reason)) {
+      throw new Error(
+        `mission: close refused — the supersession of route ${routeSeq} (seq ${superseded.seq}) records reason ${JSON.stringify(reason)}, outside route.js's closed vocabulary; a terminal outcome cannot be read from an unrecognised reason`
+      );
+    }
     // same-profile-resume never rerouted anything — the same worker's own run
     // paused and picked back up under the identical profile — so it reads as
     // a runtime failure of the attempt itself whichever unavailability caused
@@ -1671,12 +1694,8 @@ function classify(records, missionId, dispatch) {
     if (reason === 'safety-refusal') return 'safety-refused';
     if (reason === 'quota') return 'quota-rerouted';
     if (reason === 'infrastructure') return 'provider-rerouted';
-    if (reason === 'quality') {
-      return ESCALATION_TRANSITIONS.includes(transition) ? 'profile-escalated' : 'superseded';
-    }
-    throw new Error(
-      `mission: close refused — the supersession of route ${routeSeq} (seq ${superseded.seq}) records reason ${JSON.stringify(reason)}, outside route.js's closed vocabulary; a terminal outcome cannot be read from an unrecognised reason`
-    );
+    // reason === 'quality' is the only member of REASONS left unhandled.
+    return ESCALATION_TRANSITIONS.includes(transition) ? 'profile-escalated' : 'superseded';
   }
 
   // Not superseded: the route stood as reserved. What happened to the work
@@ -2048,10 +2067,32 @@ function closeMission(treeRoot, missionId, input, options) {
       // record that counts them (DISPATCH_OUTCOME_KIND): the same
       // durable-before-referenced order supersede uses for its replacement
       // route. A crash between these appends and the close record below
-      // leaves the mission open — the retry that follows re-derives
-      // deriveCloseFacts fresh and appends its own set, so nothing is left
-      // half-written against a mission that reads as closed.
+      // leaves the mission open, and a retry re-derives deriveCloseFacts
+      // fresh — over the SAME immutable source records, since routes,
+      // supersessions and review-outcomes never change once written, so the
+      // retry computes the identical set. Written idempotently against what
+      // this mission's dispatch-outcome stream already holds: a dispatch_seq
+      // already carrying the same word from an earlier, interrupted attempt
+      // is skipped rather than re-appended, or the mission would close over
+      // two full sets of outcome records — a silent double-count corrupting
+      // any consumer (7c's rates) that joins on this stream by mission_id.
+      // One naming a DIFFERENT word for the same dispatch_seq is a
+      // contradiction the ledger cannot resolve on its own and refuses.
+      const alreadyWritten = new Map();
+      for (const record of records) {
+        if (!isPlainObject(record) || record.kind !== DISPATCH_OUTCOME_KIND || record.mission_id !== missionId) continue;
+        alreadyWritten.set(record.dispatch_seq, record.outcome);
+      }
       for (const outcome of facts.terminalOutcomes) {
+        const existing = alreadyWritten.get(outcome.dispatch_seq);
+        if (existing !== undefined) {
+          if (existing !== outcome.outcome) {
+            throw new Error(
+              `mission: close refused — dispatch ${outcome.dispatch_seq} already has a dispatch-outcome record naming ${JSON.stringify(existing)}, but this close derives ${JSON.stringify(outcome.outcome)}; a terminal outcome is written once and never rewritten`
+            );
+          }
+          continue; // durable from an earlier, interrupted close attempt
+        }
         appendRecord(ledgerPath, {
           kind: DISPATCH_OUTCOME_KIND,
           payload: {
