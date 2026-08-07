@@ -602,7 +602,96 @@ function migrateGptLadder(config) {
   return out;
 }
 
-const MIGRATIONS = [migrateSolSplit, migrateDegradedReview, migrateClaudeLadder, migrateGptLadder];
+// r5 -> r6: the author ladders become data. Until now the config could say who
+// reviews a class but not who writes it, so the author pick was liaison
+// judgment against a prose table. The tiers block is design §12 verbatim: a
+// preference-ordered candidate array per task class, ordered over whole-topology
+// cost (host included), every placement `estimated` because none of it has been
+// measured yet.
+//
+// Three rules the design states, and which this revision carries structurally
+// rather than by convention:
+//
+//   - No `plan_seat`, anywhere in the block (§9). Planning topology is a
+//     separate resolution from implementation class, and a planning seat living
+//     inside the implementation ladder is how the two silently merge.
+//   - `escalation: true` entries are never reached by a fresh resolution (§10):
+//     the expert escalation rung takes over work that already defeated the
+//     ordinary rung, so a first dispatch that could select it would spend the
+//     mission's one profile escalation before anything had failed.
+//   - Alias seats are unroutable, here as everywhere: an alias exists so an old
+//     name keeps validating across a migration, and routing one would dodge the
+//     profile split it records.
+//
+// The block names seats from every revision this migration stands on — scout
+// and executor-claude/executor-gemini from r1, the Sol rungs from r2, the
+// tiered Claude rungs from r4, luna and terra from r5 — and validation refuses
+// a candidate the seat table does not carry, so the ladder can never name a
+// seat nothing can dispatch. With the gpt lane operator-down today the luna,
+// terra and sol candidates are skipped by §11.2 out of this same data, and the
+// claude/gemini tree falls out of it; there is no second mechanism.
+function migrateTiersBlock(config) {
+  const out = JSON.parse(JSON.stringify(config));
+  // Same discipline as every migration before it (§11 — each entry is
+  // independently testable): a wrong-shaped source is refused by name rather
+  // than stamped forward. The r4->r5 output is what distinguishes a revision-5
+  // shape, and those seats persist into r6, so this stays idempotent at its own
+  // boundary — re-running it rewrites the same block and relabels the same
+  // revision.
+  for (const table of ['seats', 'review_routing', 'degraded']) {
+    if (!isPlainObject(out[table])) {
+      throw new Error(`r5->r6 migration: config has no ${table} table — not a revision-5 shape`);
+    }
+  }
+  for (const required of ['executor-luna', 'executor-terra', 'reviewer-terra']) {
+    if (!isPlainObject(out.seats[required])) {
+      throw new Error(
+        `r5->r6 migration: config has no seats["${required}"] — not a revision-5 shape (the r4->r5 GPT ladder has not been applied)`
+      );
+    }
+  }
+
+  out.tiers = {
+    policy: 'tiered-dispatch-v2',
+    calibrated: '2026-08-06',
+    status: 'estimated',
+    classes: {
+      recon: { candidates: [{ seat: 'scout', status: 'estimated' }] },
+      mechanical: {
+        candidates: [
+          { seat: 'executor-luna', status: 'estimated' },
+          { seat: 'executor-claude-mech', status: 'estimated' },
+        ],
+      },
+      standard: {
+        candidates: [
+          { seat: 'executor-terra', status: 'estimated' },
+          { seat: 'executor-claude-standard', status: 'estimated' },
+          { seat: 'executor-gemini', status: 'estimated' },
+        ],
+      },
+      expert: {
+        candidates: [
+          { seat: 'executor-sol-expert', status: 'estimated' },
+          { seat: 'executor-claude', status: 'estimated' },
+          { seat: 'executor-fable-low', status: 'estimated', escalation: true },
+        ],
+      },
+      apex: {
+        candidates: [
+          { seat: 'executor-fable', status: 'estimated' },
+          { seat: 'executor-sol-apex', status: 'estimated' },
+          { seat: 'executor-claude', status: 'estimated' },
+        ],
+      },
+    },
+  };
+
+  out.revision = 6;
+  return out;
+}
+
+const MIGRATIONS = [migrateSolSplit, migrateDegradedReview, migrateClaudeLadder, migrateGptLadder, migrateTiersBlock];
 
 // The revision of the highest migration actually shipped — each slice that
 // pushes a MIGRATIONS entry raises this in the same commit, by construction.
@@ -775,6 +864,96 @@ function checkDegradedReviewBlock(block, seats, errors) {
   }
 }
 
+// The tiers block (revision 6+) is a closed shape, for the same reason the
+// degraded_review block is: the fields it does NOT carry are as load-bearing as
+// the ones it does. `plan_seat` is refused by name at both levels it could
+// appear, because design §9 keeps planning topology out of the implementation
+// ladder and an unknown-field error would leave a reader guessing which rule
+// they hit. Every candidate names a real, non-alias seat and carries a status,
+// so a ladder can never offer a seat nothing can dispatch or a placement whose
+// confidence is unstated; `escalation` is optional and boolean, and its absence
+// means an ordinary rung.
+const TIERS_KEYS = ['policy', 'calibrated', 'status', 'classes'];
+const TIERS_CANDIDATE_KEYS = ['seat', 'status', 'escalation'];
+
+function checkTiersBlock(block, seats, errors) {
+  if (!isPlainObject(block)) {
+    errors.push('tiers must be an object');
+    return;
+  }
+  for (const key of Object.keys(block)) {
+    if (key === 'plan_seat') {
+      errors.push('tiers.plan_seat is refused — planning topology is resolved separately from implementation class, and tiers carries no planning seat');
+    } else if (!TIERS_KEYS.includes(key)) {
+      errors.push(`tiers.${key} is not a permitted field — the block carries ${TIERS_KEYS.join(', ')} only`);
+    }
+  }
+  for (const field of ['policy', 'calibrated', 'status']) {
+    if (typeof block[field] !== 'string' || block[field] === '') {
+      errors.push(`tiers.${field} must be a non-empty string`);
+    }
+  }
+  if (!isPlainObject(block.classes)) {
+    errors.push('tiers.classes must be an object mapping each task class to its candidate ladder');
+    return;
+  }
+  for (const key of Object.keys(block.classes)) {
+    if (!BRIEF_TIER_VALUES.has(key)) {
+      errors.push(`tiers.classes.${key} is not a known task class (${[...BRIEF_TIER_VALUES].join(', ')})`);
+    }
+  }
+  for (const className of BRIEF_TIER_VALUES) {
+    const klass = block.classes[className];
+    if (!isPlainObject(klass)) {
+      errors.push(`tiers.classes.${className} must be an object { candidates }`);
+      continue;
+    }
+    for (const key of Object.keys(klass)) {
+      if (key === 'plan_seat') {
+        errors.push(`tiers.classes.${className}.plan_seat is refused — planning topology is resolved separately from implementation class`);
+      } else if (key !== 'candidates') {
+        errors.push(`tiers.classes.${className}.${key} is not a permitted field — a class carries candidates only`);
+      }
+    }
+    if (!Array.isArray(klass.candidates) || klass.candidates.length === 0) {
+      errors.push(`tiers.classes.${className}.candidates must be a non-empty array of { seat, status } entries`);
+      continue;
+    }
+    const named = new Set();
+    klass.candidates.forEach((candidate, i) => {
+      const at = `tiers.classes.${className}.candidates[${i}]`;
+      if (!isPlainObject(candidate)) {
+        errors.push(`${at} must be an object { seat, status }`);
+        return;
+      }
+      for (const key of Object.keys(candidate)) {
+        if (!TIERS_CANDIDATE_KEYS.includes(key)) {
+          errors.push(`${at}.${key} is not a permitted field — a candidate carries ${TIERS_CANDIDATE_KEYS.join(', ')} only`);
+        }
+      }
+      if (typeof candidate.seat !== 'string' || candidate.seat === '') {
+        errors.push(`${at}.seat must be a non-empty seat-name string`);
+      } else if (!Object.prototype.hasOwnProperty.call(seats, candidate.seat)) {
+        errors.push(`${at} names unknown seat "${candidate.seat}"`);
+      } else if (isPlainObject(seats[candidate.seat]) && 'alias_of' in seats[candidate.seat]) {
+        // Message kept as it was when this was the block's only check: an
+        // alias in a candidate array is the same defect as an alias in a
+        // review row, and the same sentence should name it.
+        errors.push(`tiers.classes.${className} names alias seat "${candidate.seat}", which is never routable`);
+      } else if (named.has(candidate.seat)) {
+        errors.push(`tiers.classes.${className} names seat "${candidate.seat}" twice — a ladder rung is reached once or not at all`);
+      }
+      if (typeof candidate.seat === 'string') named.add(candidate.seat);
+      if (typeof candidate.status !== 'string' || candidate.status === '') {
+        errors.push(`${at}.status must be a non-empty string — every placement states its confidence`);
+      }
+      if ('escalation' in candidate && typeof candidate.escalation !== 'boolean') {
+        errors.push(`${at}.escalation must be a boolean when present`);
+      }
+    });
+  }
+}
+
 // Minimal but non-negotiable shape checks at the read boundary: revision,
 // seats, review_routing, bans, and degraded sub-tables never go unchecked.
 function validateRoutingConfig(config) {
@@ -851,20 +1030,10 @@ function validateRoutingConfig(config) {
   if (hasDegradedReview) {
     checkDegradedReviewBlock(config.degraded_review, seats, errors);
   }
-  // A tiers block arrives at a later revision; where one is present, its
-  // candidates are routable seats by definition — an alias there is the
-  // same defect as an alias in a review row.
-  if (isPlainObject(config.tiers) && isPlainObject(config.tiers.classes)) {
-    for (const [className, klass] of Object.entries(config.tiers.classes)) {
-      if (!isPlainObject(klass) || !Array.isArray(klass.candidates)) continue;
-      for (const candidate of klass.candidates) {
-        if (!isPlainObject(candidate) || typeof candidate.seat !== 'string') continue;
-        const seat = seats[candidate.seat];
-        if (isPlainObject(seat) && 'alias_of' in seat) {
-          errors.push(`tiers.classes.${className} names alias seat "${candidate.seat}", which is never routable`);
-        }
-      }
-    }
+  // The tiers block arrives with r6; configs at earlier revisions (including
+  // rolled-back ones) carry none and stay valid.
+  if (Object.prototype.hasOwnProperty.call(config, 'tiers')) {
+    checkTiersBlock(config.tiers, seats, errors);
   }
   if (!isPlainObject(config.degraded)) {
     errors.push('degraded must be an object');
