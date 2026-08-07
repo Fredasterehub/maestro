@@ -1442,7 +1442,16 @@ function writeDatedConfigExclusive(dir, dateStr, value) {
   try {
     const fd = fs.openSync(tmpPath, 'wx');
     try {
-      fs.writeSync(fd, serialized);
+      // Same short-write fence atomic-json.js holds: a partial temp linked
+      // under a dated name would be digested from its own truncated bytes
+      // and certified as the config that was written.
+      const expected = Buffer.byteLength(serialized);
+      const written = fs.writeSync(fd, serialized);
+      if (written !== expected) {
+        throw new Error(
+          `routing: short write for the dated config — ${written} of ${expected} bytes written; nothing was linked`
+        );
+      }
       fs.fsyncSync(fd);
     } finally {
       fs.closeSync(fd);

@@ -54,12 +54,27 @@ function writeJson(file, value) {
     `.${path.basename(file)}.tmp-${process.pid}-${crypto.randomBytes(8).toString('hex')}`
   );
   const fd = fs.openSync(tmpFile, 'wx');
+  const payload = serialized + '\n';
+  const expected = Buffer.byteLength(payload);
   try {
-    fs.writeSync(fd, serialized + '\n');
+    // A short write is a partial file, and fsync+rename would publish it as
+    // a complete one — every later reader, including the digest a caller
+    // takes by re-reading this path, would then certify truncated bytes as
+    // authoritative. Refuse before the rename, while the only casualty is
+    // the temp file this writer already cleans up.
+    const written = fs.writeSync(fd, payload);
+    if (written !== expected) {
+      throw new Error(
+        `atomic-json: short write for ${file} — ${written} of ${expected} bytes written; nothing was published`
+      );
+    }
     fs.fsyncSync(fd);
-  } finally {
+  } catch (err) {
     fs.closeSync(fd);
+    fs.rmSync(tmpFile, { force: true });
+    throw err;
   }
+  fs.closeSync(fd);
 
   try {
     fs.renameSync(tmpFile, file);
