@@ -19,6 +19,8 @@ const MISSION = path.join(SRC, 'mission.js');
 const GATE = path.join(SRC, 'gate.js');
 
 const { reserve, reserveReview } = require(path.join(SRC, 'route.js'));
+const { register, mark } = require(path.join(SRC, 'roster.js'));
+const { readRecords } = require(path.join(SRC, 'jsonl.js'));
 const { artifactIdentity } = require(GATE);
 const routing = require(path.join(SRC, 'routing.js'));
 
@@ -155,6 +157,29 @@ function recordReview(root, missionId, input) {
   return runNode(MISSION, ['record-review', root, missionId], input);
 }
 
+let dispatchCounter = 0;
+
+// Registers a real "dispatch" ledger record against an already-reserved
+// route (roster.js register is its sole writer — §16.1), then immediately
+// retires the roster entry so the same seat name is free for the fixture's
+// next attempt: a test tree reuses a handful of seat names across many
+// independent lineages, and roster.js refuses a second live entry under one
+// name. Returns the dispatch record's own ledger seq — the value close's
+// dispatch/winning_* keys now name, not the route's seq that stood in for it
+// before this writer existed.
+function registerDispatch(root, missionId, routeSeq, seat, family) {
+  dispatchCounter += 1;
+  const taskId = `close-fixture-dispatch-${dispatchCounter}`;
+  register(root, { seat, task_id: taskId, family, mission_id: missionId, route_seq: routeSeq });
+  mark(root, taskId, 'finished');
+  const { records } = readRecords(path.join(root, 'ledger.jsonl'));
+  const dispatches = records.filter(
+    (r) => r.kind === 'dispatch' && r.route_seq === routeSeq && r.mission_id === missionId
+  );
+  assert.ok(dispatches.length > 0, `fixture dispatch must be recorded for route ${routeSeq}`);
+  return dispatches[dispatches.length - 1].seq;
+}
+
 // Records the approve verdict close requires, bound to the chain's review
 // route and the reviewed identity.
 function recordApprove(root, missionId, chain, identity, dispatchSeq) {
@@ -220,6 +245,7 @@ module.exports = {
   reserveChain,
   recordReview,
   recordApprove,
+  registerDispatch,
   runGreenGate,
   closeInputOf,
   runClose,
