@@ -26,6 +26,10 @@
 //   (G) mission close's existing cross-family law refuses a caller who
 //       reports a degraded reviewer's true family as if the mission had
 //       received cross-family review.
+//   (H) route.js's own real primitives: reserveReview refuses cross-family
+//       independence naming the author's own family, and
+//       validateArtifactIdentity refuses a dirty worktree and a shape
+//       mismatch (a diff digest never interchanges with a commit SHA).
 //
 // NOT covered here, and not fabricated: "close refuses when the artifact
 // identity changed between review and landing" and "a degraded close that
@@ -39,6 +43,8 @@
 // — that rewrite lives on the unmerged sibling branch slice2c-close-rewrite
 // (tip b8d6348), not on main as of be6a454. There is no real interface here
 // to drive for those two behaviours; see the envelope for this finding.
+// route.js already owns real, close-adjacent primitives (H, below) — those
+// are genuinely its own, not a stand-in for what only close performs.
 
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -50,10 +56,12 @@ const SRC_DIR = path.join(__dirname, '..', 'src');
 const ROUTING = path.join(SRC_DIR, 'routing.js');
 const MISSION = path.join(SRC_DIR, 'mission.js');
 const GATE = path.join(SRC_DIR, 'gate.js');
+const ROUTE = path.join(SRC_DIR, 'route.js');
 
 const { reviewFor, buildDefaultConfig, FAMILIES } = require(ROUTING);
 const settingsMod = require(path.join(SRC_DIR, 'settings.js'));
 const { openMission, closeMission } = require(MISSION);
+const { reserve, reserveReview, validateArtifactIdentity } = require(ROUTE);
 
 // The design's verbatim text (tiered-dispatch-final-design.md §8), copied
 // independently of routing.js's own DEGRADED_REVIEW_NOTICE/
@@ -398,6 +406,110 @@ function runGate(root, missionId, gateId, cmd) {
   // degraded review ever carries is claude, so no truthful review object
   // reporting this bundle can ever satisfy review.family !== author_family.
   assert.ok(![...FAMILIES].some((f) => f !== 'claude' && f === bundle.family), 'a degraded review for a claude author never carries a non-claude family to misreport as cross-family');
+}
+
+// =============================================================================
+// (H) route.js's own real primitives: reserveReview refuses cross-family
+//     independence naming the author's own family, and
+//     validateArtifactIdentity refuses a dirty worktree and a shape mismatch.
+//     Both are shipped behaviour on main today — the honest half of the
+//     close-adjacent scope that belongs here, as distinct from (and never a
+//     stand-in for) the two close-time checks named above that only
+//     mission.js's still-unmerged close rewrite can perform.
+// =============================================================================
+{
+  const missionRoot = freshTree('route-primitives-mission');
+  const missionId = 'm1';
+  openMission(missionRoot, { mission_id: missionId, title: 'route primitives', brief: BRIEF });
+
+  const DIGEST_A = 'sha256:' + 'a'.repeat(64);
+  const DIGEST_B = 'sha256:' + 'b'.repeat(64);
+  const DIGEST_C = 'sha256:' + 'c'.repeat(64);
+  const HEAD_A = '1'.repeat(40);
+  const TREE_A = '2'.repeat(40);
+
+  const authorInput = (overrides) => ({
+    mission_id: missionId,
+    attempt: 1,
+    brief_digest: DIGEST_A,
+    task_class: 'standard',
+    routing_config: 'routing-2026-08-07-1.json',
+    routing_digest: DIGEST_B,
+    routing_revision: 3,
+    requested_seat: 'executor-claude-standard',
+    resolved_seat: 'executor-claude-standard',
+    author_family: 'claude',
+    worker_model: 'sonnet-5',
+    worker_effort: 'high',
+    host_model: null,
+    host_effort: null,
+    fallback_profile: null,
+    escalation_profile: false,
+    selection: { candidates_skipped: [], substituted: false, substitution_reason: null },
+    reserved_review: {
+      seat: 'reviewer-degraded-opus',
+      family: 'claude',
+      model: 'opus-5',
+      effort: 'medium',
+      independence: 'degraded-path',
+    },
+    lane_state: { claude: 'auto', gpt: 'operator-down', gemini: 'auto' },
+    degraded_modes: ['codex_down', 'gemini_down'],
+    notices: ['both non-claude lanes down; claude author falls to the degraded path'],
+    ...overrides,
+  });
+
+  const reviewInput = (authorRouteSeq, overrides) => ({
+    mission_id: missionId,
+    author_route_seq: authorRouteSeq,
+    author_attempt: 1,
+    author_dispatch_seq: 1,
+    artifact_identity: { source_head: HEAD_A, source_tree: TREE_A, patch_digest: DIGEST_C, dirty: false },
+    reviewer_seat: 'reviewer-degraded-opus',
+    reviewer_family: 'claude',
+    reviewer_model: 'opus-5',
+    reviewer_effort: 'medium',
+    reviewer_host_model: null,
+    reviewer_host_effort: null,
+    independence: 'degraded-path',
+    routing_config: 'routing-2026-08-07-1.json',
+    routing_digest: DIGEST_B,
+    replacement_reason: null,
+    ...overrides,
+  });
+
+  const author = reserve(missionRoot, authorInput());
+
+  // A degraded-path reviewer sharing the author's own family — exactly what
+  // (B)/(C) above prove legal — is what route.js must accept.
+  const degraded = reserveReview(missionRoot, reviewInput(author.seq));
+  assert.strictEqual(degraded.independence, 'degraded-path');
+  assert.strictEqual(degraded.reviewer_family, 'claude');
+
+  // The identical reviewer family claimed as cross-family instead must
+  // refuse: it is the label that is illegal, not the family by itself.
+  assert.throws(
+    () =>
+      reserveReview(missionRoot, reviewInput(author.seq, { independence: 'cross-family', replacement_reason: 'x' })),
+    /cross-family independence with reviewer family "claude" is the author's own family/,
+    "reserveReview must refuse cross-family independence naming the author's own family"
+  );
+
+  // A dirty worktree is never a reviewable artifact...
+  const dirty = validateArtifactIdentity({ source_head: HEAD_A, source_tree: TREE_A, patch_digest: DIGEST_C, dirty: true });
+  assert.strictEqual(dirty.ok, false);
+  assert.ok(dirty.errors.some((e) => /may not name a dirty worktree/.test(e)));
+
+  // ...and a digest never interchanges with a commit/tree oid, either way.
+  const shapeMismatch = validateArtifactIdentity({
+    source_head: DIGEST_C,
+    source_tree: TREE_A,
+    patch_digest: HEAD_A,
+    dirty: false,
+  });
+  assert.strictEqual(shapeMismatch.ok, false);
+  assert.ok(shapeMismatch.errors.some((e) => /"source_head" must be a git object id/.test(e)));
+  assert.ok(shapeMismatch.errors.some((e) => /"patch_digest" must be a sha256 digest/.test(e)));
 }
 
 console.log('test-degraded-review: OK');
