@@ -80,6 +80,21 @@ function registration(overrides) {
   assert.strictEqual(readRoster(root).entries.length, 2);
 }
 
+// --- concurrent same-seat fan-out: distinct attempts both register -----------
+{
+  const root = freshTree('fanout-attempts');
+  const first = run(['register', root], JSON.stringify(registration({ attempt: 1 })));
+  assert.strictEqual(first.status, 0, first.stderr);
+  const second = run(['register', root], JSON.stringify(registration({ task_id: 't-2', attempt: 2 })));
+  assert.strictEqual(second.status, 0, second.stderr, 'a second attempt of the same seat must register alongside a live first attempt');
+  assert.strictEqual(readRoster(root).entries.length, 2);
+
+  // A third registration reusing an attempt already alive is still refused.
+  const dupAttempt = run(['register', root], JSON.stringify(registration({ task_id: 't-3', attempt: 1 })));
+  assert.strictEqual(dupAttempt.status, 1);
+  assert.match(dupAttempt.stderr, /never double a name/);
+}
+
 // --- register input validation ----------------------------------------------
 {
   const root = freshTree('validate');

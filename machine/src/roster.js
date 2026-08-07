@@ -418,7 +418,14 @@ function register(treeRoot, input) {
       if (sameTask) {
         throw new Error(`task_id "${entry.task_id}" is already registered (seat "${sameTask.seat}", status ${sameTask.status})`);
       }
-      const liveSeat = roster.entries.find((e) => e.seat === entry.seat && e.status === 'alive');
+      // Liveness uniqueness keys on seat+attempt, not seat alone: a fan-out
+      // that spawns several concurrent instances of the same seat name
+      // (distinct attempts) must be able to register all of them. Entries
+      // that carry no attempt fall back to seat-alone, so unattempted
+      // registrations keep the original one-live-entry-per-seat behavior.
+      const liveSeat = roster.entries.find(
+        (e) => e.seat === entry.seat && e.status === 'alive' && e.attempt === entry.attempt
+      );
       if (liveSeat) {
         throw new Error(
           `seat "${entry.seat}" already has a live entry (task_id "${liveSeat.task_id}") — never double a name`
