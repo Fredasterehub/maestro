@@ -104,23 +104,59 @@ function registration(overrides) {
   assert.match(noTree.stderr, /tree root does not exist/);
 }
 
-// --- register: route_seq references the author route (route-before-spawn) ----
+// --- register: route_seq must resolve to a real route record -----------------
+// Shape refusals live here; the sourced happy path — a real route record, the
+// dispatch ledger record register writes from it, and every field it carries —
+// is test-telemetry.js's, because it needs a whole initialised tree.
 {
   const root = freshTree('route-seq');
-  const r = run(['register', root], JSON.stringify(registration({ route_seq: 42 })));
-  assert.strictEqual(r.status, 0, r.stderr);
-  assert.strictEqual(JSON.parse(r.stdout).route_seq, 42);
-  assert.strictEqual(readRoster(root).entries[0].route_seq, 42, 'route_seq persists on the entry');
-
   // a ledger seq is an integer, never a string and never negative
-  const stringSeq = run(['register', root], JSON.stringify(registration({ task_id: 't-2', route_seq: '42' })));
+  const stringSeq = run(['register', root], JSON.stringify(registration({ route_seq: '42' })));
   assert.strictEqual(stringSeq.status, 1);
   assert.match(stringSeq.stderr, /"route_seq" must be a nonnegative integer/);
 
-  const negativeSeq = run(['register', root], JSON.stringify(registration({ task_id: 't-3', route_seq: -1 })));
+  const negativeSeq = run(['register', root], JSON.stringify(registration({ route_seq: -1 })));
   assert.strictEqual(negativeSeq.status, 1);
   assert.match(negativeSeq.stderr, /"route_seq" must be a nonnegative integer/);
-  assert.strictEqual(readRoster(root).entries.length, 1, 'refused registrations wrote nothing');
+
+  // A well-shaped seq that names no record is refused too: the dispatch record
+  // register writes is sourced from that route, so an unresolvable reference
+  // is a dispatch nothing could be written from.
+  const dangling = run(['register', root], JSON.stringify(registration({ route_seq: 42 })));
+  assert.strictEqual(dangling.status, 1);
+  assert.match(dangling.stderr, /no ledger record at seq 42/);
+
+  assert.strictEqual(
+    fs.existsSync(path.join(root, 'roster.json')),
+    false,
+    'three refused registrations created no roster at all'
+  );
+}
+
+// --- register: the dispatch identity keys are shape-checked ------------------
+// Their truth check is against the route record (test-telemetry.js); what this
+// file owns is that a malformed one never reaches the roster.
+{
+  const root = freshTree('dispatch-keys');
+  for (const [override, pattern] of [
+    [{ class: 'enormous' }, /"class" must be one of recon, mechanical, standard, expert, apex/],
+    [{ attempt: 0 }, /"attempt" must be an integer >= 1/],
+    [{ attempt: 1.5 }, /"attempt" must be an integer >= 1/],
+    [{ resumed: 'yes' }, /"resumed" must be a boolean/],
+  ]) {
+    const r = run(['register', root], JSON.stringify(registration(override)));
+    assert.strictEqual(r.status, 1, `${JSON.stringify(override)} must be refused`);
+    assert.match(r.stderr, pattern);
+  }
+
+  // Well-shaped, and with no route to check them against they simply persist
+  // on the entry as the fleet picture's own metadata.
+  const ok = run(['register', root], JSON.stringify(registration({ class: 'expert', attempt: 2, resumed: false })));
+  assert.strictEqual(ok.status, 0, ok.stderr);
+  const entry = JSON.parse(ok.stdout);
+  assert.strictEqual(entry.class, 'expert');
+  assert.strictEqual(entry.attempt, 2);
+  assert.strictEqual(entry.resumed, false);
 }
 
 // --- heartbeat ---------------------------------------------------------------
