@@ -104,6 +104,25 @@ function registration(overrides) {
   assert.match(noTree.stderr, /tree root does not exist/);
 }
 
+// --- register: route_seq references the author route (route-before-spawn) ----
+{
+  const root = freshTree('route-seq');
+  const r = run(['register', root], JSON.stringify(registration({ route_seq: 42 })));
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.strictEqual(JSON.parse(r.stdout).route_seq, 42);
+  assert.strictEqual(readRoster(root).entries[0].route_seq, 42, 'route_seq persists on the entry');
+
+  // a ledger seq is an integer, never a string and never negative
+  const stringSeq = run(['register', root], JSON.stringify(registration({ task_id: 't-2', route_seq: '42' })));
+  assert.strictEqual(stringSeq.status, 1);
+  assert.match(stringSeq.stderr, /"route_seq" must be a nonnegative integer/);
+
+  const negativeSeq = run(['register', root], JSON.stringify(registration({ task_id: 't-3', route_seq: -1 })));
+  assert.strictEqual(negativeSeq.status, 1);
+  assert.match(negativeSeq.stderr, /"route_seq" must be a nonnegative integer/);
+  assert.strictEqual(readRoster(root).entries.length, 1, 'refused registrations wrote nothing');
+}
+
 // --- heartbeat ---------------------------------------------------------------
 {
   const root = freshTree('heartbeat');

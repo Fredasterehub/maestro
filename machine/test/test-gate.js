@@ -241,14 +241,10 @@ function ledgerOf() {
     run(MISSION, ['open', root], { mission_id: 'm2', title: 'Closable', brief: BRIEF }).status,
     0
   );
-  const pass = run(GATE, ['run-gate', root, 'm2', 'tests', '--', 'true']);
-  assert.strictEqual(pass.status, 0, pass.stderr);
-  const closed = run(MISSION, ['close', root, 'm2'], {
-    author_family: 'gpt',
-    review: { verdict: 'approve', family: 'claude' },
-    gate_seq: JSON.parse(pass.stdout).ledger_seq,
-  });
-  assert.strictEqual(closed.status, 0, closed.stderr);
+  // close derives from records, so a done mission takes the whole chain:
+  // routes, a gate bound to the reviewed identity, and a landed result.
+  const fx = require('./close-fixture.js');
+  fx.closeMissionFully(root, 'm2', { dir: tmp });
 
   const before = ledgerOf().records.length;
   const r = run(GATE, ['run-gate', root, 'm2', 'postclose', '--', 'true']);

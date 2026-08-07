@@ -25,7 +25,10 @@ const STATUSES = new Set(['alive', 'zombie', 'dead', 'finished']);
 const RETIRABLE_STATUSES = new Set(['finished', 'dead']);
 
 const REGISTER_REQUIRED_KEYS = ['seat', 'task_id', 'family'];
-const REGISTER_OPTIONAL_KEYS = ['transcript_handle', 'codex_session', 'gemini_handle', 'mission_id'];
+// route_seq references the author-phase route record the worker was spawned
+// under (route-before-spawn, §6) — a ledger seq, so an integer where every
+// other optional key is a string handle.
+const REGISTER_OPTIONAL_KEYS = ['transcript_handle', 'codex_session', 'gemini_handle', 'mission_id', 'route_seq'];
 const REGISTER_ALL_KEYS = [...REGISTER_REQUIRED_KEYS, ...REGISTER_OPTIONAL_KEYS];
 
 function isPlainObject(value) {
@@ -91,7 +94,12 @@ function validateRegistration(input) {
     errors.push(`registration field "family" must be one of ${[...FAMILIES].join(', ')} (got "${input.family}")`);
   }
   for (const key of REGISTER_OPTIONAL_KEYS) {
-    if (Object.prototype.hasOwnProperty.call(input, key) && !isNonEmptyString(input[key])) {
+    if (!Object.prototype.hasOwnProperty.call(input, key)) continue;
+    if (key === 'route_seq') {
+      if (!Number.isSafeInteger(input.route_seq) || input.route_seq < 0) {
+        errors.push('registration field "route_seq" must be a nonnegative integer naming the author route ledger seq');
+      }
+    } else if (!isNonEmptyString(input[key])) {
       errors.push(`registration field "${key}" must be a non-empty string when provided`);
     }
   }
@@ -277,10 +285,12 @@ usage:
 
 commands:
   register    stdin: { seat, task_id, family, transcript_handle?,
-              codex_session?, gemini_handle?, mission_id? }; family in
-              {claude, gpt, gemini}. Adds { ..., spawned_ts, last_seen,
-              status: "alive" }. A task_id already on the roster, or a seat
-              that still has a live entry, is refused — never double a name.
+              codex_session?, gemini_handle?, mission_id?, route_seq? };
+              family in {claude, gpt, gemini}; route_seq is the ledger seq of
+              the author-phase route the worker was spawned under (an
+              integer). Adds { ..., spawned_ts, last_seen, status: "alive" }.
+              A task_id already on the roster, or a seat that still has a
+              live entry, is refused — never double a name.
   heartbeat   refreshes last_seen on an alive entry; a non-alive entry is
               refused (re-classify through mark instead).
   mark        sets status to one of alive | zombie | dead | finished and
@@ -389,6 +399,7 @@ module.exports = {
   reconcile,
   retire,
   validateRegistration,
+  REGISTER_OPTIONAL_KEYS,
   ROSTER_BASENAME,
   ARCHIVE_BASENAME,
   FAMILIES,

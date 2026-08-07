@@ -215,14 +215,9 @@ function reviewInput(authorRouteSeq, overrides) {
   assert.throws(() => reserve(root, authorInput({ mission_id: 'nosuch' })), /no such mission "nosuch"/);
   assert.throws(() => reserve(path.join(tmp, 'absent'), authorInput({ mission_id: m })), /scaffold it first/);
 
-  const pass = run(GATE, ['run-gate', root, m, 'tests', '--', 'true']);
-  assert.strictEqual(pass.status, 0, pass.stderr);
-  const closed = run(MISSION, ['close', root, m], {
-    author_family: 'claude',
-    review: { verdict: 'approve', family: 'gpt' },
-    gate_seq: JSON.parse(pass.stdout).ledger_seq,
-  });
-  assert.strictEqual(closed.status, 0, closed.stderr);
+  // close derives from records: a done mission takes the full chain (routes,
+  // identity-bound gate, landed result), which the shared fixture builds.
+  require('./close-fixture.js').closeMissionFully(root, m, { dir: tmp });
 
   const before = ledger().records.length;
   assert.throws(() => reserve(root, authorInput({ mission_id: m })), /status "done"/);
