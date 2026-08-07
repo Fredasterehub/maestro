@@ -427,7 +427,11 @@ function checkDegradedReviewBlock(block, seats, errors) {
   // The design (§8) calls both notices verbatim and several copies of the
   // text ship; dated configs are digest-pinned, but revise validates
   // arbitrary source configs, so a hand-shaped divergence is refused here
-  // rather than allowed to relabel what a degraded review claims.
+  // rather than allowed to relabel what a degraded review claims. If a
+  // later migration ever revises the design's text, this pin must become
+  // revision-keyed in that same commit — already-written dated configs
+  // were legal at their own revision, and rollback to them must stay
+  // loadable.
   for (const [field, verbatim] of [
     ['notice', DEGRADED_REVIEW_NOTICE],
     ['fallback_notice', DEGRADED_REVIEW_FALLBACK_NOTICE],
@@ -1131,6 +1135,10 @@ function reviewFor(treeRoot, authorFamily, taskClass, authorModel) {
       model: seat.model,
       effort: typeof seat.effort === 'string' ? seat.effort : null,
       independence: 'cross-family',
+      // The pairing key is a degraded-path concept and is not consulted on
+      // this path; null states that outright, so a caller passing an
+      // author model can tell it was accepted but had no bearing here.
+      author_model: null,
       ...shared,
       rerouted: resolved !== base[0],
       notices: effective.notices,
@@ -1281,8 +1289,10 @@ commands:
               applicable notice on stderr when the choice was rerouted;
               --json prints the full resolution bundle (seat,
               requested_seat, substituted, family, model, effort,
-              independence, class, routing_config, routing_digest, notices,
-              and on the degraded path the author_model pairing key and
+              independence, author_model — the degraded pairing key
+              actually applied, null on the cross-family path where the
+              argument has no bearing — class, routing_config,
+              routing_digest, notices, and on the degraded path the
               same-model fallback).
 
 Exits 0 on success; every refusal prints to stderr and exits 1.

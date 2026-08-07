@@ -459,9 +459,13 @@ function setPreflight(root, perProvider) {
     JSON.stringify({ provider_lanes: { gpt: 'operator-down' } }) + '\n'
   );
 
-  const standard = JSON.parse(run(['review-for', root, 'claude', 'standard', '--json']).stdout);
+  const standard = JSON.parse(run(['review-for', root, 'claude', 'standard', 'sonnet-5', '--json']).stdout);
   assert.strictEqual(standard.seat, 'reviewer-gemini', 'gemini keeps its remaining standard-and-below reviewer scope');
   assert.strictEqual(standard.independence, 'cross-family');
+  // The pairing key is a degraded-path concept: on the cross-family path
+  // the accepted author-model argument has no bearing, and the bundle says
+  // so explicitly rather than omitting the field.
+  assert.strictEqual(standard.author_model, null);
 
   const expert = JSON.parse(run(['review-for', root, 'claude', 'expert', '--json']).stdout);
   assert.strictEqual(expert.seat, 'reviewer-degraded-sonnet', 'expert claude work skips the unqualified gemini reviewer and falls to the degraded path');
