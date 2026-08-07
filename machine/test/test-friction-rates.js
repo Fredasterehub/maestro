@@ -695,6 +695,116 @@ function emptyCell() {
   );
 }
 
+// === F4 isolation: mission_first_pass reads provider-rerouted /
+// profile-escalated from dispatch-outcome even when the attempt-number
+// clause alone would already zero it out ====================================
+// The class-escalation fixture above proves the real ledger shape agrees
+// with mission.js's own classification, but its winning attempt is always
+// >1 by construction (an escalation always advances the attempt), so
+// mission_first_pass reads 0 there regardless of whether
+// providerReroutes/profileEscalations are read correctly at all. These two
+// hand-built cases isolate that read: a winning attempt of 1, zero revise
+// verdicts, and a dispatch-outcome record naming the OTHER two failure
+// modes — mission_first_pass must still read 0.
+{
+  const { root } = newTree();
+  const ledger = path.join(root, 'ledger.jsonl');
+  const winningDispatch = appendRecord(ledger, {
+    kind: 'dispatch',
+    payload: { mission_id: 'iso-escalated', phase: 'author', class: 'standard', attempt: 1, route_seq: 100, seat: 'x', family: 'claude' },
+    correlation_id: 'iso-escalated',
+  });
+  // Only needs to exist at the seq close.author_route_seq names — nothing
+  // downstream of the authorRoute-undefined guard inspects its fields.
+  const authorRoute = appendRecord(ledger, {
+    kind: 'route',
+    payload: { mission_id: 'iso-escalated', phase: 'author' },
+    correlation_id: 'iso-escalated',
+  });
+  appendRecord(ledger, {
+    kind: 'dispatch-outcome',
+    payload: { mission_id: 'iso-escalated', dispatch_seq: 999, route_seq: 999, phase: 'author', seat: 'x', outcome: 'profile-escalated' },
+    correlation_id: 'iso-escalated',
+  });
+  appendRecord(ledger, {
+    kind: 'mission-close',
+    payload: {
+      mission_id: 'iso-escalated',
+      author_route_seq: authorRoute.seq,
+      author_dispatch_seq: winningDispatch.seq,
+      review_route_seq: 1,
+      review_dispatch_seq: 1,
+      gate_seq: 1,
+      winning_author_dispatch_seq: winningDispatch.seq,
+      winning_review_dispatch_seq: 1,
+      author_family: 'claude',
+      author_seat: 'x',
+      task_class: 'standard',
+      review_outcome_seq: 1,
+      review: { seat: 'x', family: 'claude', model: 'opus-5', effort: 'medium', independence: 'cross-family', replacement_reason: null, degraded_authorization: null },
+      artifact_identity: { source_head: 'h', source_tree: 't', patch_digest: 'p', dirty: false },
+      landing: { mode: 'merge' },
+      terminal_outcome_count: 1,
+    },
+    correlation_id: 'iso-escalated',
+  });
+
+  const rates = computeRates(root);
+  assert.strictEqual(
+    rates.by_class.standard.mission_first_pass,
+    0,
+    'a profile-escalated dispatch-outcome on this mission must zero mission_first_pass even though the winning attempt is 1'
+  );
+}
+{
+  const { root } = newTree();
+  const ledger = path.join(root, 'ledger.jsonl');
+  const winningDispatch = appendRecord(ledger, {
+    kind: 'dispatch',
+    payload: { mission_id: 'iso-rerouted', phase: 'author', class: 'standard', attempt: 1, route_seq: 100, seat: 'x', family: 'claude' },
+    correlation_id: 'iso-rerouted',
+  });
+  const authorRouteRecord = appendRecord(ledger, {
+    kind: 'route',
+    payload: { mission_id: 'iso-rerouted', phase: 'author' },
+    correlation_id: 'iso-rerouted',
+  });
+  appendRecord(ledger, {
+    kind: 'dispatch-outcome',
+    payload: { mission_id: 'iso-rerouted', dispatch_seq: 999, route_seq: 999, phase: 'review', seat: 'x', outcome: 'provider-rerouted' },
+    correlation_id: 'iso-rerouted',
+  });
+  appendRecord(ledger, {
+    kind: 'mission-close',
+    payload: {
+      mission_id: 'iso-rerouted',
+      author_route_seq: authorRouteRecord.seq,
+      author_dispatch_seq: winningDispatch.seq,
+      review_route_seq: 1,
+      review_dispatch_seq: 1,
+      gate_seq: 1,
+      winning_author_dispatch_seq: winningDispatch.seq,
+      winning_review_dispatch_seq: 1,
+      author_family: 'claude',
+      author_seat: 'x',
+      task_class: 'standard',
+      review_outcome_seq: 1,
+      review: { seat: 'x', family: 'claude', model: 'opus-5', effort: 'medium', independence: 'cross-family', replacement_reason: null, degraded_authorization: null },
+      artifact_identity: { source_head: 'h', source_tree: 't', patch_digest: 'p', dirty: false },
+      landing: { mode: 'merge' },
+      terminal_outcome_count: 1,
+    },
+    correlation_id: 'iso-rerouted',
+  });
+
+  const rates = computeRates(root);
+  assert.strictEqual(
+    rates.by_class.standard.mission_first_pass,
+    0,
+    'a provider-rerouted dispatch-outcome on this mission must zero mission_first_pass even though the winning attempt is 1'
+  );
+}
+
 // === F5 regression: a same-profile resume is not a new attempt ==============
 {
   const { root } = newTree();

@@ -120,14 +120,27 @@ enforces on every session.
    exposure, experiment-worthy cells.**
 
    Same `rates` call, four more fields: `by_class`, `rescue`,
-   `experiment_proposals`, and the two per-close facts that live inside
+   `experiment_proposals`, and the several per-close facts that live inside
    `by_class` rather than beside it.
 
-   - **`by_class[<class>]`** — every task class present even at zero:
-     `dispatched` (author attempts registered in that class) against
-     `closed` (missions that actually closed with a winning attempt in that
-     class), `degraded_path_closes` (closes whose recorded review
-     independence is `degraded-path`, per class).
+   - **`by_class[<class>]`** — every task class present even at zero.
+     `dispatched` (author attempts registered at this class, excluding
+     resumes — a resume is not a new attempt) and `closed` (missions whose
+     WINNING class was this one) are **different units** — an escalated
+     mission reads `dispatched: 1` in the class it started in and
+     `closed: 1` in the class it finished in, one mission counted once in
+     each of two cells on purpose. **Never divide `closed` by `dispatched`
+     within one cell** — that ratio is not what the data supports.
+     `initial_dispatches` and `initial_class_closes` share one unit
+     (missions) instead: of the missions that STARTED in this class, how
+     many eventually closed, whatever class they closed under —
+     `initial_class_closes / initial_dispatches` is the ratio to report when
+     asked "how well does this starting class convert". `degraded_path_closes`
+     is closes whose recorded review independence is `degraded-path`, per
+     class. `first_pass_unknown` is closes this join could not resolve a
+     first-pass fact for (a missing dispatch or route record) — report it
+     alongside the two first-pass counts below, never silently as a zero on
+     either of them.
 
    - **Two first-pass counts, never conflated.** `mission_first_pass` counts
      closes where the winning attempt was the mission's *first* AND the
@@ -136,33 +149,56 @@ enforces on every session.
      *winning attempt's own* review history alone was clean — it says
      nothing about what earlier attempts on the same mission cost. These are
      different questions and `attempt_first_pass` is always ≥
-     `mission_first_pass` within a class; report both numbers together and
-     name the gap between them explicitly — a mission that took three
-     attempts to land one clean review round is a materially different
-     finding than a mission that got it right immediately, and folding the
-     two counts into one number erases exactly that distinction.
+     `mission_first_pass` within a class (never the other way — a smaller
+     `attempt_first_pass` than `mission_first_pass` is not a stricter
+     reading, it is a bug); report both numbers together and name the gap
+     between them explicitly — a mission that took three attempts to land
+     one clean review round is a materially different finding than a mission
+     that got it right immediately, and folding the two counts into one
+     number erases exactly that distinction.
 
    - **`rescue` — fable-low's own terms, never a comparison against opus.**
-     `fallback_rate`, `refusal_rate`, `rescue_rate`, `time_to_rescue_ms` and
-     `convergence_fraction` are each stated over the fable-low population
-     alone. Production routing is selection-biased — fable-low sees work an
-     escalation already required, opus does not see the same work — so a
-     ratio between the two would measure the routing decision, not either
-     model, and report that as if it were a model comparison. Never compute
-     or state one; report each rescue figure on its own, and say so in the
-     write-up. `incremental_cost_per_rescue` is always `null`: no writer in
+     The population matters and splits in two: `fallback_used: true` on a
+     fable-low dispatch means fable-low did **not** run — the design's own
+     attribution rule counts that as opus execution — so `rescue_rate`,
+     `time_to_rescue_ms` and `convergence_fraction` are scoped to the
+     dispatches where fable-low **actually ran** (`fallback_used: false`),
+     never to the fallback population. Reporting a fallback-population
+     figure under "fable-low rescue" is reporting opus's numbers under the
+     wrong name — the exact mistake the first pass of this step made and the
+     repair corrected; do not reintroduce it in the write-up. `fallback_rate`
+     and `refusal_rate` are scoped to the full recorded population instead
+     (every fable-low dispatch with an outcome, fallen back or not).
+     `refusal_rate` reads the outcome's authoritative `safety_refusal`
+     field — never grep or reason from `fallback_reason`'s free text, which
+     is neither a reliable signal of a refusal nor absent when one occurred
+     without a fallback. `fable_low_dispatches` (every fable-low author
+     dispatch, from the ledger's own `dispatch` records) against
+     `fable_low_outcomes_recorded` (the subset with a recorded outcome) is
+     itself a finding worth reporting when the two differ: outcome recording
+     is liaison-invoked, not guaranteed, and every rate above is only ever
+     computed over the recorded subset. `time_to_rescue_sample_size` may be
+     smaller than `rescued_count` — report both, never just the mean.
+     `evidence_level` is the profile-outcome evidence caveat surfaced as
+     data: state it in the write-up whenever it is `"unknown"` (today,
+     always), since no runtime receipt stands behind any figure in this
+     block. `incremental_cost_per_rescue` is always `null`: no writer in
      `machine/src` records a dollar or token cost, so this is reported
      absent rather than approximated from a proxy (attempt count, wall time)
      that is not actually cost. A `null` here is the correct, honest answer,
      not a gap to fill in by hand.
 
-   - **`experiment_proposals` — propose, never conclude.** A `(class, seat)`
-     cell reaching 20 closes appears here as `{class, seat, closes}`. This is
-     a proposal to run a real experiment (paired evaluation, randomized
-     routing, shadow evaluation, or an operator-commissioned benchmark) —
-     never an `estimated → qualified` status flip, and this skill never
-     writes one. Report every entry present; an empty list is "no cell has
-     reached the threshold yet," stated as exactly that.
+   - **`experiment_proposals` — propose, never conclude, a returned field,
+     not a ledger record.** A `(class, seat)` cell reaching 20 closes appears
+     here as `{class, seat, closes}`. This is a proposal to run a real
+     experiment (paired evaluation, randomized routing, shadow evaluation, or
+     an operator-commissioned benchmark) — never an `estimated → qualified`
+     status flip, and this skill never writes one. It is recomputed fresh on
+     every call and has no memory of what was already proposed — a cell at
+     the threshold reappears on every subsequent run until an operator acts
+     on it, which is a limitation to state, not a bug to chase. Report every
+     entry present; an empty list is "no cell has reached the threshold
+     yet," stated as exactly that.
 
 ## Output shape
 
@@ -175,7 +211,7 @@ ladder         1 engagement, one mission     m1: 1 (all others: 0)
 findings       1 mission flagged (heuristic) m1 rounds 1+2 share "missing edge case handling"
 envelope       0 malformed survivors         proxy only — refusals leave no direct record
 worker-death   1/4 retired (heuristic)       m2: executor-sol died, re-dispatched
-tiered-rates   standard: 3/4 mission_first_pass, 4/4 attempt_first_pass; fable-low: 2 fallbacks, rescue_rate 1/2 (own terms, not vs. opus); 0 experiment proposals
+tiered-rates   standard: 3/4 mission_first_pass, 4/4 attempt_first_pass (dispatched:4, closed:4); fable-low: 3 ran / 1 fallback of 4 recorded, rescue_rate 2/3 (ran population, not vs. opus); evidence_level unknown; 0 experiment proposals
 Verdict: 2 pattern(s) worth a look (revise-cap on m1, repeated finding on m1).
 Verdict: clean across all six patterns — nothing recorded, nothing repeated.
 ```

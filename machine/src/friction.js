@@ -15,12 +15,13 @@
 // records, the evidence `/maestro:audit` reports against. Zero of any kind
 // is a legitimate, reportable outcome — it is never omitted from the shape.
 // §16.5 widens the read side beyond friction alone: `rates` also joins the
-// dispatch, route, review-outcome and mission-close streams (each still
-// written solely by its own module — this file only reads them) into a
-// by-class breakdown, the two first-pass measures, fable-low's own rescue
-// figures, and experiment proposals. A metric this join cannot source from a
-// record one of those writers actually produced is reported absent, never
-// approximated — see computeAttemptRates below.
+// dispatch, route, route-superseded, review-outcome, dispatch-outcome and
+// mission-close streams (each still written solely by its own module — this
+// file only reads them) into a by-class breakdown, the two first-pass
+// measures, fable-low's own rescue figures, and experiment proposals. A
+// metric this join cannot source from a record one of those writers actually
+// produced is reported absent, never approximated — see computeAttemptRates
+// below.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -49,9 +50,10 @@ const MISSION_CLOSE_KIND = 'mission-close';
 // becomes worth proposing — never where a status is promoted, which is why
 // this module never writes anything back for it.
 const EXPERIMENT_PROPOSAL_THRESHOLD = 20;
-// Two provider-reroute transitions read off dispatch-outcome (F4); this stays
-// only for the one thing dispatch-outcome cannot tell us — whether a mission
-// ever opened a convergence route at all (§16.5's "fraction still reaching
+// Provider reroutes and profile escalations are read off dispatch-outcome
+// (F4, below); route-superseded's own transition vocabulary is still needed
+// for the one fact dispatch-outcome cannot supply — whether a mission ever
+// opened a convergence route at all (§16.5's "fraction still reaching
 // convergence"), which has no terminal-outcome word of its own since
 // convergence is a fresh adjudication route, not a fate the superseded
 // dispatch itself is classified into.
@@ -308,6 +310,20 @@ function computeAttemptRates(records) {
 
   // §16.6: propose, never conclude. A cell that reaches the threshold is
   // surfaced here; nothing anywhere in this module writes a status change.
+  //
+  // Plan §17 names this a ledger record ("experiment proposal ... at
+  // aggregation threshold"); this returns a field instead (repair round 1,
+  // F8 — liaison ruling). FRICTION_KINDS (validators.js) carries no
+  // "experiment-proposal" kind, and validators.js is fenced out of this
+  // step's surface — this module is the sole writer of the friction
+  // vocabulary's ledger records, but it does not own that vocabulary, so it
+  // cannot mint the kind a record would need without exceeding its brief.
+  // If that vocabulary later gains one, this becomes an append instead of a
+  // return; until then, a returned field, said plainly, is the honest
+  // choice over a silent one. It also has no memory: every call recomputes
+  // from the whole ledger, so a cell already proposed is proposed again on
+  // the next run — there is no "already acted on" state for a stateless
+  // aggregate to consult, and adding one is the same out-of-surface problem.
   const experiment_proposals = [];
   for (const [key, closesCount] of cellCloses) {
     if (closesCount >= EXPERIMENT_PROPOSAL_THRESHOLD) {
