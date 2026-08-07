@@ -31,11 +31,14 @@
 //
 // Honest scope of "derived": the ledger is plaintext with no writer
 // attestation, and the route-record facts close derives (author family,
-// reserved capacity, reviewer family) entered the ledger as caller input to
-// route.js before the author was spawned. Derivation therefore means the
-// caller had to commit those facts in advance, immutably, timestamped, and
-// cross-checked between independent records — it does not mean the facts are
-// cryptographically proven. Exactly one thing here is proven independently of
+// reserved capacity) entered the ledger as caller input to route.js before the
+// author was spawned. Derivation therefore means the caller had to commit
+// those facts in advance, immutably, timestamped, and cross-checked between
+// independent records — it does not mean the facts are cryptographically
+// proven. The REVIEWER's family is the one route-record fact that is stronger
+// than that: it is not the caller's word at all, but the routing config's
+// entry for the seat the record names, re-derived here at close as an
+// independent second fence over route.js's own (checkReviewerFamily below). Exactly one thing here is proven independently of
 // the ledger: the landing, because git answers it from the repository's own
 // objects. The gate's exit code is proven *if the record is genuine* —
 // gate.js really re-ran the command and wrote what it got, which is why a
@@ -92,6 +95,7 @@ const { readJson, writeJson, updateJson } = require('./atomic-json.js');
 const { validateBrief, validateEnvelope } = require('./validators.js');
 const { assertContained } = require('./contain.js');
 const { IDENTITY_FIELDS } = require('./gate.js');
+const { seatFamily } = require('./route.js');
 
 const MISSION_STATUSES = { OPEN: 'open', DONE: 'done' };
 const DEFAULT_NEXT_ACTION = 'dispatch a worker against brief.json';
@@ -1014,6 +1018,75 @@ function requireUnsuperseded(records, missionId, routeSeq, label) {
   }
 }
 
+// Whether a review-phase route record was written under the rule that a
+// reviewer's family is derived from the routing config's seat table rather
+// than asserted. route.js stamps the field on every review record it writes,
+// so a record without it either predates the rule or is a hand-append; the seq
+// of the first one that carries it is what bounds the tolerance below, exactly
+// as firstIdentityCarryingGateSeq bounds the gate identity tolerance.
+function derivedFamilyReview(record) {
+  return Object.prototype.hasOwnProperty.call(record, 'reviewer_family_derived');
+}
+
+function firstDerivedFamilyReviewSeq(records) {
+  let first = null;
+  for (const record of records) {
+    if (!isPlainObject(record) || record.kind !== 'route' || record.phase !== 'review') continue;
+    if (!Number.isSafeInteger(record.seq) || record.seq < 0) continue;
+    if (!derivedFamilyReview(record)) continue;
+    if (first === null || record.seq < first) first = record.seq;
+  }
+  return first;
+}
+
+// The independent second fence for §8's cross-family law. Every check below
+// reads `reviewer_family` as a fact, and route.js's reservation-time
+// derivation is written by the same hand that writes the record — so close
+// re-derives the family from the config's entry for the seat the record names,
+// and a record the config contradicts does not close, whoever wrote it and
+// whenever they wrote it. That deliberately reaches records written before the
+// rule existed: a false family is false at any age, and those records are the
+// whole reason this fence is here rather than only at the writer.
+//
+// What CAN be tolerated is the family that cannot be derived at all — a seat
+// this config does not carry, an alias, an entry with no family, a tree whose
+// routing table has since been rolled back. A legal close is never invalidated
+// by a rule arriving later, so a record from before the rule closes over an
+// underivable seat. That tolerance is BOUNDED in the same shape as the gate
+// identity check: once any review route in this stream carries the derived
+// marker, a later one without it is an omission, not a legacy record, and
+// omission would otherwise be the cheapest way past this binding — hand-append
+// a review route naming a seat nobody has heard of and the family goes
+// unchecked.
+//
+// Deliberately not decided here, since the check is one seat deep: the AUTHOR
+// side of the same question. `author_family` is still the caller's assertion
+// about `resolved_seat`, cross-checked against nothing, so a false author
+// family defeats the cross-family comparison below from the other end. Closing
+// that needs its own step; this one is scoped to the reviewer.
+function checkReviewerFamily(treeRoot, reviewRoute, reviewRouteSeq, records) {
+  const { family, reason } = seatFamily(treeRoot, reviewRoute.reviewer_seat);
+  if (family === null) {
+    if (derivedFamilyReview(reviewRoute)) {
+      throw new Error(
+        `mission: close refused — the review route at seq ${reviewRouteSeq} names reviewer seat ${JSON.stringify(reviewRoute.reviewer_seat)}, whose family cannot be derived: ${reason}; a family that cannot be established has not been established`
+      );
+    }
+    const firstDerived = firstDerivedFamilyReviewSeq(records);
+    if (firstDerived !== null && reviewRoute.seq > firstDerived) {
+      throw new Error(
+        `mission: close refused — the review route at seq ${reviewRouteSeq} names reviewer seat ${JSON.stringify(reviewRoute.reviewer_seat)}, whose family cannot be derived (${reason}), and it records no derived family although this stream's review routes have since seq ${firstDerived}; an omission is not a legacy record`
+      );
+    }
+    return;
+  }
+  if (family !== reviewRoute.reviewer_family) {
+    throw new Error(
+      `mission: close refused — the review route at seq ${reviewRouteSeq} claims reviewer family ${JSON.stringify(reviewRoute.reviewer_family)} for seat ${JSON.stringify(reviewRoute.reviewer_seat)}, which the routing config seats in family "${family}"; a reviewer's family is derived from the config, never asserted alongside the seat`
+    );
+  }
+}
+
 // Independence legality, judged against the records alone. A degraded-path
 // review is legal at every class, apex included (no class ceiling), under the
 // route snapshot that authorized it — deliberately, there is no code here
@@ -1404,7 +1477,7 @@ function requireNoStandingRevise(records, missionId, verdicts, identity, citedRo
 
 // Everything the ledger can decide about this close, decided in one place.
 // Returns the resolved records; every check refuses by throwing.
-function deriveCloseFacts(records, missionId, input) {
+function deriveCloseFacts(treeRoot, records, missionId, input) {
   const authorRoute = routeOfMission(records, missionId, input.author_route_seq, 'author', 'author route');
   const reviewRoute = routeOfMission(records, missionId, input.review_route_seq, 'review', 'review route');
 
@@ -1439,6 +1512,10 @@ function deriveCloseFacts(records, missionId, input) {
   requireUnsuperseded(records, missionId, input.author_route_seq, 'author route');
   requireUnsuperseded(records, missionId, input.review_route_seq, 'review route');
 
+  // Before checkReviewLegality, which reads reviewer_family as a fact when it
+  // compares the two families: a laundering verdict is only worth having if
+  // the family it names is the one the config records.
+  checkReviewerFamily(treeRoot, reviewRoute, input.review_route_seq, records);
   checkReviewLegality(authorRoute, reviewRoute);
   const identity = reviewedIdentityOf(reviewRoute, input.review_route_seq);
 
@@ -1628,7 +1705,7 @@ function closeMission(treeRoot, missionId, input, options) {
       const detail = errors.map((e) => `line ${e.line}: ${e.reason}`).join('; ');
       throw new Error(`mission: ${ledgerPath} has malformed record(s) — refusing to trust this stream: ${detail}`);
     }
-    preFacts = deriveCloseFacts(records, missionId, input);
+    preFacts = deriveCloseFacts(treeRoot, records, missionId, input);
   }
   const landing = proveLanding(repo, preFacts.identity);
 
@@ -1644,7 +1721,7 @@ function closeMission(treeRoot, missionId, input, options) {
         throw new Error(`mission: ${ledgerPath} has malformed record(s) — refusing to trust this stream: ${detail}`);
       }
 
-      const facts = deriveCloseFacts(records, missionId, input);
+      const facts = deriveCloseFacts(treeRoot, records, missionId, input);
       // The landing was proven against the pre-lock read's identity and the
       // payload is built from the locked read's. They cannot differ today —
       // the cited seqs are immutable, the ledger is append-only, and
@@ -1754,7 +1831,12 @@ commands:
       wrong kind/phase/mission, or superseded by a replacement; the review
       route binds a different author route or author dispatch; a dispatch seq
       names another mission's record; the winning seqs are not the dispatches
-      the cited chain binds; a review labeled cross-family names a reviewer
+      the cited chain binds; the review route's reviewer_family is not the one
+      the routing config records for its reviewer_seat, or that family cannot
+      be derived at all in a stream whose review routes already derive theirs
+      (a record from before that rule closes over an underivable seat, and the
+      first derived record in the stream is where that tolerance stops); a
+      review labeled cross-family names a reviewer
       of the author's own family; a degraded-path label on a route snapshot
       that recorded no degraded mode (the label never authorizes itself); the
       review profile differs from the capacity reserved at route time with no
