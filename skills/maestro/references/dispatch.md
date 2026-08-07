@@ -184,38 +184,38 @@ brief is worded:
 
 | Seat | Model / family | Route here for | Reviews work from |
 |---|---|---|---|
-| `scout` | Sonnet 5 (claude) | Codebase recon, file/symbol location; artifact = findings file | — |
-| `researcher` | Sonnet 5 (claude) | Docs-first deep research; artifact = citation-anchored note | — |
+| `scout` | Sonnet 5 medium (claude) | Codebase recon, file/symbol location; artifact = findings file | — |
+| `researcher` | Sonnet 5 high (claude) | Docs-first deep research; artifact = citation-anchored note | — |
 | `planner` | Fable 5 low (claude), fallback Opus 5 high | Goal → validated briefs + acceptance criteria | — |
-| `context-keeper` | Opus 5 (claude) | Per-mission memory; mailbox consults, verdict + file:line anchor | — |
+| `context-keeper` | Opus 5 high (claude) | Per-mission memory; mailbox consults, verdict + file:line anchor | — |
 | `executor-claude-mech` | Sonnet 5 low (claude) | Mechanical class: exact, enumerated, command-verifiable edits, no delegated judgment | — |
 | `executor-claude-standard` | Sonnet 5 high (claude) | Standard class: bounded features/fixes on established patterns, local blast radius | — |
 | `executor-claude` | Opus 5 high (claude) | UI/creative work; degraded-mode substitute; TDD where tests exist | — |
 | `executor-fable-low` | Fable 5 low (claude), fallback Opus 5 high | Expert-class escalation only, reached after opus expert work is defeated — never first-dispatched | — |
 | `executor-fable` | Fable 5 high (claude), fallback Opus 5 high | Apex class: foundational ambiguity, external-contract blast radius, destructive reversibility, hard fences | — |
-| `executor-gemini` | Sonnet 5 hosting Gemini 3.1 Pro (gemini) | Large-context and rotation implementation | — |
+| `executor-gemini` | Sonnet 5 high hosting Gemini 3.1 Pro (gemini) | Large-context and rotation implementation | — |
 | `executor-luna` | Sonnet 5 low hosting GPT-5.6-Luna (gpt) — dormant until the gpt lane is effective | Mechanical class, gpt ladder | — |
 | `executor-terra` | Sonnet 5 medium hosting GPT-5.6-Terra (gpt) — dormant until the gpt lane is effective | Standard class, gpt ladder | — |
 | `executor-sol-expert` | Sonnet 5 medium hosting GPT-5.6-Sol (gpt) — dormant until the gpt lane is effective | Expert class, gpt ladder; profile-split successor of the `executor-sol` alias below | — |
 | `executor-sol-apex` | Sonnet 5 high hosting GPT-5.6-Sol (gpt) — dormant until the gpt lane is effective | Apex class, gpt ladder | — |
 | `executor-sol` | — | Alias of `executor-sol-expert` since the r1→r2 Sol split. No read path resolves an alias — it is never routable. | — |
-| `reviewer-claude` | Sonnet 5 (claude) | — | recon/mechanical/standard-class gpt- and gemini-authored work |
+| `reviewer-claude` | Sonnet 5 high (claude) | — | recon/mechanical/standard-class gpt- and gemini-authored work |
 | `reviewer-claude-expert` | Opus 5 high (claude) | — | expert-class gpt- and gemini-authored work |
 | `reviewer-claude-apex` | Fable 5 low (claude), fallback Opus 5 high | — | apex-class gpt- and gemini-authored work |
-| `reviewer-gemini` | Sonnet 5 hosting Gemini (gemini) | — | claude- and gpt-authored work |
-| `reviewer-terra` | Sonnet 5 medium hosting GPT-5.6-Terra (gpt) — dormant until the gpt lane is effective | — | recon/mechanical/standard-class claude- and gemini-authored work |
+| `reviewer-gemini` | Sonnet 5 medium hosting Gemini (gemini) | — | claude-authored work (all classes); recon/mechanical/standard-class gpt-authored work — gpt expert/apex route to `reviewer-claude-expert`/`reviewer-claude-apex` instead |
+| `reviewer-terra` | Sonnet 5 medium host, GPT-5.6-Terra high guest (gpt) — dormant until the gpt lane is effective | — | recon/mechanical/standard-class claude- and gemini-authored work |
 | `reviewer-sol-expert-rev` | Sonnet 5 medium hosting GPT-5.6-Sol (gpt) — dormant until the gpt lane is effective | — | expert-class claude- and gemini-authored work; profile-split successor of the `reviewer-sol` alias below |
 | `reviewer-sol-apex-rev` | Sonnet 5 high hosting GPT-5.6-Sol (gpt) — dormant until the gpt lane is effective | — | apex-class claude- and gemini-authored work |
 | `reviewer-sol` | — | Alias of `reviewer-sol-expert-rev` since the r1→r2 Sol split. No read path resolves an alias — it is never routable. | — |
 | `reviewer-degraded-opus` | Opus 5 medium (claude) | — | degraded path only: sonnet-authored recon/mechanical/standard work, when no cross-family reviewer is effectively available |
 | `reviewer-degraded-sonnet` | Sonnet 5 high (claude) | — | degraded path only: opus-authored expert work |
 | `reviewer-degraded-opus-apex` | Opus 5 high (claude) | — | degraded path only: fable-authored apex work (preferred heavy-model pairing) |
-| `reviewer-degraded-fable-apex` | Fable 5 low (claude), fallback Opus 5 high | — | degraded path only: opus-authored apex work (preferred heavy-model pairing) |
+| `reviewer-degraded-fable-apex` | Fable 5 low (claude) — no seat-level fallback; an unavailable pairing partner is resolved by `reviewFor` to a fresh instance of the author's own model (opus-5 high, since this seat only reviews opus-authored apex work) | — | degraded path only: opus-authored apex work (preferred heavy-model pairing) |
 | `convergence` | Fable 5 low (claude), fallback Opus 5 high; dispatches Sol or Gemini directly for the second family | Both convergence moments: ladder step 2 (two-seat consensus on a disputed judgment) and direction-setting plans | — |
 | `plan-counterpart` | Sonnet 5 high hosting Sol (gpt) | The plan moment's second family: challenges a plan at standard rigor, drafts a rival plan at full. Spawned by `convergence`, not by the liaison | — |
-| `crystallizer` | Sonnet 5 (claude) | Sealed corpus → bounded artifact the liaison may read | — |
-| `handoff-recorder` | Sonnet 5 (claude) | One stop, one record; runs the stop writer only | — |
-| `fleet-medic` | Sonnet 5 (claude) | Roster-vs-TaskList reconciliation sweeps | — |
+| `crystallizer` | Sonnet 5 high (claude) | Sealed corpus → bounded artifact the liaison may read | — |
+| `handoff-recorder` | Sonnet 5 medium (claude) | One stop, one record; runs the stop writer only | — |
+| `fleet-medic` | Sonnet 5 medium (claude) | Roster-vs-TaskList reconciliation sweeps | — |
 
 Review routing is a law, not a preference: the reviewer's model family always
 differs from the implementer's, because same-family review inherits the
