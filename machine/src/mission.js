@@ -928,6 +928,13 @@ function requireCleanLandingRepo(repo) {
 // ever inspecting its content. An unreviewed commit or merge sitting where
 // the introduction itself happened is not walked past — it IS the
 // introduction being judged, and it refuses at the point it is found.
+//
+// A known, accepted narrowing of that grace: it only applies to a landing
+// introduced by a merge. A squash- or fast-forward-landed mission has no
+// such structural marker — a bare commit carries no signal distinguishing a
+// later, unrelated landing from unreviewed content riding on top — so
+// either must close before ANY later commit or merge lands on the same
+// branch, reviewed or not, or the walk refuses.
 function parentsOf(repo, commit) {
   const out = gitOut(repo, ['show', '-s', '--format=%P', commit], 'commit parents');
   return out === '' ? [] : out.split(/\s+/);
@@ -960,6 +967,18 @@ function locateLanding(repo, identity, landing) {
     return { method: 'commit-containment', landed_head: landing.head };
   }
 
+  // A landing branch that shares no history with the reviewed commit at all
+  // — an orphan root, most likely — can carry nothing of it; refused here,
+  // by name, rather than falling through the walk below and being read as
+  // "no match found, keep looking" all the way to a misleading root-reached
+  // message.
+  const sharedOutcome = git(repo, ['merge-base', head, landing.head]);
+  if (sharedOutcome.status !== 0) {
+    throw new Error(
+      `mission: close refused — the reviewed commit ${head} shares no history with ${landing.branch}; nothing of it can have landed`
+    );
+  }
+
   // The reviewed patch's own identity, for matching a squash landing — lazy
   // and memoized, computed only the first time a commit is actually a squash
   // candidate (below), against THAT commit rather than the tip: computing it
@@ -970,12 +989,24 @@ function locateLanding(repo, identity, landing) {
   // (isAncestorOrSelf below) is exactly what keeps this call for genuinely
   // disjoint commits only, where head is not yet reachable from the parent
   // side and merge-base(head, candidate) is a real, unrelated fork point.
+  //
+  // Every path out of this function is a value or a throw — never `null`
+  // participating in the caller's equality test. `git merge-base` failing
+  // here (a candidate on a sub-history disjoint from head's, despite the
+  // branch-wide check above finding some shared ancestor elsewhere) is the
+  // same "shares no history" condition as above, named the same way; a
+  // reviewed change with no content against its base is its own separate,
+  // already-named refusal.
   let reviewedId;
   let reviewedIdReady = false;
   function reviewedPatchId(candidate) {
     if (reviewedIdReady) return reviewedId;
     const baseOutcome = git(repo, ['merge-base', head, candidate]);
-    if (baseOutcome.status !== 0) return null;
+    if (baseOutcome.status !== 0) {
+      throw new Error(
+        `mission: close refused — the reviewed commit ${head} shares no history with ${candidate}; nothing of it can have landed`
+      );
+    }
     const base = baseOutcome.stdout.trim();
     const id = patchIdOf(repo, gitOut(repo, [...PATCH_ARGS, base, head], 'reviewed canonical patch'));
     if (id === null) {
@@ -1015,7 +1046,18 @@ function locateLanding(repo, identity, landing) {
         continue;
       }
       const patch = gitOut(repo, [...PATCH_ARGS, parent, cur], 'landed canonical patch');
-      if (patchIdOf(repo, patch) === reviewedPatchId(cur)) {
+      const patchId = patchIdOf(repo, patch);
+      // A null patch id (an empty diff — `cur` changed nothing against its
+      // own parent) is its own refusal, named as such, and never compared:
+      // `null === null` against a reviewed patch id that also failed to
+      // resolve is exactly the fail-open R1 introduced, closing a disjoint
+      // branch tipped by an empty commit having proven nothing.
+      if (patchId === null) {
+        throw new Error(
+          `mission: close refused — ${cur}'s own diff against ${parent} is empty; an empty change carries no patch identity and cannot be proven as the reviewed landing`
+        );
+      }
+      if (patchId === reviewedPatchId(cur)) {
         return { method: 'squash-patch-identity', landed_head: cur };
       }
       // An ordinary commit that neither carries the reviewed commit nor

@@ -32,6 +32,14 @@
 // landing repo closed clean (battery 4.2b). proveLanding refuses when the
 // landing repository itself carries an uncommitted change — unchanged by the
 // F1/F2 repair, per the review's own confirmation that D4 is correct.
+//
+// R1 (round two) — the F1/F2 repair's own `locateLanding` let `null === null`
+// stand in for a match: `reviewedPatchId` returned `null` when `git
+// merge-base` found no shared history at all, and `patchIdOf` returns `null`
+// for an empty diff, so a landing branch disjoint from the reviewed commit,
+// tipped by an empty commit, closed as `squash-patch-identity` having proven
+// nothing. Both nulls now refuse by name instead of participating in the
+// comparison; probe Q below is the regression.
 
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -248,6 +256,36 @@ function sneakBranch(repo, from, name) {
   assert.strictEqual(out.landing.method, 'commit-containment');
   assert.strictEqual(out.landing.landed_head, ourMerge, 'the proof names OUR OWN merge, not the sibling that landed after it');
   assert.strictEqual(stateOf().missions.mprobef.status, 'done');
+}
+
+// --- R1 probe Q (refusing): a landing branch that shares no history with the
+// reviewed commit at all, tipped by an empty commit ----------------------------
+{
+  openM('mprobeq');
+  const repo = fx.newWorkRepo(tmp);
+  const identity = fx.artifactIdentity(repo);
+  const chain = fx.reserveChain(root, 'mprobeq', identity);
+  fx.recordApprove(root, 'mprobeq', chain, identity);
+  const gateSeq = fx.runGreenGate(root, 'mprobeq', 'tests', repo);
+
+  // Replace main with a disjoint, orphan history that shares no commit with
+  // the reviewed work at all: a real root commit (so the tip has a parent to
+  // diff against, not the parentless-root case), then an empty commit on top
+  // — nothing to diff, nothing to contain.
+  gitAt(repo, 'checkout', '-q', '--orphan', 'disjoint-root');
+  gitAt(repo, 'rm', '-rq', '--cached', '.');
+  gitAt(repo, 'clean', '-q', '-fd');
+  fs.writeFileSync(path.join(repo, 'disjoint.txt'), 'disjoint\n');
+  gitAt(repo, 'add', '-A');
+  gitAt(repo, 'commit', '-q', '-m', 'disjoint root');
+  gitAt(repo, 'commit', '-q', '--allow-empty', '-m', 'disjoint tip, empty');
+  gitAt(repo, 'branch', '-f', 'main', 'disjoint-root');
+  gitAt(repo, 'checkout', '-q', 'main');
+
+  const r = fx.runClose(root, 'mprobeq', repo, fx.closeInputOf(chain, gateSeq));
+  assert.strictEqual(r.status, 1, 'a disjoint landing branch tipped by an empty commit must refuse, proving nothing');
+  assert.match(r.stderr, /shares no history/);
+  assert.strictEqual(stateOf().missions.mprobeq.status, 'open');
 }
 
 // --- D5 passing (legitimate shape 1): a no-ff merge of exactly the reviewed
