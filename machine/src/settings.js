@@ -24,8 +24,13 @@ const REVIEW_FLOOR_LOCKED_VALUE = 'cross-family';
 const REVIEW_FLOOR_LOCKED_MESSAGE =
   'review_floor is locked at "cross-family" — review_floor_scale_down is banned in every mode';
 
+const CROSS_FAMILY_WHEN_AVAILABLE_LOCKED_VALUE = true;
+const CROSS_FAMILY_WHEN_AVAILABLE_LOCKED_MESSAGE =
+  'cross_family_when_available is locked at true — it restates the review_floor invariant, it does not replace it';
+
 // The closed knob schema. Rule kinds: enum (closed string set), integer
-// (with floor/ceiling clamps), locked (single permitted value, ever).
+// (with floor/ceiling clamps), locked (single permitted value, ever), nested
+// (an object of sub-knobs, each itself enum-shaped — deep-merged on write).
 const SCHEMA = {
   delegation: { kind: 'enum', values: ['strict', 'balanced'], default: 'strict' },
   fleet_ceiling: { kind: 'integer', floor: 1, ceiling: 12, default: 6 },
@@ -33,6 +38,20 @@ const SCHEMA = {
   escalation: { kind: 'enum', values: ['auto_remedy', 'advise_me'], default: 'auto_remedy' },
   plan_rigor: { kind: 'enum', values: ['ask', 'standard', 'full'], default: 'ask' },
   review_floor: { kind: 'locked', value: REVIEW_FLOOR_LOCKED_VALUE, message: REVIEW_FLOOR_LOCKED_MESSAGE },
+  degraded_review: { kind: 'enum', values: ['degraded-path', 'hold'], default: 'degraded-path' },
+  upgrade_degraded_review: { kind: 'enum', values: ['never', 'before-close'], default: 'never' },
+  provider_lanes: {
+    kind: 'nested',
+    keys: {
+      gpt: { kind: 'enum', values: ['auto', 'operator-down'], default: 'auto' },
+      gemini: { kind: 'enum', values: ['auto', 'operator-down'], default: 'auto' },
+    },
+  },
+  cross_family_when_available: {
+    kind: 'locked',
+    value: CROSS_FAMILY_WHEN_AVAILABLE_LOCKED_VALUE,
+    message: CROSS_FAMILY_WHEN_AVAILABLE_LOCKED_MESSAGE,
+  },
 };
 
 function isPlainObject(value) {
@@ -83,6 +102,50 @@ function clampDoc(input) {
       if (present && value !== rule.value) {
         clamps.push({ key, from: value, to: rule.value, rule: 'locked', message: rule.message });
       }
+      continue;
+    }
+
+    if (rule.kind === 'nested') {
+      const nestedDefaults = () => {
+        const defaults = {};
+        for (const [subKey, subRule] of Object.entries(rule.keys)) defaults[subKey] = subRule.default;
+        return defaults;
+      };
+
+      if (!present) {
+        settings[key] = nestedDefaults();
+        clamps.push({ key, from: undefined, to: settings[key], rule: 'default' });
+        continue;
+      }
+      if (!isPlainObject(value)) {
+        settings[key] = nestedDefaults();
+        clamps.push({ key, from: value, to: settings[key], rule: 'invalid-type' });
+        continue;
+      }
+
+      // Unknown provider keys are dropped, never carried forward, exactly
+      // as unknown top-level keys are.
+      for (const subKey of Object.keys(value)) {
+        if (!Object.prototype.hasOwnProperty.call(rule.keys, subKey)) {
+          clamps.push({ key: `${key}.${subKey}`, from: value[subKey], to: null, rule: 'unknown' });
+        }
+      }
+
+      const nested = {};
+      for (const [subKey, subRule] of Object.entries(rule.keys)) {
+        const subPresent = Object.prototype.hasOwnProperty.call(value, subKey) && value[subKey] !== undefined;
+        const subValue = value[subKey];
+        if (!subPresent) {
+          nested[subKey] = subRule.default;
+          clamps.push({ key: `${key}.${subKey}`, from: undefined, to: subRule.default, rule: 'default' });
+        } else if (subRule.values.includes(subValue)) {
+          nested[subKey] = subValue;
+        } else {
+          nested[subKey] = subRule.default;
+          clamps.push({ key: `${key}.${subKey}`, from: subValue, to: subRule.default, rule: 'enum' });
+        }
+      }
+      settings[key] = nested;
       continue;
     }
 
@@ -145,6 +208,21 @@ function validatePatch(patch) {
       if (!rule.values.includes(value)) {
         errors.push(`"${key}" must be one of ${rule.values.map((v) => `"${v}"`).join(', ')}`);
       }
+    } else if (rule.kind === 'nested') {
+      if (!isPlainObject(value)) {
+        errors.push(`"${key}" must be a nested object of ${Object.keys(rule.keys).join(', ')}`);
+        continue;
+      }
+      for (const [subKey, subValue] of Object.entries(value)) {
+        if (!Object.prototype.hasOwnProperty.call(rule.keys, subKey)) {
+          errors.push(`unknown provider "${subKey}" in ${key} — the lane set is closed (${Object.keys(rule.keys).join(', ')})`);
+          continue;
+        }
+        const subRule = rule.keys[subKey];
+        if (!subRule.values.includes(subValue)) {
+          errors.push(`"${key}.${subKey}" must be one of ${subRule.values.map((v) => `"${v}"`).join(', ')}`);
+        }
+      }
     } else if (rule.kind === 'integer') {
       if (typeof value !== 'number' || !Number.isInteger(value)) {
         errors.push(`"${key}" must be an integer between ${rule.floor} and ${rule.ceiling}`);
@@ -183,6 +261,14 @@ function write(treeRoot, patch) {
         const rule = SCHEMA[key];
         if (rule.kind === 'locked') {
           continue; // validated equal to the locked value; base already carries it
+        }
+        if (rule.kind === 'nested') {
+          // Deep merge: base[key] is already fully resolved (every sibling
+          // present, defaulted where absent), so overlaying only the
+          // patched sub-keys leaves every untouched sibling exactly as it
+          // was — never dropped, never undefined.
+          merged[key] = { ...base[key], ...value };
+          continue;
         }
         if (rule.kind === 'integer') {
           if (value < rule.floor) {
@@ -225,6 +311,20 @@ knobs (closed set):
                   refuses the whole write; a hand-edited value is discarded
                   on read and the locked value re-applied (deleted, never
                   carried forward as a false setting)
+  degraded_review "degraded-path" | "hold"                  default "degraded-path"
+  upgrade_degraded_review
+                  "never" | "before-close"                  default "never"
+  provider_lanes  nested: { gpt, gemini } each
+                  "auto" | "operator-down"                  default "auto" each
+                  a patch touching one lane deep-merges over the current
+                  document — the untouched sibling keeps its current value
+                  (or documented default if the parent was absent); an
+                  unknown provider key or an unknown nested value refuses
+                  the whole write
+  cross_family_when_available
+                  locked at true — restates the review_floor invariant,
+                  does not replace it; same locked-key discipline as
+                  review_floor
 
 commands:
   read    prints { settings, clamps, source } — the on-disk document with
