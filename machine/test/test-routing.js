@@ -47,9 +47,12 @@ function setPreflight(root, perProvider) {
   assert.strictEqual(pointer.digest, init.digest);
 
   const config = JSON.parse(fs.readFileSync(path.join(root, 'routing', init.active_config), 'utf8'));
-  // init writes the current schema at the current revision — never a
-  // modern schema mislabeled revision 1.
-  assert.strictEqual(config.revision, CURRENT_ROUTING_REVISION);
+  // Literals, not the module's own constant, so this can actually fail:
+  // the highest shipped migration is r1->r2, so the current revision is 2
+  // and init stamps exactly that — never a label above or below the
+  // content. Each slice that ships a migration raises both literals.
+  assert.strictEqual(CURRENT_ROUTING_REVISION, 2);
+  assert.strictEqual(config.revision, 2);
   assert.deepStrictEqual(config.review_routing, {
     claude: ['reviewer-sol-expert-rev', 'reviewer-gemini'],
     gpt: ['reviewer-claude', 'reviewer-gemini'],
@@ -61,7 +64,7 @@ function setPreflight(root, perProvider) {
     review_floor_scale_down: 'never',
     runtime_agent_creation: 'never',
   });
-  assert.strictEqual(config.degraded.codex_down.seats['executor-sol'], 'executor-claude');
+  assert.strictEqual(config.degraded.codex_down.seats['executor-sol-expert'], 'executor-claude');
   assert.strictEqual(config.degraded.gemini_down.seats['executor-gemini'], 'executor-claude');
 
   // Convergence protocol seats: convergence (Fable, both moments) and its
@@ -183,9 +186,13 @@ function setPreflight(root, perProvider) {
   const active = JSON.parse(run(['active', root]).stdout);
   assert.strictEqual(active.preflight_recorded, true);
   assert.deepStrictEqual(active.degraded_modes, ['codex_down']);
+  // The Sol split carries the codex_down substitutes onto the live
+  // successors; the alias names key nothing, since nothing routes them.
   assert.deepStrictEqual(active.seat_substitutions, {
-    'executor-sol': 'executor-claude',
-    'reviewer-sol': 'reviewer-claude',
+    'executor-sol-expert': 'executor-claude',
+    'executor-sol-apex': 'executor-claude',
+    'reviewer-sol-expert-rev': 'reviewer-claude',
+    'reviewer-sol-apex-rev': 'reviewer-claude',
     'plan-counterpart': 'reviewer-gemini',
   });
   assert.strictEqual(active.notices.length, 1);

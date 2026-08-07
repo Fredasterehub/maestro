@@ -26,11 +26,6 @@ const ACTIVE_BASENAME = 'active.json';
 const STATE_BASENAME = 'state.json';
 const SCHEMA_VERSION = 1;
 
-// The revision this codebase considers current. init writes the current
-// schema at this number; revise migrates older active configs toward it,
-// one revision per step, as far as shipped MIGRATIONS entries reach.
-const CURRENT_ROUTING_REVISION = 6;
-
 const FAMILIES = ['claude', 'gpt', 'gemini'];
 
 // Strict basename-only pattern: no path separator can match, so a pointer
@@ -155,18 +150,44 @@ function buildRevision1Config(dateStr) {
 // own boundary (running it on its own output changes nothing), and its
 // output must pass validateRoutingConfig before revise will write it.
 
-// r1 -> r2: split the Sol seat by class. The single executor-sol /
-// reviewer-sol profiles become per-class seats mirroring their agent-file
-// frontmatter; the old names stay in the table as migration aliases
-// (alias_of), which are never routable — review rows repoint to the
-// expert successors so no row names an alias.
+// r1 -> r2: split the Sol seat by class, wherever Sol is named. The single
+// executor-sol / reviewer-sol profiles become per-class seats mirroring
+// their agent-file frontmatter; the old names stay in the seat table as
+// migration aliases (alias_of), which are never routable — review rows
+// repoint to the expert successors, and degraded substitution maps carry
+// the split so every live successor keeps the substitute the old seat had.
 function migrateSolSplit(config) {
   const out = JSON.parse(JSON.stringify(config));
+  // Shaped refusals over raw TypeErrors: MIGRATIONS is called directly
+  // (not only through revise), and §11 wants each migration independently
+  // testable — a structurally incomplete source names its missing piece.
+  if (!isPlainObject(out.seats)) {
+    throw new Error('r1->r2 migration: config has no seats table — not a revision-1 shape');
+  }
+  for (const required of ['executor-sol', 'reviewer-sol']) {
+    if (!isPlainObject(out.seats[required])) {
+      throw new Error(`r1->r2 migration: config has no seats["${required}"] to split — not a revision-1 shape`);
+    }
+  }
+  if (!isPlainObject(out.review_routing)) {
+    throw new Error('r1->r2 migration: config has no review_routing table — not a revision-1 shape');
+  }
+  for (const family of FAMILIES) {
+    if (!Array.isArray(out.review_routing[family])) {
+      throw new Error(`r1->r2 migration: review_routing.${family} is not an array — not a revision-1 shape`);
+    }
+  }
+  if (!isPlainObject(out.degraded)) {
+    throw new Error('r1->r2 migration: config has no degraded table — not a revision-1 shape');
+  }
+
   const added = {
     'executor-sol-expert': { model: 'gpt-5.6-sol', family: 'gpt', effort: 'medium', host: 'sonnet-5', host_effort: 'medium' },
     'executor-sol-apex': { model: 'gpt-5.6-sol', family: 'gpt', effort: 'high', host: 'sonnet-5', host_effort: 'high' },
-    'reviewer-sol-expert-rev': { model: 'gpt-5.6-sol', family: 'gpt', effort: 'medium', host: 'sonnet-5', host_effort: 'medium' },
-    'reviewer-sol-apex-rev': { model: 'gpt-5.6-sol', family: 'gpt', effort: 'high', host: 'sonnet-5', host_effort: 'high' },
+    // scope: 'scoped' survives the split: it is a property of the seat's
+    // meaning (diff-scoped review), not of the profile being re-tiered.
+    'reviewer-sol-expert-rev': { model: 'gpt-5.6-sol', family: 'gpt', effort: 'medium', host: 'sonnet-5', host_effort: 'medium', scope: 'scoped' },
+    'reviewer-sol-apex-rev': { model: 'gpt-5.6-sol', family: 'gpt', effort: 'high', host: 'sonnet-5', host_effort: 'high', scope: 'scoped' },
   };
   for (const [name, seat] of Object.entries(added)) {
     out.seats[name] = seat;
@@ -178,7 +199,28 @@ function migrateSolSplit(config) {
   for (const family of FAMILIES) {
     out.review_routing[family] = repoint(out.review_routing[family]);
   }
+  // Successors of an alias in substitution-map positions: an old name used
+  // as a target repoints to its expert successor; an old name used as a
+  // key fans out to every successor, each inheriting the old substitute —
+  // no live seat is left without the substitute its predecessor had, and
+  // no alias stays named anywhere a seat name resolves.
+  const SPLIT_KEYS = {
+    'executor-sol': ['executor-sol-expert', 'executor-sol-apex'],
+    'reviewer-sol': ['reviewer-sol-expert-rev', 'reviewer-sol-apex-rev'],
+  };
+  const repointTarget = (target) =>
+    target === 'executor-sol' ? 'executor-sol-expert' : target === 'reviewer-sol' ? 'reviewer-sol-expert-rev' : target;
   for (const table of Object.values(out.degraded)) {
+    if (!isPlainObject(table)) continue;
+    if (isPlainObject(table.seats)) {
+      const split = {};
+      for (const [from, to] of Object.entries(table.seats)) {
+        for (const key of SPLIT_KEYS[from] || [from]) {
+          split[key] = repointTarget(to);
+        }
+      }
+      table.seats = split;
+    }
     if (isPlainObject(table.review_routing)) {
       for (const family of FAMILIES) {
         if (Array.isArray(table.review_routing[family])) {
@@ -194,18 +236,22 @@ function migrateSolSplit(config) {
 
 const MIGRATIONS = [migrateSolSplit];
 
+// The revision of the highest migration actually shipped — each slice that
+// pushes a MIGRATIONS entry raises this in the same commit, by construction.
+// The mission's end state is revision 6; pinning that number early would
+// stamp init'd trees above their content and freeze them out of every later
+// migration (the already-current no-op would fire forever).
+const CURRENT_ROUTING_REVISION = 1 + MIGRATIONS.length;
+
 // The current schema is the revision-1 baseline pushed through every
-// shipped migration, stamped at CURRENT_ROUTING_REVISION — init derives it
-// rather than hand-maintaining a second table, so a fresh tree can never
-// carry a modern schema mislabeled revision 1. Until all migrations up to
-// CURRENT_ROUTING_REVISION have shipped, the stamp is ahead of the shipped
-// content by design: each later migration lands here automatically.
+// shipped migration — init derives it rather than hand-maintaining a second
+// table, so a fresh tree carries exactly the content its revision label
+// claims and migrated trees can never diverge from init'd ones.
 function buildDefaultConfig(dateStr) {
   let config = buildRevision1Config(dateStr);
   for (const migrate of MIGRATIONS) {
     config = migrate(config);
   }
-  config.revision = CURRENT_ROUTING_REVISION;
   return config;
 }
 
@@ -247,7 +293,10 @@ function validateRoutingConfig(config) {
   if (!isPlainObject(config.bans)) errors.push('bans must be an object');
   const seats = isPlainObject(config.seats) ? config.seats : {};
   // alias_of is a migration pointer: it must name a real seat that is not
-  // itself an alias, so alias resolution is always a single hop.
+  // itself an alias, so alias resolution is always a single hop. No read
+  // path resolves an alias — a stored name that turns out to be one gets
+  // refusal-by-absence, deliberately, since aliases exist only so old
+  // configs keep validating across a migration.
   for (const [seatName, seat] of Object.entries(seats)) {
     if (!isPlainObject(seat) || !('alias_of' in seat)) continue;
     const target = seat.alias_of;
@@ -296,15 +345,20 @@ function validateRoutingConfig(config) {
         for (const [from, to] of Object.entries(table.seats)) {
           if (typeof to !== 'string' || !Object.prototype.hasOwnProperty.call(seats, to)) {
             errors.push(`degraded.${modeName}.seats maps "${from}" to unknown seat "${to}"`);
+          } else if (isPlainObject(seats[to]) && 'alias_of' in seats[to]) {
+            // A substitution landing on an alias is routing an alias by a
+            // different door — a live seat would resolve onto a seat that
+            // is itself never routable.
+            errors.push(`degraded.${modeName}.seats maps "${from}" to alias seat "${to}", which is never routable`);
           }
         }
       }
-    }
-    // Only the preflight-driven modes feed composeReviewRouting, so only
-    // those must additionally carry a review_routing override.
-    for (const [, modeName] of PROVIDER_MODES) {
-      const table = config.degraded[modeName];
-      if (isPlainObject(table)) {
+      // Preflight-driven modes feed composeReviewRouting, so their
+      // review_routing override is mandatory; any other degraded table
+      // that carries one is checked to the same standard — a hand-shaped
+      // degraded table is a read-boundary risk like any other.
+      const preflightDriven = PROVIDER_MODES.some(([, name]) => name === modeName);
+      if (preflightDriven || Object.prototype.hasOwnProperty.call(table, 'review_routing')) {
         checkReviewRouting(table.review_routing, `degraded.${modeName}.review_routing`, seats, errors);
       }
     }
@@ -499,13 +553,33 @@ function init(treeRoot) {
   return { active_config: filename, digest };
 }
 
-// First free routing-YYYY-MM-DD-N.json basename for the day: dated configs
-// are immutable, so a collision increments N rather than overwriting — a
-// re-upgrade after a rollback lands beside the files it wrote the first time.
-function nextDatedFilename(dir, dateStr) {
+// Writes a dated config at the first free routing-YYYY-MM-DD-N.json name
+// for the day. The name is claimed with an exclusive create ('wx'), so
+// immutability rests on the filesystem, not on a check-then-write: a
+// concurrent writer that picked the same N loses with EEXIST and moves to
+// the next. Byte format matches atomic-json's writeJson exactly, so equal
+// content always hashes to an equal digest regardless of which path wrote
+// it. Rollback/re-upgrade cycles therefore accumulate byte-identical dated
+// files under successive N — the growth immutability demands, by design.
+function writeDatedConfigExclusive(dir, dateStr, value) {
+  const serialized = JSON.stringify(value, null, 2) + '\n';
   for (let n = 1; ; n++) {
     const filename = `routing-${dateStr}-${n}.json`;
-    if (!fs.existsSync(path.join(dir, filename))) return filename;
+    const configPath = path.join(dir, filename);
+    let fd;
+    try {
+      fd = fs.openSync(configPath, 'wx');
+    } catch (err) {
+      if (err.code === 'EEXIST') continue;
+      throw err;
+    }
+    try {
+      fs.writeSync(fd, serialized);
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+    return { filename, configPath };
   }
 }
 
@@ -548,9 +622,7 @@ function revise(treeRoot) {
       if (!ok) {
         throw new Error(`migration to revision ${revision + 1} produced an invalid config: ${errors.join('; ')}`);
       }
-      const filename = nextDatedFilename(dir, dateStr);
-      const configPath = path.join(dir, filename);
-      writeJson(configPath, next);
+      const { filename, configPath } = writeDatedConfigExclusive(dir, dateStr, next);
       // Digest from the exact bytes on disk, same discipline as init: the
       // pointer will certify the file as-written, not the in-memory value.
       const digest = sha256Of(fs.readFileSync(configPath));
@@ -577,11 +649,22 @@ function revise(treeRoot) {
   }
 
   const last = steps[steps.length - 1];
-  writeJson(path.join(dir, ACTIVE_BASENAME), {
-    schema_version: SCHEMA_VERSION,
-    active_config: last.file,
-    digest: last.digest,
-  });
+  try {
+    writeJson(path.join(dir, ACTIVE_BASENAME), {
+      schema_version: SCHEMA_VERSION,
+      active_config: last.file,
+      digest: last.digest,
+    });
+  } catch (err) {
+    // A failed repoint leaves the old pointer intact — the invariant holds —
+    // but the dated files already written deserve the same orphan report a
+    // mid-loop failure produces.
+    throw new Error(
+      `routing: revise migrated to revision ${last.revision} but repointing ${ACTIVE_BASENAME} failed: ${err.message} — ` +
+        `active.json still points at "${activeFile}", which stays authoritative; orphan dated file(s) written but never ` +
+        `activated: ${steps.map((s) => s.file).join(', ')}`
+    );
+  }
   return {
     from,
     to: last.revision,
