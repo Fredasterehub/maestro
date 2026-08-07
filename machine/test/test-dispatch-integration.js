@@ -7,17 +7,27 @@
 // coverage on top of test-route.js's unit-level shape/refusal tests, not a
 // replacement for them.
 //
-// Two pieces of the documented flow are NOT tested here because they are not
-// yet real at this base (see the plan correction appended to
+// Three pieces of the documented flow are NOT tested here because they are
+// not yet real at this base (see the plan correction appended to
 // execution-plan.md from this step's consult):
 //   - roster.js register does not accept route_seq and appends nothing to
 //     the ledger, so the four-way ledger order (route, registration, review
 //     route, review) is provable only for its route/review-route/review
-//     half; registration's position is asserted through roster.json instead.
+//     half; registration's position is timestamp evidence read from
+//     roster.json, not a refusal the machine performs — nothing in
+//     roster.js consults a route, so nothing there could refuse one out of
+//     order.
 //   - mission.js close is being rewritten in a parallel step and does not
-//     yet compare artifact identities at close; the identity-mismatch
-//     refusal proven below is route.js reserve-review's own refusal, not
-//     close's.
+//     yet compare artifact identities at close; only reserve-review's own
+//     refusals (below) are tested here, not close's.
+//   - a genuine cross-record identity *mismatch* — a review or close naming
+//     an identity that disagrees with one already committed elsewhere — is
+//     not expressible at this base: AUTHOR_KEYS carries no artifact
+//     identity for a review route to disagree with, and close's own
+//     identity comparison belongs to the parallel step. What's tested below
+//     is reserve-review's real refusals on the identity object itself: a
+//     dirty worktree, and a shape mismatch between an oid field and a
+//     digest field.
 
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -168,11 +178,12 @@ function reviewInput(missionId, authorRoute, identity, overrides) {
   assert.strictEqual(authorRoute.kind, 'route');
   assert.strictEqual(authorRoute.phase, 'author');
 
-  // 4-5: spawn (simulated), then roster registration. Ordering is proven by
-  // calling register only now, with the just-reserved route already durable,
-  // and by comparing timestamps below — roster.js register carries no
-  // route_seq yet (Slice 2c) and appends nothing to the ledger (Slice 7a), so
-  // its position is provable only through roster.json, not a ledger record.
+  // 4-5: spawn (simulated), then roster registration. roster.js register
+  // carries no route_seq yet (Slice 2c) and appends nothing to the ledger
+  // (Slice 7a), so nothing in the machine could refuse a register call that
+  // arrived before the route — the timestamp check below is evidence this
+  // test's own calls landed in the documented order, never a proof that an
+  // out-of-order call would be refused.
   const authorReg = run(ROSTER, ['register', root], {
     seat: 'executor-sol',
     task_id: `${m}-author`,
@@ -213,12 +224,23 @@ function reviewInput(missionId, authorRoute, identity, overrides) {
   );
 
   // The ledger-provable half of the order: author route strictly precedes the
-  // review route that names it, by seq and by timestamp — read from the
-  // ledger alone, not from the JS objects still in scope.
-  assert.ok(reviewRoute.seq > authorRoute.seq, 'review route must follow the author route in the ledger');
+  // review route that names it, by seq and by timestamp — re-read from
+  // ledger.jsonl itself, not from the reserve()/reserveReview() return
+  // values still in scope, so this proves what is actually on disk.
+  const flowLedger = ledger(root);
+  const ledgerAuthorRoute = flowLedger.find((r) => r.kind === 'route' && r.seq === authorRoute.seq);
+  const ledgerReviewRoute = flowLedger.find((r) => r.kind === 'route' && r.seq === reviewRoute.seq);
+  assert.ok(ledgerAuthorRoute && ledgerReviewRoute, 'both routes must be readable back out of ledger.jsonl');
+  assert.strictEqual(ledgerAuthorRoute.phase, 'author');
+  assert.strictEqual(ledgerReviewRoute.phase, 'review');
+  assert.strictEqual(ledgerReviewRoute.author_route_seq, ledgerAuthorRoute.seq);
   assert.ok(
-    new Date(reviewRoute.ts).getTime() >= new Date(authorRoute.ts).getTime(),
-    'review route must be timestamped at or after the author route'
+    ledgerReviewRoute.seq > ledgerAuthorRoute.seq,
+    'on disk, the review route must follow the author route it names'
+  );
+  assert.ok(
+    new Date(ledgerReviewRoute.ts).getTime() >= new Date(ledgerAuthorRoute.ts).getTime(),
+    'on disk, the review route must be timestamped at or after the author route'
   );
 
   // The roster half of the order: both registrations exist, in the right
@@ -243,11 +265,23 @@ function reviewInput(missionId, authorRoute, identity, overrides) {
   const m = openMission(root);
 
   const authorRoute = reserve(root, authorInput(m));
-  run(ROSTER, ['register', root], { seat: 'executor-sol', task_id: `${m}-author`, family: 'gpt', mission_id: m });
+  const authorReg = run(ROSTER, ['register', root], {
+    seat: 'executor-sol',
+    task_id: `${m}-author`,
+    family: 'gpt',
+    mission_id: m,
+  });
+  assert.strictEqual(authorReg.status, 0, authorReg.stderr);
   const worktree = newAuthorWorktree();
   const identity = artifactIdentity(worktree);
   const reviewRoute = reserveReview(root, reviewInput(m, authorRoute, identity));
-  run(ROSTER, ['register', root], { seat: 'reviewer-claude', task_id: `${m}-review`, family: 'claude', mission_id: m });
+  const reviewReg = run(ROSTER, ['register', root], {
+    seat: 'reviewer-claude',
+    task_id: `${m}-review`,
+    family: 'claude',
+    mission_id: m,
+  });
+  assert.strictEqual(reviewReg.status, 0, reviewReg.stderr);
 
   // A cold read: everything below is derived from freshly-parsed disk state,
   // never from authorRoute/reviewRoute above.
@@ -310,13 +344,13 @@ function reviewInput(missionId, authorRoute, identity, overrides) {
   assert.strictEqual(supersessionAtThatPoint, undefined, 'the supersession record must not exist before the replacement it names');
 }
 
-// === identity-mismatch refusal ===============================================
-// route.js reserve-review refuses a review route whose artifact identity does
-// not honestly describe the worktree it claims to name: a dirty worktree's
-// reported state does not match its own committed identity, and that half of
-// the review/close identity-matching contract (§6, §7) is enforced today by
-// reserve-review itself. (Close's own cross-record identity comparison is
-// mission.js's, rewritten in the parallel step 2c — not tested here.)
+// === reserve-review's own identity refusals: dirty and shape-mismatched ====
+// Not a cross-record mismatch test (see the file header) — this proves the
+// two refusals reserve-review itself performs on the identity object: a
+// dirty worktree's reported state disagreeing with its own committed HEAD,
+// and a digest field carrying an oid instead of a digest. Both are real
+// refusals at this base; neither compares against a previously-recorded
+// identity, because nothing upstream of reserve-review records one yet.
 {
   const root = path.join(tmp, 'identity', '.maestro');
   fs.mkdirSync(root, { recursive: true });
