@@ -85,6 +85,18 @@
 // check that answers one, so the two can never disagree. A second TREE is, and
 // that is the boundary named above: the fence is as wide as the ledger it
 // reads, and no wider.
+//
+// close names the winning author and review dispatches, but a mission is
+// every attempt it made, not only the one that won (§16.3). So close also
+// walks every OTHER "dispatch" ledger record this mission's roster.js
+// register calls produced and gives each a terminal outcome from the closed
+// vocabulary in TERMINAL_OUTCOMES below — read off a route supersession's own
+// recorded transition and reason, a standing review-outcome, or an
+// unambiguous "blocked" worker envelope, exactly as every other fact in this
+// file is read rather than asserted. A dispatch none of those three streams
+// can classify refuses the close by name, because a guessed outcome is
+// indistinguishable from a true one the moment it is written, and this record
+// is the one nobody ever audits against reality afterward.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -95,7 +107,8 @@ const { readJson, writeJson, updateJson } = require('./atomic-json.js');
 const { validateBrief, validateEnvelope } = require('./validators.js');
 const { assertContained } = require('./contain.js');
 const { IDENTITY_FIELDS } = require('./gate.js');
-const { seatFamily, FAMILY_DERIVATION } = require('./route.js');
+const { seatFamily, FAMILY_DERIVATION, SUPERSEDED_KIND, ESCALATION_TRANSITIONS } = require('./route.js');
+const { DISPATCH_KIND } = require('./roster.js');
 
 const MISSION_STATUSES = { OPEN: 'open', DONE: 'done' };
 const DEFAULT_NEXT_ACTION = 'dispatch a worker against brief.json';
@@ -1494,6 +1507,195 @@ function requireNoStandingRevise(records, missionId, verdicts, identity, citedRo
   }
 }
 
+// --- close: terminal outcomes for non-winning dispatches ---------------------
+
+// §16.3's closed vocabulary for "what happened to an attempt that did not
+// win". Every word is read off a record roster.js or route.js already wrote —
+// never accepted from the caller, and never invented for a legal ledger
+// combination none of the more specific words name (that residual case reads
+// as "superseded", the generic word, rather than as a guess).
+const TERMINAL_OUTCOMES = [
+  'revised',
+  'blocked',
+  'superseded',
+  'runtime-failed',
+  'provider-rerouted',
+  'quota-rerouted',
+  'profile-escalated',
+  'safety-refused',
+];
+
+// Every "dispatch" ledger record naming this mission — roster.js register's
+// sole writer of the kind (§16.1). A registration with no route_seq never
+// reaches the ledger at all (roster.js's own limit, not this module's to
+// widen), so this is exactly the population a terminal outcome can be
+// derived for.
+function dispatchesOfMission(records, missionId) {
+  return records.filter((r) => isPlainObject(r) && r.kind === DISPATCH_KIND && r.mission_id === missionId);
+}
+
+// The verdict currently standing on ONE review route, scanned fresh rather
+// than trusted to a cache — the last review-outcome by seq that names it. A
+// record naming this route while claiming a different mission is not read as
+// evidence for anything, the same misattribution rule verdictsByMissionRoute
+// enforces at the cited route, extended here to every route a non-winning
+// dispatch might name.
+function standingVerdictOfRoute(records, missionId, reviewRouteSeq) {
+  let standing = null;
+  for (const record of records) {
+    if (!isPlainObject(record) || record.kind !== 'review-outcome') continue;
+    if (record.review_route_seq !== reviewRouteSeq) continue;
+    if (record.mission_id !== missionId) {
+      throw new Error(
+        `mission: close refused — review-outcome at seq ${record.seq} names review route ${reviewRouteSeq} of mission "${missionId}" but claims mission ${JSON.stringify(record.mission_id)}; a verdict that misattributes its mission is not evidence`
+      );
+    }
+    if (!Number.isSafeInteger(record.seq) || record.seq < 0) continue;
+    if (standing === null || record.seq > standing.seq) standing = record;
+  }
+  return standing;
+}
+
+// The one signal outside the route/review streams: the worker's own six-field
+// envelope (validators.js), whose "state" is exactly done | partial | blocked
+// and whose sole writer is this module's own recordEnvelope. An envelope
+// names a seat, never a dispatch, so it is bound to one by the window between
+// this dispatch and the next dispatch this mission ever registers on the same
+// seat — the span in which this seat's live entry was this dispatch and no
+// other. A window carrying more than one envelope, or envelopes that
+// disagree, names nothing with confidence and reads as no signal at all —
+// never as "blocked" by majority.
+function envelopeOutcomeOf(records, missionId, dispatch, dispatches) {
+  if (!isNonEmptyString(dispatch.seat)) return null;
+  let windowEnd = Infinity;
+  for (const other of dispatches) {
+    if (other === dispatch) continue;
+    if (other.seat !== dispatch.seat) continue;
+    if (!Number.isSafeInteger(other.seq) || other.seq <= dispatch.seq) continue;
+    if (other.seq < windowEnd) windowEnd = other.seq;
+  }
+  const inWindow = records.filter(
+    (r) =>
+      isPlainObject(r) &&
+      r.kind === 'envelope' &&
+      r.mission_id === missionId &&
+      r.seat === dispatch.seat &&
+      Number.isSafeInteger(r.seq) &&
+      r.seq > dispatch.seq &&
+      r.seq < windowEnd
+  );
+  if (inWindow.length === 0) return null;
+  return inWindow.every((r) => r.state === 'blocked') ? 'blocked' : null;
+}
+
+// One non-winning dispatch's terminal outcome, read off exactly three
+// streams and nothing the caller says: whether route.js supersede replaced
+// its route (and, if so, the transition and reason IT recorded, never a
+// caller's word about either), whether a review-outcome stands against it,
+// and, failing both, whether its own worker reported "blocked". Silent or
+// ambiguous on all three, this throws rather than guess — the refusal names
+// the dispatch so the liaison knows exactly which attempt it could not close.
+function terminalOutcomeOfDispatch(records, missionId, dispatch, dispatches) {
+  const routeSeq = dispatch.route_seq;
+  if (!Number.isSafeInteger(routeSeq) || routeSeq < 0) {
+    throw new Error(
+      `mission: close refused — dispatch ${dispatch.seq} names no readable route_seq; a terminal outcome cannot be derived from a dispatch that names nothing`
+    );
+  }
+
+  // route.js supersede is the one writer of this kind: if it replaced this
+  // dispatch's route, the transition and reason it recorded are the fact —
+  // never asserted, always read back.
+  const superseded = records.find(
+    (r) =>
+      isPlainObject(r) && r.kind === SUPERSEDED_KIND && r.mission_id === missionId && r.predecessor_route_seq === routeSeq
+  );
+  if (superseded) {
+    const { transition, reason } = superseded;
+    if (reason === 'safety-refusal') return 'safety-refused';
+    if (reason === 'quota') return 'quota-rerouted';
+    if (reason === 'infrastructure') {
+      return transition === 'same-profile-resume' ? 'runtime-failed' : 'provider-rerouted';
+    }
+    if (reason === 'quality') {
+      if (ESCALATION_TRANSITIONS.includes(transition)) return 'profile-escalated';
+      if (transition === 'same-profile-resume') return 'revised';
+      // convergence, and the structurally-legal but otherwise unnamed
+      // same-class-provider-reroute + quality pairing: the generic word,
+      // recorded rather than guessed at from a transition-reason pair none of
+      // the more specific vocabulary names.
+      return 'superseded';
+    }
+    throw new Error(
+      `mission: close refused — the supersession of route ${routeSeq} (seq ${superseded.seq}) records reason ${JSON.stringify(reason)}, outside route.js's closed vocabulary; a terminal outcome cannot be read from an unrecognised reason`
+    );
+  }
+
+  // Not superseded: the route stood as reserved. What happened to the work
+  // it named is read off the review-outcome stream instead.
+  if (dispatch.phase === 'review') {
+    const standing = standingVerdictOfRoute(records, missionId, routeSeq);
+    if (standing !== null) {
+      if (standing.verdict === 'revise') return 'revised';
+      if (standing.verdict === 'approve') return 'superseded';
+    }
+  } else {
+    // The author's fate is read off the review route(s) bound to it — every
+    // one route.js has not itself superseded further, since a superseded
+    // review route's own verdict (if any) speaks for a replaced reviewer, not
+    // for this author's work.
+    const supersededReviewSeqs = new Set(
+      records
+        .filter((r) => isPlainObject(r) && r.kind === SUPERSEDED_KIND && r.mission_id === missionId)
+        .map((r) => r.predecessor_route_seq)
+    );
+    const reviewRoutes = records.filter(
+      (r) =>
+        isPlainObject(r) &&
+        r.kind === 'route' &&
+        r.phase === 'review' &&
+        r.mission_id === missionId &&
+        r.author_route_seq === routeSeq &&
+        !supersededReviewSeqs.has(r.seq)
+    );
+    let anyRevise = false;
+    let anyApprove = false;
+    for (const reviewRoute of reviewRoutes) {
+      const standing = standingVerdictOfRoute(records, missionId, reviewRoute.seq);
+      if (standing === null) continue;
+      if (standing.verdict === 'revise') anyRevise = true;
+      else if (standing.verdict === 'approve') anyApprove = true;
+    }
+    if (anyApprove) return 'superseded';
+    if (anyRevise) return 'revised';
+  }
+
+  const blocked = envelopeOutcomeOf(records, missionId, dispatch, dispatches);
+  if (blocked !== null) return blocked;
+
+  throw new Error(
+    `mission: close refused — dispatch ${dispatch.seq} (${dispatch.phase}-phase, route ${routeSeq}) cannot be classified: no supersession names its route, no review-outcome stands against it, and no unambiguous blocked envelope names its fate; a terminal outcome is derived, never guessed`
+  );
+}
+
+// Every non-winning dispatch this mission ever registered, each given the
+// terminal outcome the ledger already established for it. The two winning
+// seqs are the only ones excluded — close already names their fate itself.
+function terminalOutcomesOf(records, missionId, winningAuthorDispatchSeq, winningReviewDispatchSeq) {
+  const dispatches = dispatchesOfMission(records, missionId);
+  const winners = new Set([winningAuthorDispatchSeq, winningReviewDispatchSeq]);
+  return dispatches
+    .filter((d) => !winners.has(d.seq))
+    .map((dispatch) => ({
+      dispatch_seq: dispatch.seq,
+      route_seq: dispatch.route_seq,
+      phase: dispatch.phase,
+      seat: dispatch.seat,
+      outcome: terminalOutcomeOfDispatch(records, missionId, dispatch, dispatches),
+    }))
+    .sort((a, b) => a.dispatch_seq - b.dispatch_seq);
+}
+
 // Everything the ledger can decide about this close, decided in one place.
 // Returns the resolved records; every check refuses by throwing.
 function deriveCloseFacts(treeRoot, records, missionId, input) {
@@ -1648,7 +1850,18 @@ function deriveCloseFacts(treeRoot, records, missionId, input) {
     );
   }
 
-  return { authorRoute, reviewRoute, outcome, gate, identity };
+  // Every OTHER dispatch this mission ever registered gets its terminal
+  // outcome here, derived from the same ledger this whole function already
+  // trusts — never accepted from the caller, and refused rather than guessed
+  // where the ledger does not establish which outcome applies.
+  const terminalOutcomes = terminalOutcomesOf(
+    records,
+    missionId,
+    input.winning_author_dispatch_seq,
+    input.winning_review_dispatch_seq
+  );
+
+  return { authorRoute, reviewRoute, outcome, gate, identity, terminalOutcomes };
 }
 
 function closePayloadOf(missionId, input, facts, landing) {
@@ -1678,6 +1891,10 @@ function closePayloadOf(missionId, input, facts, landing) {
     },
     artifact_identity: identity,
     landing,
+    // §16.3: every non-winning dispatch this mission registered, each with
+    // the terminal outcome deriveCloseFacts read off the ledger for it. Empty
+    // for a single-attempt mission — there is nothing else to account for.
+    terminal_outcomes: facts.terminalOutcomes,
   };
 }
 
@@ -1901,9 +2118,21 @@ commands:
       closes, and a degraded review that replaced a cross-family reservation
       closes on its recorded replacement_reason — the close record's
       review.degraded_authorization says which of the two authorized it
-      ("snapshot" or "deviation") rather than leaving them alike. On
-      success sets status "done" and appends ledger kind "mission-close"
-      naming the derived facts and the landing proof.
+      ("snapshot" or "deviation") rather than leaving them alike. §16.3: every
+      OTHER "dispatch" ledger record this mission registered (roster.js
+      register, excluding the two winning seqs above) is given a terminal
+      outcome in the close record's "terminal_outcomes", drawn from exactly
+      ${TERMINAL_OUTCOMES.join(' | ')} and derived, never asserted — a route
+      supersession's own transition and reason (safety-refusal, quota,
+      infrastructure by same-profile-resume vs same-class-provider-reroute,
+      quality by escalation vs same-profile-resume vs anything else legal but
+      unnamed), a standing review-outcome against an unsuperseded route, or an
+      unambiguous "blocked" worker envelope in the window between one dispatch
+      and the next on its seat. A dispatch none of those three streams can
+      classify REFUSES the close, naming the dispatch. Empty for a
+      single-attempt mission. On success sets status "done" and appends
+      ledger kind "mission-close" naming the derived facts and the landing
+      proof.
 
 Prints a result JSON on success and exits 0; any refusal prints its reason to
 stderr and exits 1.
@@ -2010,4 +2239,5 @@ module.exports = {
   REVIEW_VERDICTS,
   LANDING_BRANCHES,
   MISSION_STATUSES,
+  TERMINAL_OUTCOMES,
 };
