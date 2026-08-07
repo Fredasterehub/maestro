@@ -88,19 +88,13 @@ function expectedFamilyForModel(model) {
   return undefined;
 }
 
-// Dormant gpt-ladder seats not yet named in config.seats (Slice 5's r4->r5
-// migration adds them) get no config-driven check at all, which would leave
-// their metadata unguarded for several slices. This table is a literal
-// transcription of execution-plan.md's design references (§5 host tiers,
-// §6.1 review profiles) — the same kind of hardcoded expectation
-// buildRevision1Config already is for the shipped seats — so these three
-// files are still checked byte-for-byte pending their config entry. Retire
-// this table in favor of the config-driven loop once r4->r5 ships.
-const DORMANT_GPT_PROFILES = {
-  'executor-luna': { worker_model: 'gpt-5.6-luna', worker_effort: 'low', model: 'sonnet', effort: 'low' },
-  'executor-terra': { worker_model: 'gpt-5.6-terra', worker_effort: 'medium', model: 'sonnet', effort: 'medium' },
-  'reviewer-terra': { worker_model: 'gpt-5.6-terra', worker_effort: 'high', model: 'sonnet', effort: 'medium' },
-};
+// The dormant gpt-ladder seats were checked here against a hardcoded
+// transcription of the design's tables while config.seats did not name them.
+// The r4->r5 migration seats all three, so the config-driven loop below now
+// reaches them on the config's own terms — which is what that table was
+// standing in for, and the condition its own comment set for retiring it.
+// Dormant is a lane state: an unrouted seat is checked exactly like a routed
+// one, because the config carries it either way.
 
 // --- load config + agent files ------------------------------------------------
 
@@ -137,11 +131,9 @@ for (const seatName of Object.keys(config.seats)) {
 // "Routes" means live, non-alias entries in config.seats. Alias seats
 // (executor-sol, reviewer-sol) exist only to keep an old name resolvable
 // across the r1->r2 migration and are checked below for unroutability, not
-// for frontmatter parity — a file shipped for a seat the config does not
-// route (dormant executor-luna/executor-terra/reviewer-terra, still absent
-// from config.seats until Slice 5's r4->r5 migration, checked above against
-// DORMANT_GPT_PROFILES instead) is not itself a parity failure; only a
-// routed seat with no matching, exact file is.
+// for frontmatter parity. A file shipped for a seat the config carries no
+// entry for at all is not itself a parity failure; only a config seat with
+// no matching, exact file is.
 
 for (const [seatName, seat] of Object.entries(config.seats)) {
   if ('alias_of' in seat) continue; // aliases: existence only, checked separately below
@@ -290,20 +282,6 @@ for (const [seatName, seat] of Object.entries(config.seats)) {
     );
   } else if ('fallback_effort' in fm) {
     check(false, `${seatName}: frontmatter declares fallback_effort "${fm.fallback_effort}" with no counterpart in config`);
-  }
-}
-
-// --- dormant gpt-ladder seats: hardcoded parity pending their config entry --
-
-for (const [seatName, expected] of Object.entries(DORMANT_GPT_PROFILES)) {
-  const agent = agents.get(seatName);
-  if (!agent) {
-    violations.push(`${seatName}: dormant seat file is missing`);
-    continue;
-  }
-  const fm = agent.frontmatter || {};
-  for (const key of ['worker_model', 'worker_effort', 'model', 'effort']) {
-    check(fm[key] === expected[key], `${seatName}: frontmatter ${key} "${fm[key]}" must equal "${expected[key]}" (execution-plan.md §5/§6.1)`);
   }
 }
 
