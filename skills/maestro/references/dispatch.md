@@ -79,7 +79,9 @@ liaison following it.
 6. `roster.js register`, naming the author route this dispatch belongs to
    (`route_seq` — lands with Slice 2c; until then, register in this position
    and see "Roster registration" below for what today's call actually
-   carries).
+   carries). Nothing here is machine-enforced yet: `roster.js register`
+   consults no route at all, so a registration with no route record behind
+   it is accepted today, not refused.
 7. On author completion: compute the artifact identity — the
    `{source_head, source_tree, patch_digest, dirty}` object `gate.js`'s
    `artifactIdentity` helper produces and `route.js` validates (there is no
@@ -95,11 +97,13 @@ liaison following it.
 
 Only step 2 is temporary: Slice 6's automatic resolver replaces that one
 pick with a routing call, and nothing else in the sequence changes. Two
-fields inside it are pending rather than the sequence itself — `route_seq`
-in step 6 and `author_dispatch_seq`'s real binding in step 7 — both because
-their writer (`roster.js`'s dispatch record) doesn't exist until Slice 2c
-and 7a respectively; both are named at the point the call needs them, not
-only in a later paragraph.
+fields inside it are pending rather than the sequence itself, for two
+different reasons — `route_seq` in step 6 is a key `roster.js register`
+doesn't accept yet (Slice 2c adds it to `REGISTER_OPTIONAL_KEYS`; the
+writer itself already exists), and `author_dispatch_seq`'s real binding in
+step 7 waits on a writer that doesn't exist at all — the roster dispatch
+ledger record Slice 7a adds. Both are named at the point the call needs
+them, not only in a later paragraph.
 
 ## Writing for the seat's model
 
@@ -185,9 +189,13 @@ brief is worded:
 
 Review routing is a law, not a preference: the reviewer's model family always
 differs from the implementer's, because same-family review inherits the
-author's blind spots — correlated models miss correlated bugs. The
-close-record writer refuses `review.family == author_family` structurally, so
-routing a same-family review just fails later; route it correctly at dispatch.
+author's blind spots — correlated models miss correlated bugs. Close derives
+both families from the route records, never from caller input, and refuses a
+review labeled `independence: "cross-family"` whose reviewer family matches
+the author's — a laundered label; a route legitimately taken through the
+degraded path is labeled `degraded-path` instead, a different and honestly
+marked case close does not refuse. Close can catch a dishonest label, not
+fix a wrong one — route the reviewer correctly at dispatch.
 
 Live routing (including which seats are currently degraded) is data, not this
 table: `routing.js active <treeRoot>` (and `routing.js review-for <treeRoot>
@@ -267,8 +275,13 @@ identity — by the liaison, after the workflow returns, for a review that
 isn't chained; or by the chained review step itself, as its own first
 action (each step's agent has Bash, even though the workflow script that
 launches it does not), for a review that runs inside the same workflow.
-Either way, the review route is real before the review it names ever
-dispatches — there is no pre-launch review reservation, chained or not.
+This is the recorded resolution of a real conflict in the binding operator
+amendment (execution-plan.md's "a chained review reserves its own route
+from inside its step"), parked as a hold for the operator to confirm or
+overrule — not settled doctrine, and this is the paragraph to revisit if
+the operator rules otherwise. Under this resolution, either way the review
+route is real before the review it names ever dispatches — there is no
+pre-launch review reservation, chained or not.
 
 Gates, merges, and close stay with the liaison after the workflow returns —
 a workflow orchestrates work, it never seals it. And structured returns

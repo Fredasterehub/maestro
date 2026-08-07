@@ -31,12 +31,20 @@ When an executor's envelope reports `done`:
      **same executor** (resume-don't-respawn) with the findings as the fix
      list. Silent recording, no real-time line (`references/supervision.md`
      "Friction"); the round count surfaces in the landing note below.
-4. **Merge and close.** With an approve verdict and a passing gate on record,
-   the liaison merges the worktree into the mainline locally (squashing the
-   worker's WIP checkpoints is fine — checkpoint commits served recovery, not
-   history), then `mission.js close`. Close refuses without both the
-   cross-family approve and the gate exit 0 — if close refuses, something in
-   the procedure was skipped; fix the record, do not work around the refusal.
+4. **Record the verdict, then merge and close.** `mission.js record-review`
+   first — `{review_route_seq, review_dispatch_seq, verdict,
+   artifact_identity}` — binds the approve to the exact review route and
+   identity it judged (a revise is recorded the same way, so a rejected
+   review can never be silently skipped). With that record and a passing
+   gate both on the ledger, the liaison merges the worktree into the
+   mainline locally (squashing the worker's WIP checkpoints is fine —
+   checkpoint commits served recovery, not history), then `mission.js
+   close`. Close takes nothing but sequence references — author, review, and
+   gate seqs — and derives everything it enforces from the records those
+   name: the recorded approve, the author and reviewer families, and the
+   gate's exit code. If close refuses, something in the procedure was
+   skipped or a record disagrees with another; fix the record, do not work
+   around the refusal.
 5. **Report the outcome** — see "The landing note" below.
 
 ## The landing note
