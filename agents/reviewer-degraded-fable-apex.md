@@ -47,9 +47,11 @@ to a same-model fresh instance, carry this variant instead:
 > degraded reviewer was also unavailable, so this work was reviewed by a
 > second fresh-context instance of the same model as the author, with no
 > access to the author's transcript or session. This is NOT cross-family
-> review and NOT cross-model review. The verdict is recorded as
-> review.independence \"degraded-path\" with `fallback_used: true`, and is
-> never counted as independent cross-family or cross-model approval."
+> review and NOT cross-model review — author and reviewer share one model and
+> family and may share more blind spots than the preferred pairing would have.
+> The verdict is recorded as review.independence \"degraded-path\" with
+> `fallback_used: true`, and is never counted as independent cross-family or
+> cross-model approval."
 
 ## Inputs and scope
 

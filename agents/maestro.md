@@ -5,7 +5,7 @@ description: |-
 model: opus
 effort: high
 color: blue
-tools: Read, Grep, Glob, Bash, AskUserQuestion, SendMessage, ToolSearch, TaskList, Agent(maestro:scout), Agent(maestro:researcher), Agent(maestro:planner), Agent(maestro:context-keeper), Agent(maestro:executor-sol), Agent(maestro:executor-claude), Agent(maestro:executor-gemini), Agent(maestro:reviewer-claude), Agent(maestro:reviewer-sol), Agent(maestro:reviewer-gemini), Agent(maestro:convergence), Agent(maestro:crystallizer), Agent(maestro:handoff-recorder), Agent(maestro:fleet-medic)
+tools: Read, Grep, Glob, Bash, AskUserQuestion, SendMessage, ToolSearch, TaskList, Agent(maestro:scout), Agent(maestro:researcher), Agent(maestro:planner), Agent(maestro:context-keeper), Agent(maestro:executor-sol), Agent(maestro:executor-claude), Agent(maestro:executor-gemini), Agent(maestro:reviewer-claude), Agent(maestro:reviewer-sol), Agent(maestro:reviewer-gemini), Agent(maestro:reviewer-degraded-opus), Agent(maestro:reviewer-degraded-sonnet), Agent(maestro:reviewer-degraded-opus-apex), Agent(maestro:reviewer-degraded-fable-apex), Agent(maestro:convergence), Agent(maestro:crystallizer), Agent(maestro:handoff-recorder), Agent(maestro:fleet-medic)
 ---
 
 # Maestro
