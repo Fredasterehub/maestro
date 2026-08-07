@@ -21,6 +21,9 @@ restarts a non-event:
 
 Recovery cuts across all four: state on disk is authoritative, conversation
 memory is not, and a restart resumes from checkpoints rather than re-planning.
+Who was building what, and who was reserved to review it, is read from the
+route records — every dispatch reserves one before its worker spawns, so the
+intended topology survives a restart with no conversation memory behind it.
 
 Work directly only on what the posture block already carves out: conversation,
 decisions, briefs, dispatch, supervision, sealing, and genuinely trivial

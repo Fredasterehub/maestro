@@ -7,10 +7,11 @@ naming the validator errors instead of guessing at intent.
 
 Flow: write the brief → `validators.js validate-brief` (brief JSON via
 stdin) → `mission.js open` — every write below targets this mission and
-`route.js` refuses against one that isn't open → pick the author seat and
-resolve its reviewer → `route.js reserve` for the author phase, carrying the
-reserved review capacity → spawn the seat (worktree isolation for anything
-that mutates) → `roster.js register`. On author completion: compute the
+`route.js` refuses against one that isn't open → `routing.js tier-for`,
+which resolves the author seat and its reviewer together → `route.js
+reserve` for the author phase, carrying the reserved review capacity →
+spawn the seat (worktree isolation for anything that mutates) → `roster.js
+register`. On author completion: compute the
 artifact identity → `route.js reserve-review`, naming that identity →
 dispatch the review. See "Dispatching through the route lifecycle" below for
 the full shape of that sequence. For small ship tasks the liaison writes the
@@ -62,17 +63,33 @@ liaison following it.
    (`route.js`'s `requireOpenInState`) — the one enforced fact behind
    route-before-spawn today; nothing yet checks that a spawn didn't happen
    first.
-2. Pick the author seat (today: liaison judgment against the seat-routing
-   table below). A later step (Slice 6's automatic resolver) replaces only
-   this pick with a routing call; the rest of the sequence never changes.
-3. Resolve the reviewer this author will need — `routing.js review-for
-   <treeRoot> <author_family> [class] [author_model] --json` returns the
-   whole `reserved_review` bundle in one call (`seat`, `family`, `model`,
-   `effort`, `independence`, cross-family by law); the bare two-argument
-   form, with no `--json`, prints only the reviewer *seat*, for a caller
-   that just needs the name. Under degraded modes the resolved reviewer may
-   be a same-family seat labeled `independence: "degraded-path"` instead —
-   see "Seat routing" below.
+2. `routing.js tier-for <treeRoot> <briefPath> [--escalated]` — the author
+   seat and the reviewer behind it, resolved together from the brief's own
+   `tier`. It validates the brief again, walks that class's candidate
+   ladder in preference order (recording each rung it could not try, with
+   reason `lane-down` or `capability-absent`), resolves the review half
+   through the same resolver step 3 names, and prints the whole topology:
+   seat, worker model+effort, host model+effort or null, `review {seat,
+   family, model, effort, independence}`, `candidates_skipped`,
+   `lane_state`, `degraded_modes`, `notices`, and the routing config,
+   digest and revision both halves resolved under. **It refuses instead of
+   emitting when the route could not lawfully close** — no resolvable
+   review, or the operator's `degraded_review: "hold"` posture — so a
+   dispatch that could never land is stopped before a worker exists rather
+   than after the work does. Escalation rungs are unreachable here: a fresh
+   resolution names them in `escalation_withheld`, and `--escalated` walks
+   them instead. The flag is convenience input, never authority — `route.js`
+   refuses an escalation profile on a route with no predecessor to escalate
+   from.
+3. The reviewer arrives inside step 2's output; `routing.js review-for
+   <treeRoot> <author_family> [class] [author_model] --json` is the same
+   resolution on its own, for a caller that has an author already and needs
+   only the reviewer — it returns the whole `reserved_review` bundle in one
+   call (`seat`, `family`, `model`, `effort`, `independence`, cross-family
+   by law), and the bare two-argument form, with no `--json`, prints only
+   the reviewer *seat*. Under degraded modes the resolved reviewer may be a
+   same-family seat labeled `independence: "degraded-path"` instead — see
+   "Seat routing" below.
 4. `route.js reserve` — writes the author-phase route record, which already
    carries the resolved reviewer as `reserved_review`. This is the step that
    needs the open mission from step 1.
@@ -98,14 +115,20 @@ liaison following it.
    resolution, operator hold open) — see "Workflow transport" below; there
    is no pre-launch review reservation.
 
-Only step 2 is temporary: Slice 6's automatic resolver replaces that one
-pick with a routing call, and nothing else in the sequence changes. One
-field inside it is still pending, for a reason distinct from `route_seq`
-(step 6's `roster.js register` accepts that key today, Slice 2c having
-added it) — `author_dispatch_seq`'s real binding in step 7 waits on a
-writer that doesn't exist at all — the roster dispatch ledger record
-Slice 7a adds. It is named at the point the call needs it, not only in a
-later paragraph.
+The author pick is no longer liaison judgment against the seat table below:
+`tier-for` reads it out of the routing config's own class ladders, and the
+table is there to be read, not to be routed from by hand. One field in the
+sequence is still pending, for a reason distinct from `route_seq` (step 6's
+`roster.js register` accepts that key today, Slice 2c having added it) —
+`author_dispatch_seq`'s real binding in step 7 waits on a writer that
+doesn't exist at all — the roster dispatch ledger record Slice 7a adds. It
+is named at the point the call needs it, not only in a later paragraph.
+
+One shape note where step 2 meets step 4: `tier-for`'s `notices` are the
+routing layer's verbatim text, while the route record's own `notices` field
+holds short single-line summaries (200 characters each). The liaison
+composes the record's notices from the topology's rather than passing them
+through.
 
 ## Writing for the seat's model
 
