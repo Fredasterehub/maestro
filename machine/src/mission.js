@@ -424,6 +424,14 @@ function namesSameArtifact(recorded, identity) {
   );
 }
 
+// What an identity record must actually carry to be readable as one. `{}` is a
+// plain object and says nothing; under a predicate that matches on recorded
+// values, saying nothing is indistinguishable from being about other work,
+// which is fail-open for a record whose whole job is to name what was judged.
+function carriesFullIdentity(identity) {
+  return isPlainObject(identity) && IDENTITY_FIELDS.every((field) => identity[field] !== undefined);
+}
+
 // --- record-review -----------------------------------------------------------
 
 const REVIEW_VERDICTS = ['approve', 'revise'];
@@ -1293,7 +1301,12 @@ function requireNoStandingRevise(records, missionId, verdicts, identity, citedRo
   for (const [routeSeq, outcomes] of verdicts.own) {
     const last = outcomes[outcomes.length - 1];
     if (last.verdict !== 'revise') continue;
-    if (!isPlainObject(last.artifact_identity)) {
+    // Readable or refused: a revise on this mission's own route is about this
+    // mission's work whatever it manages to say, so one naming `{}` fails
+    // closed exactly like one naming nothing at all, rather than falling
+    // through the predicate as a quiet non-match. Foreign records get no such
+    // treatment — see below.
+    if (!carriesFullIdentity(last.artifact_identity)) {
       throw new Error(
         `mission: close refused — the standing verdict for review route ${routeSeq} (seq ${last.seq}) is a revise naming no artifact; a finding that cannot be matched to an artifact cannot be shown answered`
       );
@@ -1317,6 +1330,11 @@ function requireNoStandingRevise(records, missionId, verdicts, identity, citedRo
   // one that does name it is re-derived by the same chain rule, so a defect in
   // a foreign chain ABOUT THIS WORK refuses the close rather than passing
   // quietly — and a foreign mess about other work never reaches this close.
+  //
+  // The unreadable-identity refusal above is deliberately not repeated here: a
+  // foreign record naming nothing could be about anything, and refusing on it
+  // would let one junk line in another mission freeze every close in the tree.
+  // Foreign records are read where they name this work, and nowhere else.
   for (const [foreignId, byRoute] of verdicts.byMission) {
     if (foreignId === missionId) continue;
     for (const [routeSeq, outcomes] of byRoute) {

@@ -1823,6 +1823,45 @@ const mxGateSeq = fx.runGreenGate(root, 'mx', 'tests', mxRepo);
   assert.strictEqual(stateOf().missions.mansrb.status, 'done');
 }
 
+// --- close: a revise naming {} says as little as one naming nothing ----------
+{
+  openM('mnoid');
+  const repo = fx.newWorkRepo(tmp);
+  const identity = fx.artifactIdentity(repo);
+  const chain = fx.reserveChain(root, 'mnoid', identity);
+  // record-review binds the verdict to the route's identity, so an empty one
+  // reaches the ledger only by hand-append
+  appendRaw('review-outcome', 'mnoid', {
+    mission_id: 'mnoid',
+    review_route_seq: chain.reviewSeq,
+    review_dispatch_seq: chain.reviewSeq,
+    verdict: 'revise',
+    artifact_identity: {},
+    supersedes_seq: null,
+    reason: null,
+    evidence_seq: null,
+  });
+  const second = reserveReview(root, fx.reviewRouteInput('mnoid', chain.authorSeq, chain.authorSeq, identity));
+  const approve = fx.recordReview(root, 'mnoid', {
+    review_route_seq: second.seq,
+    review_dispatch_seq: second.seq,
+    verdict: 'approve',
+    artifact_identity: identity,
+  });
+  assert.strictEqual(approve.status, 0, approve.stderr);
+  const gateSeq = fx.runGreenGate(root, 'mnoid', 'tests', repo);
+  fx.land(repo, 'merge');
+  const r = fx.runClose(
+    root,
+    'mnoid',
+    repo,
+    fx.closeInputOf({ authorSeq: chain.authorSeq, reviewSeq: second.seq }, gateSeq)
+  );
+  assert.strictEqual(r.status, 1, 'an empty identity is not a match, it is an unreadable finding');
+  assert.match(r.stderr, /is a revise naming no artifact/);
+  assert.strictEqual(stateOf().missions.mnoid.status, 'open');
+}
+
 // --- close: the evidence rule is re-derived, not trusted to the writer -------
 // Each of these is refused by record-review and hand-appended past it; close
 // derives the same rule from the records, because the writer is exactly what a
