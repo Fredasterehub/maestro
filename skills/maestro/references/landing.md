@@ -81,6 +81,53 @@ When an executor's envelope reports `done`:
    equal to the review pair today; `mission.js --help` has the exact shape.)
 5. **Report the outcome** — see "The landing note" below.
 
+## The standing-revise fence
+
+`mission.js close` refuses when a revise stands anywhere in this maestro
+tree's ledger against the exact artifact identity being closed — not only
+against the review route cited in the close call, and not only within the
+mission being closed. The unit the check is written against is the
+artifact, not the route and not the mission: a finding recorded against a
+diff is answered by evidence or by changing the work, never by taking the
+same diff through a second review route, or a second mission, and getting
+a clean approve there instead. This is "fix the record, do not work
+around the refusal" (above) made concrete — the fence is what turns that
+instruction into a refusal a liaison actually hits, and what follows is
+how to answer it.
+
+There are exactly three lawful answers, each leaving its own ledger
+record:
+
+1. **A superseding verdict on the same review route** — `mission.js
+   record-review` carrying `supersedes_seq`, a `reason`, and an
+   `evidence_seq` naming a gate record that postdates the revise it
+   replaces (the three extra keys described in "Act on the verdict"
+   above).
+2. **A route supersession** — `route.js supersede` naming the revised
+   route, held to that same evidence standard.
+3. **A changed artifact** — the author changes the work, so the next
+   review round names a different artifact identity than the one the
+   standing revise named. The old finding is then about work that no
+   longer exists, not answered but no longer applicable.
+
+Opening a second mission over the same diff, or reserving a fresh review
+route on this one, does not answer the finding on its own — close
+re-derives every verdict chain that names the artifact being closed,
+mission by mission, so a clean approve recorded anywhere else about the
+same work does not make the standing revise stop applying. Only the
+three answers above do.
+
+Two boundaries the code itself names, so neither is mistaken for a
+fourth answer: the scan reads exactly one `ledger.jsonl`, the one under
+the tree `mission.js` was handed, so it cannot see — and makes no claim
+about — a revise recorded against the same work in a different maestro
+tree; and close's proof that the reviewed commit landed runs against
+whichever repository `--repo` names (the liaison's cwd when omitted),
+which is caller-chosen, not verified against any registry of
+repositories. Neither limit is closed by anything in `mission.js` — they
+bound where this fence can look and what it can verify, not what counts
+as a lawful answer once it does.
+
 ## The landing note
 
 A few plain sentences, in the operator's vocabulary, carrying three things:
