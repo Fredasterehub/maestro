@@ -30,21 +30,23 @@
 //       independence naming the author's own family, and
 //       validateArtifactIdentity refuses a dirty worktree and a shape
 //       mismatch (a diff digest never interchanges with a commit SHA).
+//   (I) close refuses when the artifact that landed differs from the one
+//       reviewed and gated — proven by landing an amended tip, not merely an
+//       unlanded one.
+//   (J) a degraded close resolved from a REAL reviewFor bundle stays legal
+//       under the route snapshot that authorized it after the provider lane
+//       genuinely recovers (state.json.preflight and settings.json both say
+//       so) — close derives from records, never present-day provider state.
 //
-// NOT covered here, and not fabricated: "close refuses when the artifact
-// identity changed between review and landing" and "a degraded close that
-// was legal under its route snapshot stays legal after the provider lane
-// recovers". Both describe the seq-reference closeMission contract
-// (execution-plan.md §8/§14 — author_route_seq/review_route_seq/artifact
-// identity/independence-aware close). machine/src/mission.js:344 in this
-// worktree still takes the pre-rewrite input shape
-// { author_family, review: { verdict, family }, gate_seq } with no artifact
-// identity, no route_seq and no independence field anywhere in closeMission
-// — that rewrite lives on the unmerged sibling branch slice2c-close-rewrite
-// (tip b8d6348), not on main as of be6a454. There is no real interface here
-// to drive for those two behaviours; see the envelope for this finding.
-// route.js already owns real, close-adjacent primitives (H, below) — those
-// are genuinely its own, not a stand-in for what only close performs.
+// (I) and (J) land now that step 2c's seq-reference closeMission (this
+// worktree was rebased onto main post-merge, HEAD 343391b) is present:
+// author_route_seq/review_route_seq/artifact-identity/independence-aware
+// close, per execution-plan.md §8/§14 and the two governing amendments
+// appended to that file — "close must still prove the reviewer approved"
+// and "the same artifact is one predicate, defined once and disjunctive".
+// Section (G) below is re-expressed against that contract (it previously
+// asserted the pre-2c caller-asserted author_family/review shape, which 2c
+// removed outright).
 
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -62,6 +64,8 @@ const { reviewFor, buildDefaultConfig, FAMILIES } = require(ROUTING);
 const settingsMod = require(path.join(SRC_DIR, 'settings.js'));
 const { openMission, closeMission } = require(MISSION);
 const { reserve, reserveReview, validateArtifactIdentity } = require(ROUTE);
+const { appendRecord } = require(path.join(SRC_DIR, 'jsonl.js'));
+const fx = require('./close-fixture.js');
 
 // The design's verbatim text (tiered-dispatch-final-design.md §8), copied
 // independently of routing.js's own DEGRADED_REVIEW_NOTICE/
@@ -365,47 +369,66 @@ function runGate(root, missionId, gateId, cmd) {
 }
 
 // =============================================================================
-// (G) mission close's existing cross-family law refuses a caller who reports
-//     a real degraded reviewer's family as if it were the mission's
-//     cross-family review.
-//
-// mission.js's closeMission on this branch (pre slice2c-close-rewrite) takes
-// author_family and the review verdict/family as caller-asserted input, with
-// no route-derived cross-check (that binding is exactly what 2c adds). What
-// it DOES already enforce — and what this proves against a REAL routing.js
-// resolution rather than a hand-picked family string — is that a claude
-// author cannot close by naming its own family as the review family, which
-// is precisely the family a degraded-path reviewer for a claude author
-// always carries (per (B) above). So a caller cannot use this mission's own
-// real degraded resolution to close as if it had received cross-family
-// review.
+// (G) mission close's cross-family law refuses a review route that reports a
+//     real degraded reviewer's family as if it were cross-family review —
+//     re-expressed against the seq-reference contract now that 2c has
+//     landed. closeMission derives author_family from the author-phase
+//     route and reviewer_family/independence from the review-phase route
+//     (mission.js:1050-1060's checkReviewLegality); there is no caller key
+//     to assert either any more, so what this proves is that a review-phase
+//     record itself cannot carry the laundered pair. route.js's own
+//     reserveReview already refuses this combination at reservation time
+//     (H), so the review route below is appended directly to the ledger —
+//     bypassing that sanctioned writer, the way a hand-forged or otherwise
+//     malformed record would — to prove close is a second, independent
+//     fence over the same law, not merely relying on route.js's guard.
 // =============================================================================
 {
   const root = initTree('close-degraded-family-law');
   setPreflight(root, {});
   const bundle = reviewFor(root, 'claude', 'standard');
   assert.strictEqual(bundle.family, 'claude');
+  assert.strictEqual(bundle.independence, 'degraded-path');
 
   const missionRoot = freshTree('close-degraded-family-law-mission');
   const missionId = 'm1';
   openMission(missionRoot, { mission_id: missionId, title: 'degraded-path close law', brief: BRIEF });
-  const gate = runGate(missionRoot, missionId, 'tests', ['true']);
-  assert.strictEqual(gate.status, 0, gate.stderr);
-  const gateSeq = JSON.parse(gate.stdout).ledger_seq;
 
-  assert.throws(
-    () => closeMission(missionRoot, missionId, { author_family: 'claude', review: { verdict: 'approve', family: bundle.family }, gate_seq: gateSeq }),
-    /cross-family review law/,
-    'closing a claude-authored mission by naming the degraded reviewer\'s own (claude) family as the review family must refuse'
+  const repo = fx.newWorkRepo(tmp);
+  const identity = fx.artifactIdentity(repo);
+  const author = reserve(missionRoot, fx.authorRouteInput(missionId));
+  assert.strictEqual(author.author_family, 'claude');
+
+  // The real bundle's family, seat and model — laundered as "cross-family"
+  // instead of the honest "degraded-path" its independence actually is.
+  const review = appendRecord(path.join(missionRoot, 'ledger.jsonl'), {
+    kind: 'route',
+    payload: {
+      ...fx.reviewRouteInput(missionId, author.seq, author.seq, identity, {
+        reviewer_seat: bundle.seat,
+        reviewer_family: bundle.family,
+        reviewer_model: bundle.model,
+        reviewer_effort: bundle.effort,
+        independence: 'cross-family',
+      }),
+      phase: 'review',
+      predecessor: null,
+    },
+    correlation_id: missionId,
+  });
+
+  fx.recordApprove(missionRoot, missionId, { authorSeq: author.seq, reviewSeq: review.seq }, identity);
+  const gateSeq = fx.runGreenGate(missionRoot, missionId, 'tests', repo);
+  fx.land(repo, 'merge');
+
+  const r = fx.runClose(
+    missionRoot,
+    missionId,
+    repo,
+    fx.closeInputOf({ authorSeq: author.seq, reviewSeq: review.seq }, gateSeq)
   );
-
-  // The honest label for the same review — degraded-path, reviewed by a
-  // seat this mission's real resolution actually names — cannot be spelled
-  // as an approving cross-family close at all, by construction: FAMILIES has
-  // exactly claude/gpt/gemini, and the only family a claude-author's
-  // degraded review ever carries is claude, so no truthful review object
-  // reporting this bundle can ever satisfy review.family !== author_family.
-  assert.ok(![...FAMILIES].some((f) => f !== 'claude' && f === bundle.family), 'a degraded review for a claude author never carries a non-claude family to misreport as cross-family');
+  assert.strictEqual(r.status, 1, "closing on a real degraded reviewer's family relabeled cross-family must refuse");
+  assert.match(r.stderr, /laundered label/);
 }
 
 // =============================================================================
@@ -510,6 +533,120 @@ function runGate(root, missionId, gateId, cmd) {
   assert.strictEqual(shapeMismatch.ok, false);
   assert.ok(shapeMismatch.errors.some((e) => /"source_head" must be a git object id/.test(e)));
   assert.ok(shapeMismatch.errors.some((e) => /"patch_digest" must be a sha256 digest/.test(e)));
+}
+
+function gitAt(repo, ...args) {
+  const g = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8' });
+  assert.strictEqual(g.status, 0, `git ${args.join(' ')}: ${g.stderr}`);
+  return g.stdout.trim();
+}
+
+// =============================================================================
+// (I) close refuses when the artifact that landed differs from the one
+//     reviewed and gated — an artifact that changed between review and
+//     landing, distinct from one that never landed at all: the reviewed
+//     commit is amended (different tree, different patch) after the gate
+//     passes, and the amended tip — not the reviewed one — is what lands.
+// =============================================================================
+{
+  const missionRoot = freshTree('landing-changed-mission');
+  openMission(missionRoot, { mission_id: 'mland-changed', title: 'landed artifact drifted', brief: BRIEF });
+  const repo = fx.newWorkRepo(tmp);
+  const identity = fx.artifactIdentity(repo); // the commit that gets reviewed
+  const chain = fx.reserveChain(missionRoot, 'mland-changed', identity);
+  fx.recordApprove(missionRoot, 'mland-changed', chain, identity);
+  const gateSeq = fx.runGreenGate(missionRoot, 'mland-changed', 'tests', repo); // gate passes against the reviewed commit
+
+  // Amend the reviewed commit's content in place: a new tip object (different
+  // tree, different patch) replaces it on the work branch. The original
+  // commit object still exists (git does not delete it), so a check that
+  // merely asked "does this object exist" would miss the substitution —
+  // proveLanding instead asks whether the LANDING BRANCH contains it, or
+  // carries an equivalent patch.
+  fs.appendFileSync(path.join(repo, 'work.txt'), 'amended after the gate ran\n');
+  gitAt(repo, 'add', '-A');
+  gitAt(repo, 'commit', '--amend', '-q', '-m', 'work, amended after review and gate');
+
+  fx.land(repo, 'merge'); // lands the amended tip, not the reviewed one
+
+  const r = fx.runClose(missionRoot, 'mland-changed', repo, fx.closeInputOf(chain, gateSeq));
+  assert.strictEqual(r.status, 1, 'landing a different commit than the one reviewed and gated must refuse close');
+  assert.match(r.stderr, /neither contains the reviewed commit .* nor carries any commit with its patch identity/);
+}
+
+// =============================================================================
+// (J) a degraded close resolved from a REAL routing.js reviewFor bundle stays
+//     legal under the route snapshot that authorized it after the provider
+//     lane genuinely recovers — state.json.preflight AND settings.json both
+//     say the lane is back — because closeMission reads neither.
+// =============================================================================
+{
+  const lanesRoot = initTree('apex-recovery-lanes');
+  setPreflight(lanesRoot, {}); // both non-claude lanes preflight-absent at resolution time
+  const bundle = reviewFor(lanesRoot, 'claude', 'apex'); // fable-authored apex -> reviewer-degraded-opus-apex
+  assert.strictEqual(bundle.seat, 'reviewer-degraded-opus-apex');
+  assert.strictEqual(bundle.independence, 'degraded-path');
+
+  // The same tree doubles as the mission tree: mission.js's state.json.missions
+  // and routing's state.json.preflight are independent keys on one document,
+  // and every writer here spreads the document forward rather than replacing it.
+  openMission(lanesRoot, { mission_id: 'mapex-recover', title: 'apex degraded close', brief: { ...BRIEF, tier: 'apex' } });
+  const repo = fx.newWorkRepo(tmp);
+  const identity = fx.artifactIdentity(repo);
+  const chain = fx.reserveChain(lanesRoot, 'mapex-recover', identity, {
+    author: {
+      task_class: 'apex',
+      reserved_review: {
+        seat: bundle.seat,
+        family: bundle.family,
+        model: bundle.model,
+        effort: bundle.effort,
+        independence: bundle.independence,
+      },
+      lane_state: { claude: 'auto', gpt: 'operator-down', gemini: 'operator-down' },
+      degraded_modes: ['codex_down', 'gemini_down'],
+      notices: ['both non-claude lanes down at resolution time; apex falls to the heavy-model degraded pairing'],
+    },
+    review: {
+      reviewer_seat: bundle.seat,
+      reviewer_family: bundle.family,
+      reviewer_model: bundle.model,
+      reviewer_effort: bundle.effort,
+      independence: bundle.independence,
+    },
+  });
+  fx.recordApprove(lanesRoot, 'mapex-recover', chain, identity);
+  const gateSeq = fx.runGreenGate(lanesRoot, 'mapex-recover', 'tests', repo);
+  fx.land(repo, 'merge');
+
+  // The provider recovers for real, after the review: a fresh preflight
+  // record and a settings write both say both lanes are up. Neither write
+  // may clobber the mission state already recorded in the same state.json.
+  const stateBefore = JSON.parse(fs.readFileSync(path.join(lanesRoot, 'state.json'), 'utf8'));
+  fs.writeFileSync(
+    path.join(lanesRoot, 'state.json'),
+    JSON.stringify({ ...stateBefore, preflight: { per_provider: { codex: { routing: 'present' }, gemini: { routing: 'present' } } } }, null, 2) + '\n'
+  );
+  settingsMod.write(lanesRoot, { provider_lanes: { gpt: 'auto', gemini: 'auto' } });
+
+  // The recovered tree would now resolve a live cross-family reviewer for
+  // fresh standard-class work — proving the recovery is real, not merely
+  // asserted (apex itself has no r3-qualified cross-family candidate at any
+  // lane state — the r3 qualification bound amendment — so a fresh apex
+  // resolution staying degraded here would prove nothing about recovery).
+  const freshResolution = reviewFor(lanesRoot, 'claude', 'standard');
+  assert.notStrictEqual(freshResolution.independence, 'degraded-path', 'the lane really did recover for a fresh resolution');
+
+  const r = fx.runClose(lanesRoot, 'mapex-recover', repo, fx.closeInputOf(chain, gateSeq));
+  assert.strictEqual(r.status, 0, `a legal degraded close must survive provider recovery: ${r.stderr}`);
+  const closed = JSON.parse(r.stdout);
+  assert.strictEqual(closed.status, 'done');
+  const { records } = require(path.join(SRC_DIR, 'jsonl.js')).readRecords(path.join(lanesRoot, 'ledger.jsonl'));
+  const close = records[records.length - 1];
+  assert.strictEqual(close.kind, 'mission-close');
+  assert.strictEqual(close.task_class, 'apex', 'no class ceiling — apex closes on the degraded path');
+  assert.strictEqual(close.review.independence, 'degraded-path');
+  assert.strictEqual(close.review.family, 'claude');
 }
 
 console.log('test-degraded-review: OK');
