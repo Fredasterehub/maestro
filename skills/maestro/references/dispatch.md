@@ -229,7 +229,7 @@ table mirrors what that code enforces; it adds no rule of its own.
 
 | Transition | Reason it takes | What it must keep | Budget |
 |---|---|---|---|
-| `same-profile-resume` | any | same attempt, same profile, same brief; the record is marked `resumed` | one per mission on `quality` — **zero for `mechanical`**, which escalates instead of grinding |
+| `same-profile-resume` | `quality`, `infrastructure`, `quota` — never `safety-refusal` | same attempt, same profile, same brief; the record is marked `resumed` | one per mission on `quality` — **zero for `mechanical`**, which escalates instead of grinding |
 | `same-class-provider-reroute` | any | same task class; new attempt | unlimited — infrastructure, quota and runtime trouble buy no quality escalation |
 | `class-escalation` | `quality` only | a strictly higher task class; new attempt | shares the mission's single profile escalation |
 | `within-class-profile-escalation` | `quality` only | the same class, with a genuinely changed profile; new attempt | shares that same single escalation |
