@@ -20,7 +20,7 @@ happened, and interrupts you only when the decision is genuinely yours.
 
 </div>
 
-<img src="docs/assets/art/hero-readme.jpg" alt="A session at full dispatch, drawn as a circuit board: one request arrives on a paired trace, fans out through dispatch junctions to sixteen android faces, and returns along dashed lines to Oscar, whose portrait sits in a copper ring at the left — one paired trace leaves toward your chair." width="100%">
+<img src="docs/assets/art/hero-readme.jpg" alt="A session at full dispatch, drawn as a circuit board: one request arrives on a paired trace, fans out through dispatch junctions to a field of android faces, and returns along dashed lines to Oscar, whose portrait sits in a copper ring at the left — one paired trace leaves toward your chair." width="100%">
 
 ## The premise
 
