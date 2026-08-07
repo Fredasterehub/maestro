@@ -343,43 +343,100 @@ function computeAttemptRates(records) {
   // escalation already required), so a ratio between the two would measure
   // the routing, not the models.
   //
-  // The population that matters is split in two, and conflating them is
-  // exactly the defect repair round 1 found (F1): `fallback_used: true`
-  // means fable-low did NOT run — §16.2's own attribution rule counts that
-  // as OPUS execution. `fable_low_ran` (`fallback_used: false`) is the
-  // population where fable-low actually executed, and "was it rescued" —
-  // did that execution's own dispatch go on to win the close — is a question
-  // about THAT population, never about the fallback one.
+  // The population that matters splits two ways, and conflating either split
+  // is a defect a review round already found once. First (F1): a
+  // profile-outcome with `fallback_used: true` means fable-low did NOT
+  // run — §16.2's own attribution rule counts that as OPUS execution — so
+  // `rescue_rate`/`time_to_rescue_ms`/`convergence_fraction` are scoped to
+  // records where fable-low actually executed, never to the fallback ones.
+  // Second (R1, round 2): a same-profile resume is not a new attempt
+  // (route.js's own words), so it must not be a second entry in ANY of
+  // these populations either — a resumed execution that goes on to win
+  // reported a diluted 50% rescue rate in round 2's own probe, from one
+  // real rescue counted against a denominator of two. `attempt` (which a
+  // resume keeps unchanged, and which every profile-outcome record already
+  // carries) is what groups a resume chain back into the single logical
+  // attempt it is, before any rate is computed over it.
   const fableLowDispatches = freshAuthorDispatches.filter((d) => isFableLowProfile(d.worker_model, d.worker_effort));
   const fableLowOutcomes = profileOutcomes.filter((p) => isFableLowProfile(p.requested_worker_model, p.requested_worker_effort));
-  const fallbacks = fableLowOutcomes.filter((p) => p.fallback_used === true);
-  const fableLowRan = fableLowOutcomes.filter((p) => p.fallback_used === false);
-  // The record's own authoritative boolean (roster.js derives it from
-  // route.js's closed reason vocabulary, never from the caller) — never a
-  // regex over the free-text fallback_reason a fallback happens to carry
-  // (F2): a refusal is not always a fallback (P3 — refused, then rerouted to
-  // an entirely different route, fallback_used stays false) and a fallback's
-  // free-text reason is not always a refusal in route.js's sense.
-  const refusals = fableLowOutcomes.filter((p) => p.safety_refusal === true);
 
+  const fableLowAttempts = new Map(); // "mission_id::attempt" -> its profile-outcome records
+  for (const p of fableLowOutcomes) {
+    const key = `${p.mission_id}::${p.attempt}`;
+    if (!fableLowAttempts.has(key)) fableLowAttempts.set(key, []);
+    fableLowAttempts.get(key).push(p);
+  }
+
+  let fallbackAttempts = 0;
+  let refusalAttempts = 0;
+  // R2: a fable-low execution that ran and was approved but whose mission has
+  // not closed yet is not a decided rescue OR a decided non-rescue — it is
+  // undecided, and undecided is not the same claim as "failed". Excluded from
+  // rescuedCount/decidedRanAttempts and disclosed on its own counter instead
+  // of being folded into a rate as a silent zero.
+  let decidedRanAttempts = 0;
+  let pendingRanAttempts = 0;
   let rescuedCount = 0;
+  let convergenceCount = 0;
   const rescueTimesMs = [];
-  for (const p of fableLowRan) {
-    const close = closeByMission.get(p.mission_id);
-    if (close === undefined || close.winning_author_dispatch_seq !== p.dispatch_seq) continue;
-    rescuedCount += 1;
-    const dispatch = dispatchesBySeq.get(p.dispatch_seq);
-    if (dispatch !== undefined && isNonEmptyString(dispatch.ts) && isNonEmptyString(close.ts)) {
-      rescueTimesMs.push(new Date(close.ts).getTime() - new Date(dispatch.ts).getTime());
+
+  for (const outcomes of fableLowAttempts.values()) {
+    // The record's own authoritative booleans (roster.js derives both from
+    // route.js's closed vocabulary, never from the caller) — never a regex
+    // over the free-text fallback_reason a fallback happens to carry (F2): a
+    // refusal is not always a fallback (P3 — refused, then rerouted to an
+    // entirely different route, fallback_used stays false) and a fallback's
+    // free-text reason is not always a refusal in route.js's sense. "Any run
+    // in the attempt" rather than "the latest run" — a fallback or a refusal
+    // that happened at any point in this attempt's history is a fact about
+    // the attempt, not erased by what a later resume of it did.
+    if (outcomes.some((p) => p.fallback_used === true)) fallbackAttempts += 1;
+    if (outcomes.some((p) => p.safety_refusal === true)) refusalAttempts += 1;
+
+    // Did fable-low actually execute at some point in this attempt? If every
+    // recorded run of it fell back, it never did, and this attempt has
+    // nothing to say about rescue/convergence at all.
+    if (!outcomes.some((p) => p.fallback_used === false)) continue;
+
+    const missionId = outcomes[0].mission_id;
+    const close = closeByMission.get(missionId);
+    if (close === undefined) {
+      pendingRanAttempts += 1;
+      continue;
+    }
+    decidedRanAttempts += 1;
+
+    // Only one route in a resume chain can ever be cited as a close's
+    // winner — every earlier one was superseded, and a superseded route
+    // cannot be. So at most one record in this group can match, and its own
+    // fallback_used decides whether the WIN was fable-low's or opus's.
+    const winner = outcomes.find((p) => p.dispatch_seq === close.winning_author_dispatch_seq);
+    if (winner !== undefined && winner.fallback_used === false) {
+      rescuedCount += 1;
+      // The earliest dispatch in the attempt's own chain, not just the
+      // winning run's — a resume's delay is part of how long this attempt
+      // took to be rescued, not hidden from it.
+      let earliestTs = null;
+      for (const p of outcomes) {
+        const dispatch = dispatchesBySeq.get(p.dispatch_seq);
+        if (dispatch !== undefined && isNonEmptyString(dispatch.ts) && (earliestTs === null || dispatch.ts < earliestTs)) {
+          earliestTs = dispatch.ts;
+        }
+      }
+      if (earliestTs !== null && isNonEmptyString(close.ts)) {
+        rescueTimesMs.push(new Date(close.ts).getTime() - new Date(earliestTs).getTime());
+      }
+    }
+    // "Fraction still reaching convergence": of the DECIDED attempts where
+    // fable-low actually ran, how many of those missions nonetheless opened
+    // a convergence route — the escalation profile ran and the disagreement
+    // still required adjudication. Scoped to the same decided population as
+    // rescue_rate, not to every ran attempt, so the two fractions describe
+    // the same judged set.
+    if (supersessions.some((s) => s.mission_id === missionId && s.transition === CONVERGENCE_TRANSITION)) {
+      convergenceCount += 1;
     }
   }
-  // "Fraction still reaching convergence": of the executions where fable-low
-  // actually ran, how many of those missions nonetheless opened a
-  // convergence route — the escalation profile ran and the disagreement
-  // still required adjudication.
-  const convergenceCount = fableLowRan.filter((p) =>
-    supersessions.some((s) => s.mission_id === p.mission_id && s.transition === CONVERGENCE_TRANSITION)
-  ).length;
 
   // Every field this block reads (requested/actual model+effort,
   // fallback_used, safety_refusal) lives on a profile-outcome record whose
@@ -394,18 +451,29 @@ function computeAttemptRates(records) {
     // Every author-phase dispatch requesting the fable-low profile, read off
     // the "dispatch" records roster.js's register always writes — real
     // regardless of whether a profile-outcome was ever recorded for it
-    // (F12). Every rate below, which needs fallback_used/safety_refusal, is
-    // necessarily scoped to the smaller `fable_low_outcomes_recorded`
-    // population instead; the gap between the two is itself a finding worth
-    // reporting, not silently absorbed into either count.
+    // (F12), and already collapsed to one entry per attempt (`dispatched`'s
+    // own resume exclusion, above). Every rate below, which needs
+    // fallback_used/safety_refusal, is necessarily scoped to the smaller
+    // `fable_low_outcomes_recorded` population instead — also one entry per
+    // attempt, so the two counts share a unit and the gap between them (a
+    // finding worth reporting on its own) reads the right way round.
     fable_low_dispatches: fableLowDispatches.length,
-    fable_low_outcomes_recorded: fableLowOutcomes.length,
-    fallback_count: fallbacks.length,
-    fallback_rate: fableLowOutcomes.length > 0 ? fallbacks.length / fableLowOutcomes.length : null,
-    refusal_count: refusals.length,
-    refusal_rate: fableLowOutcomes.length > 0 ? refusals.length / fableLowOutcomes.length : null,
+    fable_low_outcomes_recorded: fableLowAttempts.size,
+    fallback_count: fallbackAttempts,
+    fallback_rate: fableLowAttempts.size > 0 ? fallbackAttempts / fableLowAttempts.size : null,
+    refusal_count: refusalAttempts,
+    refusal_rate: fableLowAttempts.size > 0 ? refusalAttempts / fableLowAttempts.size : null,
     rescued_count: rescuedCount,
-    rescue_rate: fableLowRan.length > 0 ? rescuedCount / fableLowRan.length : null,
+    rescue_rate: decidedRanAttempts > 0 ? rescuedCount / decidedRanAttempts : null,
+    // R2: attempts where fable-low ran and its mission has not yet closed —
+    // excluded from rescue_rate's denominator (undecided, not failed) and
+    // disclosed here so a reader does not mistake a low rescue_rate for a
+    // low rescue rate when it is really a lot of mid-flight work.
+    pending_count: pendingRanAttempts,
+    // The interval measured is dispatch (the earliest in the attempt's own
+    // chain) to mission close — the whole visible journey a rescue takes
+    // (review round, gate, landing included), not fable-low's own runtime
+    // alone, which nothing in this ledger observes (R4).
     time_to_rescue_ms: meanOf(rescueTimesMs),
     // Disclosed alongside the mean rather than left implicit: a dispatch
     // record this join could not find for a rescued execution drops that
@@ -413,7 +481,7 @@ function computeAttemptRates(records) {
     // the two are not guaranteed equal (F10).
     time_to_rescue_sample_size: rescueTimesMs.length,
     convergence_count: convergenceCount,
-    convergence_fraction: fableLowRan.length > 0 ? convergenceCount / fableLowRan.length : null,
+    convergence_fraction: decidedRanAttempts > 0 ? convergenceCount / decidedRanAttempts : null,
     evidence_level: evidenceLevel,
     // No writer anywhere in machine/src records a dollar or token cost (the
     // dispatch, profile-outcome and mission-close payloads carry none) — so
@@ -517,16 +585,29 @@ commands:
            mission_first_pass, never the other way, and neither is ever
            reported as the other. first_pass_unknown counts closes this join
            could not resolve a first-pass fact for (never folded into a
-           first-pass zero). rescue reports fable-low's own
-           fallback/refusal/rescue/time-to-rescue/convergence figures, scoped
-           to the population that actually ran under that profile — never
-           the population that fell back to opus, and never a comparison
-           against opus — plus fable_low_dispatches vs
-           fable_low_outcomes_recorded (the coverage gap where an outcome was
-           never recorded), evidence_level (every field these rates read
-           ships this profile-outcome caveat, closed vocabulary, "unknown" on
-           every writer today), and incremental_cost_per_rescue, always null:
-           no writer in this codebase records a cost. experiment_proposals
+           first-pass zero) — through the real writers this is unreachable
+           (a close only ever names a route and a dispatch that already
+           exist), so a nonzero reading here means a damaged or truncated
+           ledger, not a quality signal. rescue reports fable-low's own
+           fallback/refusal/rescue/time-to-rescue/convergence figures, one
+           entry per ATTEMPT (a same-profile resume keeps its attempt number
+           and is folded back into the one attempt it continues, never
+           double-counted), scoped to the population that actually ran under
+           that profile — never the population that fell back to opus, and
+           never a comparison against opus. pending_count is attempts that
+           ran and whose mission has not yet closed — excluded from
+           rescue_rate/convergence_fraction's denominator as undecided,
+           never counted as a failed rescue. time_to_rescue_ms is measured
+           from the attempt's own earliest dispatch to the mission's close —
+           the whole visible journey (review, gate, landing included), not
+           fable-low's own runtime alone, which nothing in this ledger
+           observes. fable_low_dispatches vs fable_low_outcomes_recorded
+           discloses the coverage gap where an outcome was never recorded
+           (both counted one entry per attempt, so the two share a unit).
+           evidence_level: every field these rates read ships this
+           profile-outcome caveat, closed vocabulary, "unknown" on every
+           writer today. incremental_cost_per_rescue is always null: no
+           writer in this codebase records a cost. experiment_proposals
            lists every (class, seat) cell at 20+ closes — a returned field,
            not a ledger record: no kind in FRICTION_KINDS names it, and
            minting one is outside this module's surface. A proposal to run an

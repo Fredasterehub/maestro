@@ -333,6 +333,7 @@ function emptyCell() {
   assert.strictEqual(rates.rescue.refusal_rate, 0);
   assert.strictEqual(rates.rescue.rescued_count, 1, 'the genuine fable-low execution is the one the mission closed on');
   assert.strictEqual(rates.rescue.rescue_rate, 1);
+  assert.strictEqual(rates.rescue.pending_count, 0);
   assert.strictEqual(typeof rates.rescue.time_to_rescue_ms, 'number');
   assert.ok(rates.rescue.time_to_rescue_ms >= 0);
   assert.strictEqual(rates.rescue.time_to_rescue_sample_size, 1);
@@ -423,6 +424,7 @@ function emptyCell() {
   // it — opus did — so it is excluded from the "ran" population entirely.
   assert.strictEqual(rates.rescue.rescued_count, 0, 'opus won this close, not fable-low — not a rescue');
   assert.strictEqual(rates.rescue.rescue_rate, null, 'no fable-low execution ran at all in this population');
+  assert.strictEqual(rates.rescue.pending_count, 0);
   assert.strictEqual(rates.rescue.time_to_rescue_ms, null);
   assert.strictEqual(rates.rescue.time_to_rescue_sample_size, 0);
   assert.strictEqual(rates.rescue.convergence_fraction, null);
@@ -829,6 +831,144 @@ function emptyCell() {
   assert.strictEqual(rates.by_class.standard.initial_dispatches, 1);
 }
 
+// === R1 regression (round 2): a resumed fable-low attempt that wins is not
+// diluted to a 50% rescue rate =================================================
+// One fable-low attempt, resumed once (both runs' outcomes recorded, exactly
+// as round two's own probe built it), whose SECOND run wins the close. The
+// resume keeps attempt 1 (route.js's own rule); grouping by (mission_id,
+// attempt) must read this as one attempt, not two, so rescue_rate reads 1,
+// never 0.5.
+{
+  const { tmp, root } = newTree();
+  const missionId = open(root);
+
+  const fableLowProfile = {
+    task_class: 'expert',
+    requested_seat: 'executor-fable-low',
+    resolved_seat: 'executor-fable-low',
+    worker_model: 'fable-5',
+    worker_effort: 'low',
+    fallback_profile: { model: 'opus-5', effort: 'high' },
+    reserved_review: {
+      seat: 'reviewer-degraded-opus',
+      family: 'claude',
+      model: 'opus-5',
+      effort: 'medium',
+      independence: 'degraded-path',
+    },
+  };
+
+  const author1 = reserve(root, claudeAuthorInput(missionId, 1, fableLowProfile));
+  const authorDispatch1 = registerDispatch(root, missionId, author1.seq, 'executor-fable-low', 'claude');
+  recordOutcome(root, { dispatch_seq: authorDispatch1, fallback_used: false, fallback_reason: null, host_materially_authored: false });
+
+  const resumed = supersede(root, {
+    mission_id: missionId,
+    predecessor_route_seq: author1.seq,
+    transition: 'same-profile-resume',
+    reason: 'infrastructure',
+    evidence_seq: evidenceSeqOf(root, missionId),
+    replacement: claudeAuthorInput(missionId, 1, fableLowProfile),
+  });
+  assert.strictEqual(resumed.route.resumed, true);
+  const author2 = resumed.route;
+  const authorDispatch2 = registerDispatch(root, missionId, author2.seq, 'executor-fable-low', 'claude');
+  const outcome2 = recordOutcome(root, { dispatch_seq: authorDispatch2, fallback_used: false, fallback_reason: null, host_materially_authored: false });
+  assert.strictEqual(outcome2.attempt, 1, 'a resume keeps the same attempt number');
+
+  const repo = newWorkRepo(tmp);
+  const identity = artifactIdentity(repo);
+  const review = reserveReview(
+    root,
+    claudeReviewInput(missionId, author2, authorDispatch2, identity, {
+      reviewer_seat: 'reviewer-degraded-opus',
+      reviewer_model: 'opus-5',
+      reviewer_effort: 'medium',
+    })
+  );
+  const reviewDispatchSeq = registerDispatch(root, missionId, review.seq, 'reviewer-degraded-opus', 'claude');
+  recordReview(root, missionId, {
+    review_route_seq: review.seq,
+    review_dispatch_seq: reviewDispatchSeq,
+    verdict: 'approve',
+    artifact_identity: identity,
+  });
+
+  const gateSeq = runGreenGate(root, missionId, repo);
+  land(repo);
+  runClose(root, missionId, repo, {
+    author_route_seq: author2.seq,
+    author_dispatch_seq: authorDispatch2,
+    review_route_seq: review.seq,
+    review_dispatch_seq: reviewDispatchSeq,
+    gate_seq: gateSeq,
+    winning_author_dispatch_seq: authorDispatch2,
+    winning_review_dispatch_seq: reviewDispatchSeq,
+  });
+
+  const rates = computeRates(root);
+  assert.strictEqual(rates.rescue.fable_low_dispatches, 1, 'a resume is not a second attempt');
+  assert.strictEqual(rates.rescue.fable_low_outcomes_recorded, 1, 'both runs of the resume share one attempt');
+  assert.strictEqual(rates.rescue.rescued_count, 1);
+  assert.strictEqual(rates.rescue.rescue_rate, 1, 'not diluted to 0.5 by the resumed run it continues');
+  assert.strictEqual(rates.rescue.pending_count, 0);
+  assert.strictEqual(rates.by_class.expert.mission_first_pass, 1, 'a same-profile resume is runtime-failed, not a revise or an escalation');
+}
+
+// === R2 regression (round 2): an approved fable-low execution whose mission
+// has not closed yet is pending, not a failed rescue ===========================
+{
+  const { tmp, root } = newTree();
+  const missionId = open(root);
+
+  const author = reserve(
+    root,
+    claudeAuthorInput(missionId, 1, {
+      task_class: 'expert',
+      requested_seat: 'executor-fable-low',
+      resolved_seat: 'executor-fable-low',
+      worker_model: 'fable-5',
+      worker_effort: 'low',
+      fallback_profile: { model: 'opus-5', effort: 'high' },
+      reserved_review: {
+        seat: 'reviewer-degraded-opus',
+        family: 'claude',
+        model: 'opus-5',
+        effort: 'medium',
+        independence: 'degraded-path',
+      },
+    })
+  );
+  const authorDispatchSeq = registerDispatch(root, missionId, author.seq, 'executor-fable-low', 'claude');
+  recordOutcome(root, { dispatch_seq: authorDispatchSeq, fallback_used: false, fallback_reason: null, host_materially_authored: false });
+
+  const repo = newWorkRepo(tmp);
+  const identity = artifactIdentity(repo);
+  const review = reserveReview(
+    root,
+    claudeReviewInput(missionId, author, authorDispatchSeq, identity, {
+      reviewer_seat: 'reviewer-degraded-opus',
+      reviewer_model: 'opus-5',
+      reviewer_effort: 'medium',
+    })
+  );
+  const reviewDispatchSeq = registerDispatch(root, missionId, review.seq, 'reviewer-degraded-opus', 'claude');
+  recordReview(root, missionId, {
+    review_route_seq: review.seq,
+    review_dispatch_seq: reviewDispatchSeq,
+    verdict: 'approve',
+    artifact_identity: identity,
+  });
+  // No gate, no land, no close: the mission stays open.
+
+  const rates = computeRates(root);
+  assert.strictEqual(rates.rescue.fable_low_outcomes_recorded, 1);
+  assert.strictEqual(rates.rescue.rescued_count, 0);
+  assert.strictEqual(rates.rescue.rescue_rate, null, 'undecided, not a failed rescue');
+  assert.strictEqual(rates.rescue.pending_count, 1);
+  assert.strictEqual(rates.rescue.convergence_fraction, null);
+}
+
 // === zero population: every rate absent, never approximated to zero ==========
 {
   const { root } = newTree();
@@ -845,6 +985,7 @@ function emptyCell() {
     refusal_rate: null,
     rescued_count: 0,
     rescue_rate: null,
+    pending_count: 0,
     time_to_rescue_ms: null,
     time_to_rescue_sample_size: 0,
     convergence_count: 0,

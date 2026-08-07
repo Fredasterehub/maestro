@@ -140,7 +140,11 @@ enforces on every session.
      class. `first_pass_unknown` is closes this join could not resolve a
      first-pass fact for (a missing dispatch or route record) — report it
      alongside the two first-pass counts below, never silently as a zero on
-     either of them.
+     either of them. Through the real writers this is structurally
+     unreachable (a close only ever names a route and a dispatch that
+     already exist by the time it is written), so a nonzero reading here is
+     evidence of a damaged or truncated ledger, not of process quality —
+     report it as exactly that if it ever fires.
 
    - **Two first-pass counts, never conflated.** `mission_first_pass` counts
      closes where the winning attempt was the mission's *first* AND the
@@ -158,25 +162,40 @@ enforces on every session.
      number erases exactly that distinction.
 
    - **`rescue` — fable-low's own terms, never a comparison against opus.**
-     The population matters and splits in two: `fallback_used: true` on a
-     fable-low dispatch means fable-low did **not** run — the design's own
+     Every figure here is counted one entry per ATTEMPT, never one entry per
+     dispatch record: a same-profile resume keeps its attempt number (a
+     resume is not a new attempt) and is folded back into the single attempt
+     it continues before anything is counted, so a resumed execution that
+     later wins is not diluted by its own earlier run. The population also
+     splits by what happened, not just by attempt: `fallback_used: true` on
+     a fable-low attempt means fable-low did **not** run — the design's own
      attribution rule counts that as opus execution — so `rescue_rate`,
-     `time_to_rescue_ms` and `convergence_fraction` are scoped to the
-     dispatches where fable-low **actually ran** (`fallback_used: false`),
-     never to the fallback population. Reporting a fallback-population
-     figure under "fable-low rescue" is reporting opus's numbers under the
-     wrong name — the exact mistake the first pass of this step made and the
-     repair corrected; do not reintroduce it in the write-up. `fallback_rate`
-     and `refusal_rate` are scoped to the full recorded population instead
-     (every fable-low dispatch with an outcome, fallen back or not).
-     `refusal_rate` reads the outcome's authoritative `safety_refusal`
-     field — never grep or reason from `fallback_reason`'s free text, which
-     is neither a reliable signal of a refusal nor absent when one occurred
-     without a fallback. `fable_low_dispatches` (every fable-low author
-     dispatch, from the ledger's own `dispatch` records) against
-     `fable_low_outcomes_recorded` (the subset with a recorded outcome) is
-     itself a finding worth reporting when the two differ: outcome recording
-     is liaison-invoked, not guaranteed, and every rate above is only ever
+     `time_to_rescue_ms` and `convergence_fraction` are scoped to attempts
+     where fable-low **actually ran** (`fallback_used: false` on at least one
+     of its recorded runs), never to the fallback population. Reporting a
+     fallback-population figure under "fable-low rescue" is reporting opus's
+     numbers under the wrong name — a mistake this step's own review caught
+     twice; do not reintroduce it in the write-up. `fallback_rate` and
+     `refusal_rate` are scoped to the full recorded population instead (every
+     fable-low attempt with an outcome, fallen back or not). `refusal_rate`
+     reads the outcome's authoritative `safety_refusal` field — never grep or
+     reason from `fallback_reason`'s free text, which is neither a reliable
+     signal of a refusal nor absent when one occurred without a fallback.
+     Within the "ran" population, `pending_count` is attempts whose mission
+     has not yet closed — excluded from `rescue_rate`/`convergence_fraction`'s
+     denominator as undecided, never counted as a failed rescue; report it
+     whenever nonzero so a low rescue rate is not misread when it is really a
+     lot of work still in flight. `time_to_rescue_ms` is measured from the
+     attempt's own earliest dispatch (a resume's delay counts) to the
+     mission's close — the whole visible journey, review round and gate and
+     landing included, not fable-low's own runtime alone, which nothing in
+     this ledger observes; state that scope in the write-up rather than
+     letting a reader assume it is execution time. `fable_low_dispatches`
+     (every fable-low author attempt, from the ledger's own `dispatch`
+     records, resumes already folded in) against `fable_low_outcomes_recorded`
+     (the subset of attempts with a recorded outcome) is itself a finding
+     worth reporting when the two differ: outcome recording is
+     liaison-invoked, not guaranteed, and every rate above is only ever
      computed over the recorded subset. `time_to_rescue_sample_size` may be
      smaller than `rescued_count` — report both, never just the mean.
      `evidence_level` is the profile-outcome evidence caveat surfaced as
@@ -211,7 +230,7 @@ ladder         1 engagement, one mission     m1: 1 (all others: 0)
 findings       1 mission flagged (heuristic) m1 rounds 1+2 share "missing edge case handling"
 envelope       0 malformed survivors         proxy only — refusals leave no direct record
 worker-death   1/4 retired (heuristic)       m2: executor-sol died, re-dispatched
-tiered-rates   standard: 3/4 mission_first_pass, 4/4 attempt_first_pass (dispatched:4, closed:4); fable-low: 3 ran / 1 fallback of 4 recorded, rescue_rate 2/3 (ran population, not vs. opus); evidence_level unknown; 0 experiment proposals
+tiered-rates   standard: 3/4 mission_first_pass, 4/4 attempt_first_pass (dispatched:4, closed:4); fable-low: 4 attempts, 3 ran / 1 fallback, rescue_rate 2/3 decided + 1 pending (ran population, not vs. opus); evidence_level unknown; 0 experiment proposals
 Verdict: 2 pattern(s) worth a look (revise-cap on m1, repeated finding on m1).
 Verdict: clean across all six patterns — nothing recorded, nothing repeated.
 ```
