@@ -629,6 +629,9 @@ const mxGateSeq = fx.runGreenGate(root, 'mx', 'tests', mxRepo);
     effort: 'high',
     independence: 'degraded-path',
     replacement_reason: null,
+    // the reservation itself was the degraded path, so the snapshot — not a
+    // later loss — is what authorized this review
+    degraded_authorization: 'snapshot',
   });
   assert.deepStrictEqual(close.artifact_identity, m1Identity);
   assert.strictEqual(close.gate_seq, m1GateSeq);
@@ -988,8 +991,28 @@ const mxGateSeq = fx.runGreenGate(root, 'mx', 'tests', mxRepo);
   assert.match(r.stderr, /is "revise", and only a recorded approve closes a mission/);
   assert.strictEqual(stateOf().missions.mnov.status, 'open');
 
-  // an approve that answers the revise — naming it, with a reason and
-  // recorded evidence — restores closeability
+  // an approve that answers the revise takes recorded CONTRADICTORY REPOSITORY
+  // evidence: the mission's own open record is a well-formed seq and no kind
+  // of evidence, and neither is the revise it overturns
+  for (const [seq, why] of [
+    [openSeq, /a "mission-open" record; contradictory repository evidence is a gate record/],
+    [reviseSeq, /a "review-outcome" record/],
+  ]) {
+    const bad = fx.recordReview(root, 'mnov', {
+      review_route_seq: chain.reviewSeq,
+      review_dispatch_seq: chain.reviewSeq,
+      verdict: 'approve',
+      artifact_identity: identity,
+      supersedes_seq: reviseSeq,
+      reason: 'disagreed with the finding',
+      evidence_seq: seq,
+    });
+    assert.strictEqual(bad.status, 1, `evidence_seq ${seq} must not pass as evidence`);
+    assert.match(bad.stderr, why);
+  }
+
+  // the legitimate flow: the finding is answered by a gate run AFTER it
+  const evidenceGateSeq = fx.runGreenGate(root, 'mnov', 'tests', repo);
   const answer = fx.recordReview(root, 'mnov', {
     review_route_seq: chain.reviewSeq,
     review_dispatch_seq: chain.reviewSeq,
@@ -997,9 +1020,11 @@ const mxGateSeq = fx.runGreenGate(root, 'mx', 'tests', mxRepo);
     artifact_identity: identity,
     supersedes_seq: reviseSeq,
     reason: 'revise finding contradicted by recorded repository evidence',
-    evidence_seq: openSeq,
+    evidence_seq: evidenceGateSeq,
   });
   assert.strictEqual(answer.status, 0, answer.stderr);
+  // and the final gate runs on the approved artifact, so a second run is what
+  // close cites — the evidence gate predates the approve by construction
   const gateSeq = fx.runGreenGate(root, 'mnov', 'tests', repo);
   fx.land(repo, 'merge');
   r = fx.runClose(root, 'mnov', repo, fx.closeInputOf(chain, gateSeq));
@@ -1076,7 +1101,7 @@ const mxGateSeq = fx.runGreenGate(root, 'mx', 'tests', mxRepo);
     artifact_identity: { ...identity, source_head: 'f'.repeat(40) },
     supersedes_seq: approveSeq,
     reason: 'forged',
-    evidence_seq: openSeq,
+    evidence_seq: gateSeq,
   });
   r = fx.runClose(root, 'mfid', repo, input);
   assert.strictEqual(r.status, 1, 'an approve for a different artifact must not close');
