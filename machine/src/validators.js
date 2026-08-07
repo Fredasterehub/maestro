@@ -87,8 +87,9 @@ function validateEnvelopeChecked(env) {
     }
   }
 
-  // question is non-empty IFF state is "blocked" — a blocked worker owes the
-  // operator its question, and a non-blocked one may not smuggle one in.
+  // A blocked worker owes the operator its question. A "partial" worker may
+  // carry one — it completed part of its scope and stopped on a genuine open
+  // question — but a "done" worker may not smuggle one in.
   if (
     typeof env.state === 'string' &&
     ENVELOPE_STATES.has(env.state) &&
@@ -97,7 +98,7 @@ function validateEnvelopeChecked(env) {
     const hasQuestion = env.question.trim() !== '';
     if (env.state === 'blocked' && !hasQuestion) {
       errors.push('envelope field "question" must be non-empty when state is "blocked"');
-    } else if (env.state !== 'blocked' && hasQuestion) {
+    } else if (env.state === 'done' && hasQuestion) {
       errors.push(`envelope field "question" must be empty when state is "${env.state}"`);
     }
   }
