@@ -19,6 +19,10 @@ audit that "fixes" a pattern in passing becomes an undocumented second writer
 with no trail. The one thing this skill produces besides the report is
 nothing — it runs no CLI that mutates `.maestro/`.
 
+Resolve `<plugin-root>` from the loaded skill path (two directories above this
+`skills/audit` directory). Hook-only environment variables are not guaranteed
+inside an ordinary Codex shell.
+
 Report every pattern on every run, whether or not it fired. Zero friction on
 a pattern is a legitimate, reportable outcome and is stated as exactly
 that — "0 ladder engagements across 4 missions" is a finding, not a skipped
@@ -38,7 +42,7 @@ enforces on every session.
 1. **Revise-cap hit rate.**
 
    ```
-   node "${CLAUDE_PLUGIN_ROOT}/machine/src/friction.js" rates <treeRoot>
+   node "<plugin-root>/machine/src/friction.js" rates <treeRoot>
    ```
 
    Read `revise_verdict_by_mission`. A mission at 2 (the cap,
@@ -79,7 +83,7 @@ enforces on every session.
    Two bounded proxies:
 
    ```
-   node "${CLAUDE_PLUGIN_ROOT}/machine/src/friction.js" rates <treeRoot>
+   node "<plugin-root>/machine/src/friction.js" rates <treeRoot>
    ```
 
    read `unparseable_lines` (malformed lines the ledger reader itself

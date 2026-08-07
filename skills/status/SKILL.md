@@ -16,12 +16,16 @@ trusted as a recap. When the snapshot reveals something that needs doing, name
 the route (a hold to resolve, `/maestro:doctor`, a dispatch) as the item's
 next decision; do not take it during this skill.
 
+Resolve `<plugin-root>` from the loaded skill path (two directories above this
+`skills/status` directory). Hook-only environment variables are not guaranteed
+inside an ordinary Codex shell.
+
 ## Source
 
 Regenerate the projections, then read only what they name:
 
 ```
-node "${CLAUDE_PLUGIN_ROOT}/machine/src/project.js" views .maestro
+node "<plugin-root>/machine/src/project.js" views .maestro
 ```
 
 Read the view files the command reports (under `.maestro/views/`). Views are
