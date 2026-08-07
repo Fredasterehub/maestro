@@ -577,13 +577,17 @@ const mxGateSeq = fx.runGreenGate(root, 'mx', 'tests', mxRepo);
     appendRecord(path.join(root4, 'ledger.jsonl'), { kind, payload, correlation_id: missionId });
 
   // (1) a pre-rule author route naming a seat this config cannot resolve, in a
-  // stream whose review routes DO derive: the author half still closes.
+  // stream whose review routes DO derive: the author half still closes. The
+  // unresolvable seats here are synthetic names, never dormant ladder seats:
+  // those arrive in the config revision by revision (the r4->r5 migration
+  // seated executor-luna and reviewer-terra), and a fence keyed to one would
+  // stop testing anything the day its seat lands.
   const r0 = mission(['open', root4], { mission_id: 'mapre', title: 'author pre-rule', brief: VALID_BRIEF });
   assert.strictEqual(r0.status, 0, r0.stderr);
   const repo = fx.newWorkRepo(tmp);
   const identity = fx.artifactIdentity(repo);
   const author = rawAt('mapre', 'route', {
-    ...fx.authorRouteInput('mapre', { resolved_seat: 'executor-luna', author_family: 'gpt' }),
+    ...fx.authorRouteInput('mapre', { resolved_seat: 'executor-phantom', author_family: 'gpt' }),
     phase: 'author',
     predecessor: null,
     resumed: false,
@@ -610,7 +614,7 @@ const mxGateSeq = fx.runGreenGate(root, 'mx', 'tests', mxRepo);
   const derived = fx.reserveChain(root4, 'mapost', identity2);
   assert.strictEqual(derived.author.author_family_derived, true, 'this is the record that bounds the tolerance');
   const late = rawAt('mapost', 'route', {
-    ...fx.authorRouteInput('mapost', { resolved_seat: 'executor-luna', author_family: 'gpt' }),
+    ...fx.authorRouteInput('mapost', { resolved_seat: 'executor-phantom', author_family: 'gpt' }),
     phase: 'author',
     predecessor: null,
     resumed: false,
@@ -626,7 +630,7 @@ const mxGateSeq = fx.runGreenGate(root, 'mx', 'tests', mxRepo);
   fx.land(repo2, 'merge');
   const r2 = fx.runClose(root4, 'mapost', repo2, fx.closeInputOf({ authorSeq: late.seq, reviewSeq: lateReview.seq }, gate2));
   assert.strictEqual(r2.status, 1, 'an author-side omission must not close once author routes derive');
-  assert.match(r2.stderr, /names author seat "executor-luna".*an omission is not a legacy record/s);
+  assert.match(r2.stderr, /names author seat "executor-phantom".*an omission is not a legacy record/s);
 }
 
 // --- close: an underivable seat is an omission, not a legacy record ----------
@@ -644,7 +648,7 @@ const mxGateSeq = fx.runGreenGate(root, 'mx', 'tests', mxRepo);
   assert.strictEqual(honest.review.reviewer_family_derived, true);
   const absent = appendRaw('route', 'mnoseat', {
     ...fx.reviewRouteInput('mnoseat', honest.authorSeq, honest.authorSeq, identity, {
-      reviewer_seat: 'reviewer-terra',
+      reviewer_seat: 'reviewer-phantom',
       reviewer_family: 'gpt',
       reviewer_model: 'gpt-5.6-terra',
       independence: 'cross-family',
@@ -658,7 +662,7 @@ const mxGateSeq = fx.runGreenGate(root, 'mx', 'tests', mxRepo);
   fx.land(repo, 'merge');
   const r = fx.runClose(root, 'mnoseat', repo, fx.closeInputOf({ authorSeq: honest.authorSeq, reviewSeq: absent.seq }, gateSeq));
   assert.strictEqual(r.status, 1, 'an underivable family must not close a stream that already derives them');
-  assert.match(r.stderr, /whose family cannot be derived .*records no seat "reviewer-terra".*an omission is not a legacy record/s);
+  assert.match(r.stderr, /whose family cannot be derived .*records no seat "reviewer-phantom".*an omission is not a legacy record/s);
 }
 
 // --- close: a review route from before the rule still closes -----------------
@@ -675,7 +679,7 @@ const mxGateSeq = fx.runGreenGate(root, 'mx', 'tests', mxRepo);
   const repo = fx.newWorkRepo(tmp);
   const identity = fx.artifactIdentity(repo);
   const reserved = {
-    seat: 'reviewer-terra',
+    seat: 'reviewer-phantom',
     family: 'gpt',
     model: 'gpt-5.6-terra',
     effort: 'high',

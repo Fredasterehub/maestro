@@ -67,7 +67,7 @@ function revision1Tree(name, dateStr) {
 
 // --- determinism and boundary idempotence of the real, shipped migration ----
 {
-  assert.strictEqual(MIGRATIONS.length, 3, 'this suite assumes three shipped migrations — update it alongside the next one');
+  assert.strictEqual(MIGRATIONS.length, 4, 'this suite assumes four shipped migrations — update it alongside the next one');
   let input = buildRevision1Config('2026-08-01');
   for (const [index, migrate] of MIGRATIONS.entries()) {
     const out1 = migrate(JSON.parse(JSON.stringify(input)));
@@ -102,6 +102,15 @@ function revision1Tree(name, dateStr) {
     () => MIGRATIONS[2](MIGRATIONS[0](buildRevision1Config('2026-08-01'))),
     /not a revision-3 shape/,
     'migrateClaudeLadder must refuse a revision-2 source instead of stamping revision 4 onto it'
+  );
+  // And again: the r4->r5 migration inserts its gpt rung into class-keyed rows
+  // and needs the r3->r4 review rungs beside it, so a revision-3 source (the
+  // degraded-review block applied, the Claude ladder not) must be refused
+  // rather than stamped revision 5 with rows the insertion never reached.
+  assert.throws(
+    () => MIGRATIONS[3](MIGRATIONS[1](MIGRATIONS[0](buildRevision1Config('2026-08-01')))),
+    /not a revision-4 shape/,
+    'migrateGptLadder must refuse a revision-3 source instead of stamping revision 5 onto it'
   );
 }
 
@@ -184,9 +193,10 @@ function revision1Tree(name, dateStr) {
   if (writtenDate !== today) {
     console.log(`test-migrations: SKIP collision-suffix strict filename assertion (UTC date rolled over mid-test: fixture built for ${today}, revise wrote under ${writtenDate})`);
   } else {
-    // Three shipped migrations: the r1->r2 write skips the occupied N=2 to
-    // claim N=3, and the r2->r3 and r3->r4 writes land on N=4 and N=5.
-    assert.strictEqual(result.active_config, `routing-${today}-5.json`, 'a collision at N must increment to the next free N, never overwrite it');
+    // Four shipped migrations: the r1->r2 write skips the occupied N=2 to
+    // claim N=3, and the r2->r3, r3->r4 and r4->r5 writes land on N=4, N=5
+    // and N=6.
+    assert.strictEqual(result.active_config, `routing-${today}-6.json`, 'a collision at N must increment to the next free N, never overwrite it');
   }
   // Independent of the date race: whatever name revise picked, it must not
   // be N=2 (already occupied), and the occupant must survive untouched.
@@ -229,7 +239,7 @@ function revision1Tree(name, dateStr) {
 // Byte-patches a copy of routing.js's own MIGRATIONS declaration (never the
 // real file under machine/src/) so a test can exercise a migration set the
 // shipped module does not carry. `migrationsSource` is the literal
-// replacement for `const MIGRATIONS = [migrateSolSplit, migrateDegradedReview];`
+// replacement for routing.js's own `const MIGRATIONS = [...]` declaration
 // — free to define its own extra migration functions above that assignment,
 // since it is spliced in at the exact point the real declaration lives.
 // Every caller must read CURRENT_ROUTING_REVISION back off the returned
@@ -238,7 +248,7 @@ function revision1Tree(name, dateStr) {
 // migration count the patch introduces, and nothing here hardcodes it
 // independently.
 function buildPatchedRoutingModule(migrationsSource, fixtureName) {
-  const marker = 'const MIGRATIONS = [migrateSolSplit, migrateDegradedReview, migrateClaudeLadder];';
+  const marker = 'const MIGRATIONS = [migrateSolSplit, migrateDegradedReview, migrateClaudeLadder, migrateGptLadder];';
   // The copy lives outside machine/src/, so every sibling require must be
   // rewritten absolute — a relative one would resolve against the temp dir.
   const requireMarkers = ['atomic-json.js', 'settings.js', 'validators.js'].map((f) => [

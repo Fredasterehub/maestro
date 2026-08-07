@@ -69,22 +69,24 @@ function setPreflight(root, perProvider) {
 
   const config = JSON.parse(fs.readFileSync(path.join(root, 'routing', init.active_config), 'utf8'));
   // Literals, not the module's own constant, so this can actually fail:
-  // the highest shipped migration is r3->r4, so the current revision is 4
+  // the highest shipped migration is r4->r5, so the current revision is 5
   // and init stamps exactly that — never a label above or below the
   // content. Each slice that ships a migration raises both literals.
-  assert.strictEqual(CURRENT_ROUTING_REVISION, 4);
-  assert.strictEqual(config.revision, 4);
-  // Class-keyed ladders (design §6.1/§6.2), naming only seats this revision
-  // carries: the gpt standard rung (reviewer-terra) arrives with r5 and is
-  // inserted into these same rows there. gemini is named in the claude expert
-  // and apex rows for roster completeness and skipped there at resolution as
-  // unqualified; the gpt rows write that restriction as absence, per §6.2's
-  // "never to gemini" for expert- and apex-class gpt-authored work.
+  assert.strictEqual(CURRENT_ROUTING_REVISION, 5);
+  assert.strictEqual(config.revision, 5);
+  // Class-keyed ladders (design §6.1/§6.2), now carrying the gpt standard rung
+  // r5 seats: claude-authored recon/mechanical/standard leads with
+  // reviewer-terra and falls to gemini behind it, and gemini-authored work of
+  // those classes gains the same rung behind the always-on claude floor.
+  // gemini is named in the claude expert and apex rows for roster completeness
+  // and skipped there at resolution as unqualified; the gpt rows write that
+  // restriction as absence, per §6.2's "never to gemini" for expert- and
+  // apex-class gpt-authored work.
   assert.deepStrictEqual(config.review_routing, {
     claude: {
-      recon: ['reviewer-gemini'],
-      mechanical: ['reviewer-gemini'],
-      standard: ['reviewer-gemini'],
+      recon: ['reviewer-terra', 'reviewer-gemini'],
+      mechanical: ['reviewer-terra', 'reviewer-gemini'],
+      standard: ['reviewer-terra', 'reviewer-gemini'],
       expert: ['reviewer-sol-expert-rev', 'reviewer-gemini'],
       apex: ['reviewer-sol-apex-rev', 'reviewer-gemini'],
     },
@@ -96,12 +98,38 @@ function setPreflight(root, perProvider) {
       apex: ['reviewer-claude-apex'],
     },
     gemini: {
-      recon: ['reviewer-claude'],
-      mechanical: ['reviewer-claude'],
-      standard: ['reviewer-claude'],
+      recon: ['reviewer-claude', 'reviewer-terra'],
+      mechanical: ['reviewer-claude', 'reviewer-terra'],
+      standard: ['reviewer-claude', 'reviewer-terra'],
       expert: ['reviewer-claude-expert', 'reviewer-sol-expert-rev'],
       apex: ['reviewer-claude-apex', 'reviewer-sol-apex-rev'],
     },
+  });
+  // The gpt author ladder and its tiered hosts (design §4.2, §5): the host
+  // profile rises with the worker rather than sitting at sonnet-high for every
+  // rung. Dormant while the lane is operator-down — present and exact on disk
+  // regardless, so re-enabling the lane is a settings write and nothing else.
+  assert.deepStrictEqual(config.seats['executor-luna'], {
+    model: 'gpt-5.6-luna',
+    family: 'gpt',
+    effort: 'low',
+    host: 'sonnet-5',
+    host_effort: 'low',
+  });
+  assert.deepStrictEqual(config.seats['executor-terra'], {
+    model: 'gpt-5.6-terra',
+    family: 'gpt',
+    effort: 'medium',
+    host: 'sonnet-5',
+    host_effort: 'medium',
+  });
+  assert.deepStrictEqual(config.seats['reviewer-terra'], {
+    model: 'gpt-5.6-terra',
+    family: 'gpt',
+    effort: 'high',
+    host: 'sonnet-5',
+    host_effort: 'medium',
+    scope: 'scoped',
   });
   // The six tiered Claude seats are routable entries, and the qualification
   // bounds sit on the seats that carry each rung — reviewer-claude's r3 apex
@@ -148,6 +176,7 @@ function setPreflight(root, perProvider) {
     'reviewer-sol-expert-rev': 'expert',
     'reviewer-sol-apex-rev': 'apex',
     'reviewer-gemini': 'standard',
+    'reviewer-terra': 'standard',
   });
   assert.deepStrictEqual(config.bans, {
     haiku: 'never',
@@ -157,6 +186,12 @@ function setPreflight(root, perProvider) {
   });
   assert.strictEqual(config.degraded.codex_down.seats['executor-sol-expert'], 'executor-claude');
   assert.strictEqual(config.degraded.gemini_down.seats['executor-gemini'], 'executor-claude');
+  // The new author rungs substitute in class, never up or down a tier.
+  assert.strictEqual(config.degraded.codex_down.seats['executor-luna'], 'executor-claude-mech');
+  assert.strictEqual(config.degraded.codex_down.seats['executor-terra'], 'executor-claude-standard');
+  // §8's named case: this mapping exists, and reviewFor may only reach it as a
+  // relabeled degraded-path transition — never as a cross-family claim.
+  assert.strictEqual(config.degraded.codex_down.seats['reviewer-terra'], 'reviewer-claude');
 
   // Convergence protocol seats: convergence (Fable, both moments) and its
   // Sol counterpart, plan-counterpart.
@@ -206,7 +241,7 @@ function setPreflight(root, perProvider) {
   assert.deepStrictEqual(effective.seat_substitutions, {});
   assert.deepStrictEqual(effective.notices, []);
   assert.deepStrictEqual(effective.review_routing.claude.expert, ['reviewer-sol-expert-rev', 'reviewer-gemini']);
-  assert.deepStrictEqual(effective.review_routing.claude.standard, ['reviewer-gemini']);
+  assert.deepStrictEqual(effective.review_routing.claude.standard, ['reviewer-terra', 'reviewer-gemini']);
   assert.ok(effective.seats['executor-sol'], 'seat table rides along');
   assert.strictEqual(effective.bans.review_floor_scale_down, 'never');
   assert.ok(!('base_review_routing' in effective), 'internal comparison surface is not printed');
@@ -267,9 +302,9 @@ function setPreflight(root, perProvider) {
 {
   const { root } = initTree('review-clean');
   setPreflight(root, { codex: { routing: 'present' }, gemini: { routing: 'present' } });
-  // The default class is standard, whose claude ladder is gemini's alone
-  // until r5 seats the gpt standard rung; expert climbs to the Sol expert rung.
-  assert.strictEqual(run(['review-for', root, 'claude']).stdout.trim(), 'reviewer-gemini');
+  // The default class is standard, whose claude ladder now leads with the gpt
+  // standard rung r5 seats; expert climbs to the Sol expert rung.
+  assert.strictEqual(run(['review-for', root, 'claude']).stdout.trim(), 'reviewer-terra');
   assert.strictEqual(run(['review-for', root, 'claude', 'expert']).stdout.trim(), 'reviewer-sol-expert-rev');
   assert.strictEqual(run(['review-for', root, 'claude', 'apex']).stdout.trim(), 'reviewer-sol-apex-rev');
   assert.strictEqual(run(['review-for', root, 'gpt']).stdout.trim(), 'reviewer-claude');
@@ -299,6 +334,9 @@ function setPreflight(root, perProvider) {
     'reviewer-sol-expert-rev': 'reviewer-claude',
     'reviewer-sol-apex-rev': 'reviewer-claude',
     'plan-counterpart': 'reviewer-gemini',
+    'executor-luna': 'executor-claude-mech',
+    'executor-terra': 'executor-claude-standard',
+    'reviewer-terra': 'reviewer-claude',
   });
   assert.strictEqual(active.notices.length, 1);
   assert.match(active.notices[0], /decorrelation/);
@@ -317,8 +355,8 @@ function setPreflight(root, perProvider) {
 
   const claude = run(['review-for', root, 'claude']);
   assert.strictEqual(claude.status, 0, claude.stderr);
-  assert.strictEqual(claude.stdout.trim(), 'reviewer-gemini', 'standard claude work keeps the reviewer its own ladder names');
-  assert.strictEqual(claude.stderr, '', 'a class whose ladder never named the dead lane is not rerouted by its loss');
+  assert.strictEqual(claude.stdout.trim(), 'reviewer-gemini', 'standard claude work falls to the second rung its own ladder names');
+  assert.match(claude.stderr, /decorrelation/, 'the standard ladder led with the dead lane, so this choice is a reroute and says so');
 
   // Expert claude work is: its ladder led with the Sol expert rung, and with
   // that lane down the only remaining candidate is unqualified for the class.
@@ -338,11 +376,11 @@ function setPreflight(root, perProvider) {
 
   const active = JSON.parse(run(['active', root]).stdout);
   assert.deepStrictEqual(active.degraded_modes, ['gemini_down'], 'unknown routing token routes as absent');
-  // The claude standard rung empties out with gemini gone — the gpt standard
-  // rung arrives with r5 — so standard claude work takes the degraded path
-  // while expert and apex still climb the live Sol rungs.
-  assert.deepStrictEqual(active.review_routing.claude.standard, []);
-  assert.strictEqual(run(['review-for', root, 'claude']).stdout.trim(), 'reviewer-degraded-opus');
+  // With gemini gone the claude standard rung is the gpt one r5 seats — design
+  // §6.2's "gpt only" row, which r4 could only write as an empty list and a
+  // degraded fall — while expert and apex still climb the live Sol rungs.
+  assert.deepStrictEqual(active.review_routing.claude.standard, ['reviewer-terra']);
+  assert.strictEqual(run(['review-for', root, 'claude']).stdout.trim(), 'reviewer-terra');
   assert.strictEqual(run(['review-for', root, 'claude', 'expert']).stdout.trim(), 'reviewer-sol-expert-rev');
   assert.strictEqual(run(['review-for', root, 'claude', 'apex']).stdout.trim(), 'reviewer-sol-apex-rev');
   assert.strictEqual(run(['review-for', root, 'gpt']).stdout.trim(), 'reviewer-claude');
@@ -684,6 +722,168 @@ function setPreflight(root, perProvider) {
   const apex = JSON.parse(run(['review-for', root, 'claude', 'apex', '--json']).stdout);
   assert.strictEqual(apex.seat, 'reviewer-sol-apex-rev');
   assert.strictEqual(apex.independence, 'cross-family');
+}
+
+// --- the gpt ladder is dormant, never unfinished -----------------------------
+//
+// The lane is operator-down today, so nothing here can be verified by using it.
+// What can be verified is the three properties that make "dormant" a lane state
+// rather than a missing table: while the operator holds the lane down NO gpt
+// seat is reachable even though its probe is healthy; putting the lane back is
+// a settings write and nothing else — no source edit, no new dated config; and
+// a resolution taken while the lane is down never records a gpt seat as one it
+// requested. Every seat list below is read out of the config, so a rung a later
+// revision adds is covered the day it lands.
+{
+  const settingsMod = require(path.join(__dirname, '..', 'src', 'settings.js'));
+  const { reviewFor, FAMILIES } = require(SRC);
+  const CLASSES = ['recon', 'mechanical', 'standard', 'expert', 'apex'];
+
+  const { root } = initTree('gpt-lane-dormant');
+  // Both probes healthy: every exclusion below comes from the operator toggle
+  // alone, which is exactly the state the mission runs in.
+  setPreflight(root, { codex: { routing: 'present' }, gemini: { routing: 'present' } });
+
+  const shipped = buildDefaultConfig('2026-08-07');
+  const gptSeats = Object.entries(shipped.seats)
+    .filter(([, seat]) => seat.family === 'gpt' && !('alias_of' in seat))
+    .map(([name]) => name);
+  for (const rung of ['executor-luna', 'executor-terra', 'reviewer-terra']) {
+    assert.ok(gptSeats.includes(rung), `the r5 ladder must be in the table this fixture reads (${rung})`);
+  }
+
+  const routingFilesBefore = fs.readdirSync(path.join(root, 'routing')).sort();
+  settingsMod.write(root, { provider_lanes: { gpt: 'operator-down' } });
+
+  const down = JSON.parse(run(['active', root]).stdout);
+  assert.strictEqual(down.provider_lanes.gpt, 'operator-down');
+  assert.deepStrictEqual(down.degraded_modes, ['codex_down'], 'a healthy probe does not keep an operator-down lane in play');
+
+  // (1) No gpt seat is reachable: each one substitutes onto a live seat of
+  // another family, and no review row of any family and class names one.
+  for (const seatName of gptSeats) {
+    const substitute = down.seat_substitutions[seatName];
+    assert.ok(substitute, `${seatName} must carry a substitute while its lane is down, or it is unreachable with no answer`);
+    assert.notStrictEqual(
+      down.seats[substitute].family,
+      'gpt',
+      `${seatName} substitutes onto "${substitute}", which is still on the downed lane`
+    );
+  }
+  for (const family of FAMILIES) {
+    for (const klass of CLASSES) {
+      for (const seatName of down.review_routing[family][klass]) {
+        assert.notStrictEqual(
+          down.seats[seatName].family,
+          'gpt',
+          `review_routing.${family}.${klass} still offers "${seatName}" with the gpt lane operator-down`
+        );
+      }
+    }
+  }
+
+  // (2) …and no resolution returns one, at any author family or class, while
+  // the bundle still says plainly which rungs the lane cost this class.
+  for (const family of FAMILIES) {
+    for (const klass of CLASSES) {
+      const bundle = reviewFor(root, family, klass);
+      assert.notStrictEqual(bundle.family, 'gpt', `${family}-authored ${klass} work resolved onto the downed lane`);
+      // (3) No telemetry claiming a gpt seat was requested: the seat a route
+      // record would name as requested is never one of them, and any gpt seat
+      // the bundle mentions at all is mentioned as a skip with the lane as its
+      // recorded reason — the opposite claim, and the one route.js accepts
+      // beside a requested seat it must not equal.
+      const serialized = JSON.stringify(bundle);
+      const skipped = new Map(bundle.candidates_skipped.map((c) => [c.seat, c.reason]));
+      assert.ok(!skipped.has(bundle.requested_seat), 'a requested seat is never also a skipped one');
+      for (const seatName of gptSeats) {
+        if (!serialized.includes(seatName)) continue;
+        assert.strictEqual(
+          skipped.get(seatName),
+          'lane-down',
+          `bundle for ${family}/${klass} names "${seatName}" somewhere other than as a lane-down skip: ${serialized}`
+        );
+      }
+    }
+  }
+  // The rungs really were on offer before the toggle — otherwise the sweep
+  // above would pass just as well against a config that never seated them.
+  const claudeStandard = reviewFor(root, 'claude', 'standard');
+  assert.deepStrictEqual(
+    claudeStandard.candidates_skipped,
+    [{ seat: 'reviewer-terra', reason: 'lane-down' }],
+    'the gpt standard rung is what this class lost, and the resolution records it as lost, not as absent'
+  );
+
+  // (4) Re-enabling is a settings write and nothing else: the same tree,
+  // without a source edit or a new dated config, resolves the gpt rung again.
+  settingsMod.write(root, { provider_lanes: { gpt: 'auto' } });
+  const back = reviewFor(root, 'claude', 'standard');
+  assert.strictEqual(back.seat, 'reviewer-terra', 'toggling the lane back must re-enable the gpt rung with no code change');
+  assert.strictEqual(back.independence, 'cross-family');
+  assert.strictEqual(back.host_model, 'sonnet-5', 'a hosted seat reports the host it runs on');
+  assert.strictEqual(back.host_effort, 'medium');
+  assert.deepStrictEqual(back.candidates_skipped, [], 'nothing is skipped once the lane is back');
+  assert.deepStrictEqual(
+    fs.readdirSync(path.join(root, 'routing')).sort(),
+    routingFilesBefore,
+    'neither the toggle nor its reversal may write a routing file — the lane state lives in settings'
+  );
+
+  // Every field a caller would dispatch on, rather than the whole bundle: the
+  // two trees init their own dated config, so routing_config and its digest are
+  // per-tree facts, not part of what "resolves identically" means.
+  const { root: neverToggled } = initTree('gpt-lane-never-toggled');
+  setPreflight(neverToggled, { codex: { routing: 'present' }, gemini: { routing: 'present' } });
+  const fresh = reviewFor(neverToggled, 'claude', 'standard');
+  for (const field of ['seat', 'requested_seat', 'substituted', 'family', 'model', 'effort', 'host_model', 'host_effort', 'independence', 'evidence_level']) {
+    assert.strictEqual(back[field], fresh[field], `re-enabled tree must match a never-toggled one on "${field}"`);
+  }
+  assert.deepStrictEqual(back.candidates_skipped, fresh.candidates_skipped);
+}
+
+// --- exact capability is consumed as a record, never guessed -----------------
+//
+// Design §11.1: a provider being installed and authenticated proves nothing
+// about which models it exposes or at which efforts. Where preflight recorded a
+// models map, a rung is tried only if that map records it usable — and the
+// resolution says which rung it skipped and why, rather than quietly resolving
+// one rung down. The lane is up in every case here; only the map varies.
+{
+  const { reviewFor } = require(SRC);
+  const unusable = [
+    ['a model the map records as unknown', { 'gpt-5.6-terra': { status: 'unknown', efforts: [] } }],
+    ['a model the map records as absent', { 'gpt-5.6-terra': { status: 'absent', efforts: [] } }],
+    // The map is a catalog of what discovery found: a model it never names is
+    // a model discovery did not find, which is not a licence to assume it.
+    ['a model a recorded map does not name', { 'gpt-5.6-sol': { status: 'present', efforts: ['medium', 'high'] } }],
+    // Model × effort, not model: the seat pins gpt-5.6-terra at high.
+    ['a model present at efforts that exclude the seat\'s', { 'gpt-5.6-terra': { status: 'present', efforts: ['low', 'medium'] } }],
+    ['a model present with no efforts recorded at all', { 'gpt-5.6-terra': { status: 'present' } }],
+  ];
+  unusable.forEach(([label, models], index) => {
+    const { root } = initTree(`capability-absent-${index}`);
+    setPreflight(root, { codex: { routing: 'present', models }, gemini: { routing: 'present' } });
+    const bundle = reviewFor(root, 'claude', 'standard');
+    assert.strictEqual(bundle.seat, 'reviewer-gemini', `${label}: resolution must move to the next rung`);
+    assert.deepStrictEqual(
+      bundle.candidates_skipped,
+      [{ seat: 'reviewer-terra', reason: 'capability-absent' }],
+      `${label}: the skip must be recorded with its reason, not left silent`
+    );
+  });
+
+  // The positive control, without which every case above would pass against a
+  // resolver that simply never routes the rung: recorded present at the seat's
+  // exact effort, and it is what resolves.
+  const { root } = initTree('capability-present');
+  setPreflight(root, {
+    codex: { routing: 'present', models: { 'gpt-5.6-terra': { status: 'present', efforts: ['high'] } } },
+    gemini: { routing: 'present' },
+  });
+  const bundle = reviewFor(root, 'claude', 'standard');
+  assert.strictEqual(bundle.seat, 'reviewer-terra');
+  assert.deepStrictEqual(bundle.candidates_skipped, []);
 }
 
 // --- the qualification table is validated, and inseparable from degraded_review ----

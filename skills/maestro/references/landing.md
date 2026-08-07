@@ -12,8 +12,12 @@ When an executor's envelope reports `done`:
 
 1. **Route review cross-family.** Dispatch the reviewer seat whose model
    family differs from the author's (`reviewer-claude` for gpt/gemini work,
-   `reviewer-sol` for claude/gemini work, `reviewer-gemini` for claude/gpt
-   work). Same-family review inherits the author's blind spots — route it
+   the gpt ladder's class-scoped reviewer — `reviewer-terra` for
+   recon/mechanical/standard, `reviewer-sol-expert-rev` for expert,
+   `reviewer-sol-apex-rev` for apex — for claude/gemini work, `reviewer-gemini`
+   for claude/gpt work; `reviewer-sol` is now an alias of
+   `reviewer-sol-expert-rev` and does not route). Same-family review inherits
+   the author's blind spots — route it
    cross-family here. Close does not refuse a same-family review
    structurally; it refuses one dishonestly *labeled* `cross-family`, and
    accepts the same reviewer honestly labeled `degraded-path` only when the
@@ -77,6 +81,75 @@ When an executor's envelope reports `done`:
    equal to the review pair today; `mission.js --help` has the exact shape.)
 5. **Report the outcome** — see "The landing note" below.
 
+## The standing-revise fence
+
+`mission.js close` refuses when a revise stands anywhere in this maestro
+tree's ledger against work that matches the artifact being closed — a
+match on `source_tree` **or** `patch_digest`, either one, never a
+requirement for both (`namesSameArtifact`) — not only against the review
+route cited in the close call, and not only within the mission being
+closed. The unit the check is written against is the artifact, not the
+route and not the mission: a finding recorded against a diff is answered
+by evidence or by changing the work, never by taking the same diff
+through a second review route, or a second mission, and getting a clean
+approve there instead. This is "fix the record, do not work around the
+refusal" (above) made concrete — the fence is what turns that instruction
+into a refusal a liaison actually hits, and what follows is how to answer
+it.
+
+There are exactly three lawful answers, each leaving its own ledger
+record, and each honored only in the mission that recorded the finding —
+a superseding verdict or route supersession recorded in a different
+mission does not answer it; the evidence check refuses a gate record that
+belongs to another mission outright:
+
+1. **A superseding verdict on the same review route** — `mission.js
+   record-review` carrying `supersedes_seq`, a `reason`, and an
+   `evidence_seq` naming a gate record that postdates the revise it
+   replaces (the three extra keys described in "Act on the verdict"
+   above).
+2. **A route supersession** — `route.js supersede` naming the revised
+   route, held to that same evidence standard.
+3. **A changed artifact** — the work's content changes enough that
+   neither `source_tree` nor `patch_digest` matches what the standing
+   revise named. The match is disjunctive, so recording a new identity is
+   not enough by itself: an empty commit preserves both fields, a rebase
+   preserves the patch, a reparent preserves the tree, and any one match
+   still fires the fence. Only a change that moves the diff itself off
+   both fields clears the finding.
+
+A standing revise that names no full artifact identity at all refuses
+the close unconditionally, on the reasoning that a finding which cannot
+be matched to an artifact cannot be shown answered; the same partial
+identity on a *foreign* mission's record is skipped instead, because a
+foreign record naming nothing readable could be about anything and
+refusing on it would freeze every close in the tree over one junk line
+elsewhere. Neither of those is a fourth answer — they describe when the
+fence fires unconditionally and when it declines to fire at all, not
+another way to clear it.
+
+Opening a second mission over the same diff, or reserving a fresh review
+route on this one, does not answer the finding on its own — close
+re-derives every verdict chain that names the artifact being closed,
+mission by mission, so a clean approve recorded anywhere else about the
+same work does not make the standing revise stop applying. Only the
+three answers above do.
+
+Three limits the code itself names together, so none of them is mistaken
+for a fourth answer, and dropping any one from this list would overstate
+how far the fence reaches: the ledger is plaintext with no writer
+attestation, so deleting the revise line outright costs less than any of
+the three answers above; the scan reads exactly one `ledger.jsonl`, the
+one under the tree `mission.js` was handed, so it cannot see — and makes
+no claim about — a revise recorded against the same work in a different
+maestro tree; and close's proof that the reviewed commit landed runs
+against whichever repository `--repo` names (the liaison's cwd when
+omitted), which is caller-chosen, not verified against any registry of
+repositories. None of these three is closed by anything in `mission.js`
+— they bound what this process is willing to believe, where the scan can
+look, and where it verified landing, not what counts as a lawful answer
+once a close is actually refused.
+
 ## The landing note
 
 A few plain sentences, in the operator's vocabulary, carrying three things:
@@ -123,7 +196,7 @@ GOOD  The receipt endpoint is in and merged — it was rejecting valid dates
       still running; nothing needs you.
 
 BAD   **Mission `add-receipt` — COMPLETE**
-      1. Executor: executor-sol (isolated worktree)
+      1. Executor: executor-sol-expert (isolated worktree)
       2. Cross-family review: approve after 1 revise round
       3. Gate: exit 0 (9/9)
       4. Merged to mainline, mission closed
