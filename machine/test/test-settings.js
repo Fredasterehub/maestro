@@ -18,6 +18,10 @@ const DEFAULTS = {
   escalation: 'auto_remedy',
   plan_rigor: 'ask',
   review_floor: 'cross-family',
+  degraded_review: 'degraded-path',
+  upgrade_degraded_review: 'never',
+  provider_lanes: { gpt: 'auto', gemini: 'auto' },
+  cross_family_when_available: true,
 };
 
 function freshTree(name) {
@@ -210,6 +214,174 @@ function clampFor(clamps, key) {
   assert.strictEqual(doc.delegation, 'strict');
   assert.ok(!('pet_name' in doc));
   assert.strictEqual(doc.escalation, 'advise_me');
+}
+
+// --- degraded_review / upgrade_degraded_review: operator-changeable enums ----
+{
+  const root = freshTree('degraded-review-enum');
+  const r = run(['read', root]);
+  const d0 = JSON.parse(r.stdout).settings;
+  assert.strictEqual(d0.degraded_review, 'degraded-path', 'default is "degraded-path"');
+  assert.strictEqual(d0.upgrade_degraded_review, 'never', 'default is "never"');
+
+  const w = run(['write', root], JSON.stringify({ degraded_review: 'hold', upgrade_degraded_review: 'before-close' }));
+  assert.strictEqual(w.status, 0, w.stderr);
+  assert.strictEqual(diskDoc(root).degraded_review, 'hold');
+  assert.strictEqual(diskDoc(root).upgrade_degraded_review, 'before-close');
+
+  const badDR = run(['write', root], JSON.stringify({ degraded_review: 'skip' }));
+  assert.strictEqual(badDR.status, 1);
+  assert.match(badDR.stderr, /"degraded_review" must be one of "degraded-path", "hold"/);
+
+  const badUDR = run(['write', root], JSON.stringify({ upgrade_degraded_review: 'always' }));
+  assert.strictEqual(badUDR.status, 1);
+  assert.match(badUDR.stderr, /"upgrade_degraded_review" must be one of "never", "before-close"/);
+}
+
+// --- provider_lanes: nested deep-merge ---------------------------------------
+{
+  // Setting gpt alone must not disturb gemini, and vice versa.
+  const root = freshTree('lanes-partial');
+  const gptOnly = run(['write', root], JSON.stringify({ provider_lanes: { gpt: 'operator-down' } }));
+  assert.strictEqual(gptOnly.status, 0, gptOnly.stderr);
+  assert.deepStrictEqual(JSON.parse(gptOnly.stdout).settings.provider_lanes, { gpt: 'operator-down', gemini: 'auto' });
+  assert.deepStrictEqual(diskDoc(root).provider_lanes, { gpt: 'operator-down', gemini: 'auto' });
+
+  const geminiOnly = run(['write', root], JSON.stringify({ provider_lanes: { gemini: 'operator-down' } }));
+  assert.strictEqual(geminiOnly.status, 0, geminiOnly.stderr);
+  assert.deepStrictEqual(
+    JSON.parse(geminiOnly.stdout).settings.provider_lanes,
+    { gpt: 'operator-down', gemini: 'operator-down' },
+    'setting gemini leaves gpt at its prior value rather than resetting it'
+  );
+  assert.deepStrictEqual(diskDoc(root).provider_lanes, { gpt: 'operator-down', gemini: 'operator-down' });
+}
+
+{
+  // Setting a nested key when the parent is entirely absent from the
+  // current document: the untouched sibling takes its documented default.
+  const root = freshTree('lanes-absent-parent');
+  assert.ok(!fs.existsSync(path.join(root, 'settings.json')));
+  const w = run(['write', root], JSON.stringify({ provider_lanes: { gpt: 'operator-down' } }));
+  assert.strictEqual(w.status, 0, w.stderr);
+  assert.deepStrictEqual(JSON.parse(w.stdout).settings.provider_lanes, { gpt: 'operator-down', gemini: 'auto' });
+  assert.deepStrictEqual(diskDoc(root).provider_lanes, { gpt: 'operator-down', gemini: 'auto' });
+}
+
+{
+  // Unknown provider key refuses the whole write.
+  const root = freshTree('lanes-unknown-provider');
+  const bad = run(['write', root], JSON.stringify({ provider_lanes: { claude: 'operator-down' } }));
+  assert.strictEqual(bad.status, 1);
+  assert.match(bad.stderr, /unknown provider "claude" in provider_lanes/);
+  assert.ok(!fs.existsSync(path.join(root, 'settings.json')), 'refused write created no file');
+}
+
+{
+  // Unknown nested enum value refuses the whole write.
+  const root = freshTree('lanes-unknown-value');
+  const bad = run(['write', root], JSON.stringify({ provider_lanes: { gpt: 'disabled' } }));
+  assert.strictEqual(bad.status, 1);
+  assert.match(bad.stderr, /"provider_lanes\.gpt" must be one of "auto", "operator-down"/);
+  assert.ok(!fs.existsSync(path.join(root, 'settings.json')), 'refused write created no file');
+}
+
+{
+  // provider_lanes patch must itself be an object.
+  const root = freshTree('lanes-not-object');
+  const bad = run(['write', root], JSON.stringify({ provider_lanes: 'operator-down' }));
+  assert.strictEqual(bad.status, 1);
+  assert.match(bad.stderr, /"provider_lanes" must be a nested object/);
+}
+
+{
+  // Hand-edit recovery: unknown provider dropped, unknown nested value
+  // clamps to default, missing sibling fills from default — every
+  // correction reported.
+  const root = freshTree('lanes-hand-edit');
+  fs.writeFileSync(
+    path.join(root, 'settings.json'),
+    JSON.stringify({ provider_lanes: { gpt: 'operator-down', claude: 'operator-down', gemini: 'sideways' } }) + '\n'
+  );
+  const r = run(['read', root]);
+  assert.strictEqual(r.status, 0, r.stderr);
+  const { settings, clamps } = JSON.parse(r.stdout);
+  assert.deepStrictEqual(settings.provider_lanes, { gpt: 'operator-down', gemini: 'auto' });
+  assert.ok(
+    clampFor(clamps, 'provider_lanes.claude').some((c) => c.rule === 'unknown'),
+    'unknown provider dropped and reported'
+  );
+  assert.ok(
+    clampFor(clamps, 'provider_lanes.gemini').some((c) => c.rule === 'enum' && c.from === 'sideways' && c.to === 'auto'),
+    'unknown nested value clamps to default and is reported'
+  );
+
+  // Missing parent entirely: every sibling reports its own scalar default
+  // clamp — the same shape a present-but-empty parent produces (no
+  // object-valued "to" special case for the absent-parent path).
+  const root2 = freshTree('lanes-hand-edit-absent');
+  fs.writeFileSync(path.join(root2, 'settings.json'), JSON.stringify({ delegation: 'balanced' }) + '\n');
+  const r2 = run(['read', root2]);
+  const { settings: s2, clamps: c2 } = JSON.parse(r2.stdout);
+  assert.deepStrictEqual(s2.provider_lanes, { gpt: 'auto', gemini: 'auto' });
+  assert.deepStrictEqual(clampFor(c2, 'provider_lanes.gpt')[0], { key: 'provider_lanes.gpt', to: 'auto', rule: 'default' });
+  assert.deepStrictEqual(clampFor(c2, 'provider_lanes.gemini')[0], { key: 'provider_lanes.gemini', to: 'auto', rule: 'default' });
+  assert.strictEqual(clampFor(c2, 'provider_lanes').length, 0, 'no whole-object clamp — only the per-sibling scalar ones');
+}
+
+{
+  // A lane write must not disturb any other top-level knob.
+  const root = freshTree('lanes-leave-siblings');
+  const seed = run(
+    ['write', root],
+    JSON.stringify({ delegation: 'balanced', fleet_ceiling: 3, landing: 'pr', escalation: 'advise_me', plan_rigor: 'full', degraded_review: 'hold', upgrade_degraded_review: 'before-close' })
+  );
+  assert.strictEqual(seed.status, 0, seed.stderr);
+
+  const laneWrite = run(['write', root], JSON.stringify({ provider_lanes: { gpt: 'operator-down' } }));
+  assert.strictEqual(laneWrite.status, 0, laneWrite.stderr);
+  const doc = diskDoc(root);
+  assert.strictEqual(doc.delegation, 'balanced');
+  assert.strictEqual(doc.fleet_ceiling, 3);
+  assert.strictEqual(doc.landing, 'pr');
+  assert.strictEqual(doc.escalation, 'advise_me');
+  assert.strictEqual(doc.plan_rigor, 'full');
+  assert.strictEqual(doc.degraded_review, 'hold');
+  assert.strictEqual(doc.upgrade_degraded_review, 'before-close');
+  assert.strictEqual(doc.review_floor, 'cross-family');
+  assert.strictEqual(doc.cross_family_when_available, true);
+  assert.deepStrictEqual(doc.provider_lanes, { gpt: 'operator-down', gemini: 'auto' }, 'the lane patch itself still lands correctly');
+}
+
+// --- cross_family_when_available: locked exactly like review_floor ----------
+{
+  const root = freshTree('locked-cross-family');
+  const change = run(['write', root], JSON.stringify({ cross_family_when_available: false }));
+  assert.strictEqual(change.status, 1, 'changing the locked key refuses the whole write');
+  assert.match(change.stderr, /cross_family_when_available is locked at true/);
+  assert.ok(!fs.existsSync(path.join(root, 'settings.json')));
+
+  const restate = run(['write', root], JSON.stringify({ cross_family_when_available: true }));
+  assert.strictEqual(restate.status, 0, restate.stderr);
+  assert.strictEqual(diskDoc(root).cross_family_when_available, true);
+
+  // A locked-key change smuggled in beside a valid lane patch still refuses everything.
+  const smuggled = run(
+    ['write', root],
+    JSON.stringify({ provider_lanes: { gpt: 'operator-down' }, cross_family_when_available: false })
+  );
+  assert.strictEqual(smuggled.status, 1);
+  assert.strictEqual(diskDoc(root).provider_lanes.gpt, 'auto', 'the valid half of a refused patch did not land');
+
+  // Hand-edited locked value is discarded and re-applied on read.
+  fs.writeFileSync(path.join(root, 'settings.json'), JSON.stringify({ cross_family_when_available: false }) + '\n');
+  const r = run(['read', root]);
+  const { settings, clamps } = JSON.parse(r.stdout);
+  assert.strictEqual(settings.cross_family_when_available, true);
+  const locked = clampFor(clamps, 'cross_family_when_available')[0];
+  assert.strictEqual(locked.rule, 'locked');
+  assert.strictEqual(locked.from, false);
+  assert.strictEqual(locked.to, true);
 }
 
 // --- CLI hygiene -------------------------------------------------------------
