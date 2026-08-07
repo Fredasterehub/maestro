@@ -969,6 +969,139 @@ function reviewInput(authorRouteSeq, overrides) {
   assert.strictEqual(out.route.predecessor.predecessor_route_seq, review.seq);
 }
 
+// --- §9 end to end: one mission walks the shipped Claude ladder --------------
+//
+// The blocks above exercise each rule against hand-written profiles. This one
+// runs a whole mission through the CLI on the routing table the tree actually
+// carries: every seat profile is read out of the r4 config, every reserved
+// reviewer comes from routing.js's own resolution, and the route records carry
+// the real dated config, digest and revision. So the ladder the config
+// describes and the ladder route.js polices are proven to be the same one.
+//
+// Expert class, because that is where the whole ladder is constructible today:
+// the standard rungs resolve the hosted gemini reviewer, whose config entry
+// records no worker effort, and a reserved review needs one.
+{
+  const ROUTING = path.join(__dirname, '..', 'src', 'routing.js');
+  const routing = require(ROUTING);
+  const m = openMission();
+  const inited = run(ROUTING, ['init', root]);
+  assert.strictEqual(inited.status, 0, inited.stderr);
+  const init = JSON.parse(inited.stdout);
+  const config = routing.loadRouting(root).config;
+  const seat = (name) => config.seats[name];
+  const reviewer = (klass) => {
+    const bundle = routing.reviewFor(root, 'claude', klass);
+    return {
+      seat: bundle.seat,
+      family: bundle.family,
+      model: bundle.model,
+      effort: bundle.effort,
+      independence: bundle.independence,
+    };
+  };
+  const onLadder = (seatName, over) =>
+    authorInput({
+      mission_id: m,
+      task_class: 'expert',
+      routing_config: init.active_config,
+      routing_digest: init.digest,
+      routing_revision: config.revision,
+      requested_seat: seatName,
+      resolved_seat: seatName,
+      worker_model: seat(seatName).model,
+      worker_effort: seat(seatName).effort,
+      reserved_review: reviewer('expert'),
+      lane_state: { claude: 'auto', gpt: 'auto', gemini: 'auto' },
+      degraded_modes: [],
+      notices: [],
+      ...over,
+    });
+
+  assert.strictEqual(config.revision, 4, 'this walk is over the r4 ladder');
+  assert.strictEqual(reviewer('expert').seat, 'reviewer-sol-expert-rev', 'expert claude work is reviewed on the expert rung');
+
+  // 1. The expert default is reserved and its review capacity is honoured.
+  const author = reserve(root, onLadder('executor-claude'));
+  assert.strictEqual(author.worker_model, 'opus-5');
+  const review = reserveReview(
+    root,
+    reviewInput(author.seq, {
+      mission_id: m,
+      reviewer_seat: 'reviewer-sol-expert-rev',
+      reviewer_family: 'gpt',
+      reviewer_model: 'gpt-5.6-sol',
+      reviewer_effort: 'medium',
+      reviewer_host_model: 'sonnet-5',
+      reviewer_host_effort: 'medium',
+      independence: 'cross-family',
+      routing_config: init.active_config,
+      routing_digest: init.digest,
+    })
+  );
+  assert.strictEqual(review.phase, 'review');
+
+  const step = (predecessorSeq, transition, reason, replacement) =>
+    supersede(root, {
+      mission_id: m,
+      predecessor_route_seq: predecessorSeq,
+      transition,
+      reason,
+      evidence_seq: evidenceSeqOf(m),
+      replacement,
+    });
+
+  // 2. One same-profile quality repair, and only one.
+  const repair = step(author.seq, 'same-profile-resume', 'quality', onLadder('executor-claude'));
+  assert.strictEqual(repair.route.resumed, true);
+  assert.strictEqual(repair.route.attempt, 1, 'a repair is the same attempt');
+  assert.throws(
+    () => step(repair.route.seq, 'same-profile-resume', 'quality', onLadder('executor-claude')),
+    /already spent its one same-profile quality repair/
+  );
+
+  // 3. The escalation rung: fable-low is escalation-only, and reaching it is
+  //    what spends the mission's single profile escalation.
+  const escalated = step(
+    repair.route.seq,
+    'within-class-profile-escalation',
+    'quality',
+    onLadder('executor-fable-low', { attempt: 2, escalation_profile: true })
+  );
+  assert.strictEqual(escalated.route.worker_model, 'fable-5');
+  assert.strictEqual(escalated.route.worker_effort, 'low');
+  assert.strictEqual(escalated.route.escalation_profile, true);
+  assert.throws(
+    () =>
+      step(escalated.route.seq, 'class-escalation', 'quality', onLadder('executor-fable', { attempt: 3, task_class: 'apex' })),
+    /already spent its one profile escalation/
+  );
+
+  // 4. Infrastructure and quota still reroute in class afterwards: they never
+  //    drew on the quality budget, so its exhaustion does not bind them.
+  const rerouted = step(escalated.route.seq, 'same-class-provider-reroute', 'quota', onLadder('executor-claude', { attempt: 3 }));
+  assert.strictEqual(rerouted.route.task_class, 'expert');
+  assert.strictEqual(rerouted.route.escalation_profile, false);
+
+  // 5. Further quality disagreement goes to convergence, on the seat the
+  //    config seats there.
+  const converged = step(
+    rerouted.route.seq,
+    'convergence',
+    'quality',
+    onLadder('convergence', { attempt: 4, worker_model: seat('convergence').model, worker_effort: seat('convergence').effort })
+  );
+  assert.strictEqual(converged.route.worker_model, 'fable-5');
+  assert.strictEqual(converged.route.worker_effort, 'low');
+  assert.strictEqual(converged.superseded.transition, 'convergence');
+
+  // The mechanical rung is seated and routable on the same table, though its
+  // zero-repair rule is proven above rather than here: mechanical claude work
+  // resolves the hosted gemini reviewer, which records no worker effort, so a
+  // review capacity for it is not constructible until r5 seats that rung.
+  assert.deepStrictEqual(seat('executor-claude-mech'), { model: 'sonnet-5', family: 'claude', effort: 'low' });
+}
+
 // --- a crash between the two writes leaves an orphan, never a dangling pointer
 {
   const m = openMission();
