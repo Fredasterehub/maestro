@@ -4,6 +4,13 @@ description: The gemini-family review seat — a Sonnet 5 host dispatching Gemin
 model: sonnet
 effort: medium
 worker_model: gemini-3.1-pro-preview
+# worker_effort is declared, not probed: no discovery surface in this
+# repository (preflight.js) or either front end's own --help exposes a
+# thinking/effort dial for this family on this machine. 'high' is declared
+# from the Gemini API's documented thinking_level vocabulary for the
+# gemini-3.x family ("low" | "high"), matching the full-depth reading a
+# review judgment needs.
+worker_effort: high
 tools: Read, Grep, Glob, Bash, Write
 skills: gemini-cli
 color: green

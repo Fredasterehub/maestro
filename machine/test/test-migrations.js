@@ -19,6 +19,7 @@ const { spawnSync } = require('node:child_process');
 const SRC_DIR = path.join(__dirname, '..', 'src');
 const ROUTING_SRC = path.join(SRC_DIR, 'routing.js');
 const routing = require(ROUTING_SRC);
+const settings = require(path.join(SRC_DIR, 'settings.js'));
 const { buildRevision1Config, MIGRATIONS, CURRENT_ROUTING_REVISION, DATED_CONFIG_RE } = routing;
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-migrations-'));
@@ -67,7 +68,7 @@ function revision1Tree(name, dateStr) {
 
 // --- determinism and boundary idempotence of the real, shipped migration ----
 {
-  assert.strictEqual(MIGRATIONS.length, 5, 'this suite assumes five shipped migrations — update it alongside the next one');
+  assert.strictEqual(MIGRATIONS.length, 6, 'this suite assumes six shipped migrations — update it alongside the next one');
   let input = buildRevision1Config('2026-08-01');
   for (const [index, migrate] of MIGRATIONS.entries()) {
     const out1 = migrate(JSON.parse(JSON.stringify(input)));
@@ -121,6 +122,47 @@ function revision1Tree(name, dateStr) {
     /not a revision-5 shape/,
     'migrateTiersBlock must refuse a revision-4 source instead of stamping revision 6 onto it'
   );
+  // And the newest rung: migrateGeminiEffort names the tiers block r5->r6
+  // seats, so a revision-5 source (the GPT ladder applied, tiers not) must be
+  // refused rather than stamped revision 7 without the shape it checks for.
+  assert.throws(
+    () => MIGRATIONS[5](MIGRATIONS[3](MIGRATIONS[2](MIGRATIONS[1](MIGRATIONS[0](buildRevision1Config('2026-08-01')))))),
+    /not a revision-6 shape/,
+    'migrateGeminiEffort must refuse a revision-5 source instead of stamping revision 7 onto it'
+  );
+}
+
+// --- battery finding D9 (F1): the fix reaches an already-materialized r1
+// tree, not only a freshly initialized one -----------------------------------
+//
+// A seat-table fix that lived only in buildRevision1Config would reach
+// nothing already on disk — the live project tree's on-disk revision-1
+// config is exactly such a tree. This proves migrateGeminiEffort is what
+// revise() actually walks: an r1-shaped fixture, built and pointed exactly
+// as revision1Tree always has been, migrated stepwise by the shipped CLI.
+{
+  const dateStr = '2026-07-31';
+  const { root } = revision1Tree('gemini-effort-migrates-live-shape', dateStr);
+  const before = routing.loadRouting(root).config;
+  assert.strictEqual(before.revision, 1);
+  assert.strictEqual(before.seats['executor-gemini'].effort, undefined, 'fixture starts in the live on-disk shape: no gemini effort yet');
+  assert.strictEqual(before.seats['reviewer-gemini'].effort, undefined);
+
+  const r = run(ROUTING_SRC, ['revise', root]);
+  assert.strictEqual(r.status, 0, r.stderr);
+  const after = routing.loadRouting(root).config;
+  assert.strictEqual(after.revision, CURRENT_ROUTING_REVISION);
+  assert.strictEqual(after.seats['executor-gemini'].effort, 'high');
+  assert.strictEqual(after.seats['reviewer-gemini'].effort, 'high');
+
+  // The resolver's own output over the migrated tree — the exact D9
+  // reproduction (claude-authored standard work under the live lane posture),
+  // run against a migrated-from-disk config rather than a freshly init'd one.
+  settings.write(root, { provider_lanes: { gpt: 'operator-down', gemini: 'auto' } });
+  const bundle = routing.reviewFor(root, 'claude', 'standard');
+  assert.strictEqual(bundle.seat, 'reviewer-gemini');
+  assert.strictEqual(typeof bundle.effort, 'string');
+  assert.notStrictEqual(bundle.effort, '');
 }
 
 // --- init writes the current revision directly, never revision 1 -----------
@@ -202,10 +244,10 @@ function revision1Tree(name, dateStr) {
   if (writtenDate !== today) {
     console.log(`test-migrations: SKIP collision-suffix strict filename assertion (UTC date rolled over mid-test: fixture built for ${today}, revise wrote under ${writtenDate})`);
   } else {
-    // Five shipped migrations: the r1->r2 write skips the occupied N=2 to
-    // claim N=3, and the r2->r3, r3->r4, r4->r5 and r5->r6 writes land on
-    // N=4, N=5, N=6 and N=7.
-    assert.strictEqual(result.active_config, `routing-${today}-7.json`, 'a collision at N must increment to the next free N, never overwrite it');
+    // Six shipped migrations: the r1->r2 write skips the occupied N=2 to
+    // claim N=3, and the r2->r3, r3->r4, r4->r5, r5->r6 and r6->r7 writes
+    // land on N=4, N=5, N=6, N=7 and N=8.
+    assert.strictEqual(result.active_config, `routing-${today}-8.json`, 'a collision at N must increment to the next free N, never overwrite it');
   }
   // Independent of the date race: whatever name revise picked, it must not
   // be N=2 (already occupied), and the occupant must survive untouched.
@@ -258,7 +300,7 @@ function revision1Tree(name, dateStr) {
 // independently.
 function buildPatchedRoutingModule(migrationsSource, fixtureName) {
   const marker =
-    'const MIGRATIONS = [migrateSolSplit, migrateDegradedReview, migrateClaudeLadder, migrateGptLadder, migrateTiersBlock];';
+    'const MIGRATIONS = [migrateSolSplit, migrateDegradedReview, migrateClaudeLadder, migrateGptLadder, migrateTiersBlock, migrateGeminiEffort];';
   // The copy lives outside machine/src/, so every sibling require must be
   // rewritten absolute — a relative one would resolve against the temp dir.
   const requireMarkers = ['atomic-json.js', 'settings.js', 'validators.js'].map((f) => [

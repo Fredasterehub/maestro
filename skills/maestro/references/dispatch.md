@@ -225,7 +225,7 @@ brief is worded:
 | `reviewer-claude` | Sonnet 5 high (claude) | — | recon/mechanical/standard-class gpt- and gemini-authored work |
 | `reviewer-claude-expert` | Opus 5 high (claude) | — | expert-class gpt- and gemini-authored work |
 | `reviewer-claude-apex` | Fable 5 low (claude), fallback Opus 5 high | — | apex-class gpt- and gemini-authored work |
-| `reviewer-gemini` | Sonnet 5 medium hosting Gemini (gemini) | — | claude-authored work (all classes); recon/mechanical/standard-class gpt-authored work — gpt expert/apex route to `reviewer-claude-expert`/`reviewer-claude-apex` instead |
+| `reviewer-gemini` | Sonnet 5 medium hosting Gemini (gemini) | — | recon/mechanical/standard-class claude- and gpt-authored work — gemini is not qualified above standard (operator restriction, 2026-08-07); expert/apex claude-authored work falls to the degraded path, expert/apex gpt-authored work routes to `reviewer-claude-expert`/`reviewer-claude-apex` instead |
 | `reviewer-terra` | Sonnet 5 medium host, GPT-5.6-Terra high guest (gpt) — dormant until the gpt lane is effective | — | recon/mechanical/standard-class claude- and gemini-authored work |
 | `reviewer-sol-expert-rev` | Sonnet 5 medium hosting GPT-5.6-Sol (gpt) — dormant until the gpt lane is effective | — | expert-class claude- and gemini-authored work; profile-split successor of the `reviewer-sol` alias below |
 | `reviewer-sol-apex-rev` | Sonnet 5 high hosting GPT-5.6-Sol (gpt) — dormant until the gpt lane is effective | — | apex-class claude- and gemini-authored work |

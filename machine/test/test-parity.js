@@ -170,10 +170,11 @@ for (const [seatName, seat] of Object.entries(config.seats)) {
       `${seatName}: frontmatter worker_model "${fm.worker_model}" must equal config.model "${seat.model}"`
     );
     // worker_effort <-> config.effort is checked only when config actually
-    // records a worker-level effort distinct from the host's — today that
-    // is the four Sol-split seats. executor-gemini/reviewer-gemini's config
-    // entries carry no top-level `effort` at all (no worker effort value
-    // exists anywhere to compare against); enforcing it there would assert
+    // records a worker-level effort distinct from the host's — today that is
+    // every hosted seat except plan-counterpart (§10's under-specified
+    // exception, handled in its own arm below). A hosted seat whose config
+    // carries no top-level `effort` would have nothing to compare
+    // frontmatter's worker_effort against; enforcing it there would assert
     // against nothing.
     if (hasWorkerEffort) {
       check(

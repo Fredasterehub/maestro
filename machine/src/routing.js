@@ -303,6 +303,20 @@ function migrateDegradedReview(config) {
     'reviewer-degraded-opus-apex': { model: 'opus-5', family: 'claude', effort: 'high' },
     'reviewer-degraded-fable-apex': { model: 'fable-5', family: 'claude', effort: 'low' },
   });
+  // battery D10: rows map each class to a bare seat-name string per author
+  // model — a shape the closed degraded_review block (checkDegradedReviewBlock
+  // below) permits no third field on, so a placement here carries no
+  // `status: "estimated"` marker the way tiers.classes candidates do (§13,
+  // design §4/§6). That is not the same vocabulary silently dropped: every
+  // bundle reviewFor resolves off this table — cross-family or degraded —
+  // already carries `evidence_level: "unknown"` (design §16.2's
+  // profile-outcome vocabulary), which is the honesty `status: "estimated"`
+  // exists for, stated at the point the caller actually reads it rather than
+  // in the row's own shape. Reconciled here rather than widening rows to
+  // { seat, status } objects: that would touch this block's validator, every
+  // reviewFor degraded-path read (`row[modelKey]`), and every fixture
+  // constructing a row literal, for a marker the resolved bundle already
+  // carries under its own name.
   out.degraded_review = {
     notice: DEGRADED_REVIEW_NOTICE,
     fallback_notice: DEGRADED_REVIEW_FALLBACK_NOTICE,
@@ -691,7 +705,45 @@ function migrateTiersBlock(config) {
   return out;
 }
 
-const MIGRATIONS = [migrateSolSplit, migrateDegradedReview, migrateClaudeLadder, migrateGptLadder, migrateTiersBlock];
+// r6 -> r7: battery finding D9 — executor-gemini and reviewer-gemini declare
+// a host pair but no worker-level `effort`, so every bundle routing.js
+// resolves off them (reviewFor's cross-family and degraded-path reads,
+// tier-for's author-side seat lookup) carries `effort: null` straight into
+// route.js's non-empty-string requirement, refusing route reservation for
+// the live default resolution (claude-authored standard work, reviewed by
+// reviewer-gemini). A seat-table fix that lived only in buildRevision1Config
+// would reach a freshly initialized tree and nothing already materialized —
+// the live project tree's on-disk revision-1 config is exactly such a tree —
+// so the fix ships as a migration instead, the mechanism `revise()` actually
+// walks.
+//
+// Declared, not probed: no discovery surface in this repository, or in
+// either front end's own --help, exposes a per-model thinking/effort dial
+// for this family on this machine (preflight.js's model map stays 'unknown'
+// with no proven efforts by design — `gemini --help` names no thinking flag,
+// and antigravity is not installed here to check at all). 'high' is
+// declared from the Gemini API's documented thinking_level vocabulary for
+// the gemini-3.x family (`"low" | "high"`), matching each seat's own
+// host_effort/job description — the same tri-state honesty preflight.js's
+// 'unknown' stays unknown extends to a value nothing on this machine can
+// verify.
+function migrateGeminiEffort(config) {
+  const out = JSON.parse(JSON.stringify(config));
+  if (!isPlainObject(out.seats) || !isPlainObject(out.tiers)) {
+    throw new Error('r6->r7 migration: config has no seats/tiers table — not a revision-6 shape');
+  }
+  for (const required of ['executor-gemini', 'reviewer-gemini']) {
+    if (!isPlainObject(out.seats[required])) {
+      throw new Error(`r6->r7 migration: config has no seats["${required}"] — not a revision-6 shape`);
+    }
+  }
+  out.seats['executor-gemini'] = { ...out.seats['executor-gemini'], effort: 'high' };
+  out.seats['reviewer-gemini'] = { ...out.seats['reviewer-gemini'], effort: 'high' };
+  out.revision = 7;
+  return out;
+}
+
+const MIGRATIONS = [migrateSolSplit, migrateDegradedReview, migrateClaudeLadder, migrateGptLadder, migrateTiersBlock, migrateGeminiEffort];
 
 // The revision of the highest migration actually shipped — each slice that
 // pushes a MIGRATIONS entry raises this in the same commit, by construction.
