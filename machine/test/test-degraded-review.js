@@ -4,7 +4,12 @@
 // §9, §16 and the amendments appended to that file — the r3 qualification
 // bound and the reviewer-claude apex-bound record are the two most recent and
 // supersede everything they touch). Covers, against the real interfaces as
-// they exist in this worktree:
+// they exist in this worktree (step 2c's seq-reference closeMission is
+// present; author_route_seq/review_route_seq/artifact-identity/independence
+// derive from records, per execution-plan.md §8/§14 and the two governing
+// amendments appended to that file — "close must still prove the reviewer
+// approved" and "the same artifact is one predicate, defined once and
+// disjunctive"):
 //
 //   (A) an operator-down lane excludes candidates exactly as a preflight-
 //       absent one does, and re-enabling it via a settings write alone
@@ -13,19 +18,25 @@
 //       design's verbatim decorrelation notice, and is never "cross-family".
 //   (C) the tier-scaled preferred pairing resolves correctly through every
 //       class including apex, both authorship directions.
-//   (D) when the preferred pairing partner would be unavailable, the bundle
-//       already carries the legal same-model fresh-instance fallback
-//       (model, effort, fresh_instance, verbatim fallback notice) that a
-//       caller records as fallback_used/fallback_reason — and resolution
-//       never throws for this reason, at any class.
+//   (D) the same-model fresh-instance fallback's static shape (model, effort,
+//       fresh_instance, verbatim fallback notice) is design-conformant on
+//       every degraded bundle, and resolving never throws under this file's
+//       fixtures. NOT proven, and not fabricated: routing.js has no signal
+//       that makes the preferred cross-model partner unavailable (Claude has
+//       no capability probe the way codex/gemini do), so no case here ever
+//       exercises the conditional fallback path itself, and `fallback_used`/
+//       `fallback_reason` have no writer anywhere in machine/src — that
+//       record belongs to roster.js's `recordOutcome`, step 7a, not built at
+//       this commit. This section is honest shape/design-conformance
+//       coverage, not conditional-behaviour coverage.
 //   (E) an explicit operator-requested hold throws rather than resolving, at
 //       every class; the default and the explicit "degraded-path" posture
 //       never do.
 //   (F) a substitution that would land on the author's own family is
 //       dropped, never returned as a laundered cross-family bundle.
-//   (G) mission close's existing cross-family law refuses a caller who
-//       reports a degraded reviewer's true family as if the mission had
-//       received cross-family review.
+//   (G) mission close's cross-family law refuses a review-phase record that
+//       reports a real degraded reviewer's family as if it were cross-family
+//       review.
 //   (H) route.js's own real primitives: reserveReview refuses cross-family
 //       independence naming the author's own family, and
 //       validateArtifactIdentity refuses a dirty worktree and a shape
@@ -38,15 +49,22 @@
 //       genuinely recovers (state.json.preflight and settings.json both say
 //       so) — close derives from records, never present-day provider state.
 //
-// (I) and (J) land now that step 2c's seq-reference closeMission (this
-// worktree was rebased onto main post-merge, HEAD 343391b) is present:
-// author_route_seq/review_route_seq/artifact-identity/independence-aware
-// close, per execution-plan.md §8/§14 and the two governing amendments
-// appended to that file — "close must still prove the reviewer approved"
-// and "the same artifact is one predicate, defined once and disjunctive".
-// Section (G) below is re-expressed against that contract (it previously
-// asserted the pre-2c caller-asserted author_family/review shape, which 2c
-// removed outright).
+// NOT covered here, and not fabricated, because the behaviour the brief
+// names does not exist in machine/src at this commit:
+//   - "...never *counted* as cross-family" (the labeling bullet's second
+//     half): there is no telemetry surface yet (§16 is slice 7 work).
+//   - "carries fallback_used and a fallback_reason" and "never held merely
+//     because the preferred model was unavailable" (the fallback bullet's
+//     conditional half): see (D) above — no availability signal, no record
+//     writer, both step 7a's.
+//   - "the order review-then-final-gate-then-merge is asserted": the
+//     review-then-gate half IS asserted, at test-mission.js:1221-1236
+//     against mission.js:1544 — not duplicated here. The gate-then-merge
+//     half has no enforcing site anywhere in machine/src: no record
+//     establishes when a landing happened, because landing/merging is done
+//     by hand outside the machine. That is an implementation gap for the
+//     plan to decide, not a test this file can honestly write — inventing
+//     one would assert an order the code does not enforce.
 
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -57,14 +75,13 @@ const { spawnSync } = require('node:child_process');
 const SRC_DIR = path.join(__dirname, '..', 'src');
 const ROUTING = path.join(SRC_DIR, 'routing.js');
 const MISSION = path.join(SRC_DIR, 'mission.js');
-const GATE = path.join(SRC_DIR, 'gate.js');
 const ROUTE = path.join(SRC_DIR, 'route.js');
 
-const { reviewFor, buildDefaultConfig, FAMILIES } = require(ROUTING);
+const { reviewFor, buildDefaultConfig } = require(ROUTING);
 const settingsMod = require(path.join(SRC_DIR, 'settings.js'));
-const { openMission, closeMission } = require(MISSION);
+const { openMission } = require(MISSION);
 const { reserve, reserveReview, validateArtifactIdentity } = require(ROUTE);
-const { appendRecord } = require(path.join(SRC_DIR, 'jsonl.js'));
+const { appendRecord, readRecords } = require(path.join(SRC_DIR, 'jsonl.js'));
 const fx = require('./close-fixture.js');
 
 // The design's verbatim text (tiered-dispatch-final-design.md §8), copied
@@ -116,11 +133,27 @@ function activeOf(root) {
   return JSON.parse(r.stdout);
 }
 
+// The CLI's non-JSON form prints only bundle.seat; comparing that alone
+// would miss a divergence in model/effort/independence and would let two
+// failed invocations both print '' and compare equal, so callers that need
+// to compare a resolution use this instead, which checks status itself.
+function reviewForJson(root, ...args) {
+  const r = runRouting(['review-for', root, ...args, '--json']);
+  assert.strictEqual(r.status, 0, r.stderr);
+  return JSON.parse(r.stdout);
+}
+
 function setPreflight(root, perProvider) {
   fs.writeFileSync(
     path.join(root, 'state.json'),
     JSON.stringify({ schema_version: 1, preflight: { per_provider: perProvider } }) + '\n'
   );
+}
+
+function gitAt(repo, ...args) {
+  const g = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8' });
+  assert.strictEqual(g.status, 0, `git ${args.join(' ')}: ${g.stderr}`);
+  return g.stdout.trim();
 }
 
 // customTree mirrors test-routing.js's own helper: a shipped default config
@@ -153,10 +186,6 @@ const BRIEF = {
   stop_condition: 'sc',
 };
 
-function runGate(root, missionId, gateId, cmd) {
-  return spawnSync(process.execPath, [GATE, 'run-gate', root, missionId, gateId, '--', ...cmd], { encoding: 'utf8' });
-}
-
 // =============================================================================
 // (A) lane posture equivalence: preflight-absent vs operator-down, and the
 //     re-enabling round trip.
@@ -185,11 +214,15 @@ function runGate(root, missionId, gateId, cmd) {
   assert.match(operatorActive.notices[0], /operator-down \(settings provider_lanes\.gpt = "operator-down"\)/);
   assert.match(operatorActive.notices[0], /not a probe failure/);
 
-  assert.strictEqual(
-    runRouting(['review-for', probeDown, 'claude']).stdout.trim(),
-    runRouting(['review-for', operatorDown, 'claude']).stdout.trim(),
-    'the resolved reviewer must be identical under either cause'
-  );
+  const probeBundle = reviewForJson(probeDown, 'claude');
+  const operatorBundle = reviewForJson(operatorDown, 'claude');
+  // Every field a caller would actually dispatch on, not merely the printed
+  // seat name — and each call's own status is checked (reviewForJson
+  // asserts it), so two refusals could never compare equal by both
+  // returning an empty string.
+  for (const field of ['seat', 'family', 'model', 'effort', 'independence', 'author_model']) {
+    assert.strictEqual(probeBundle[field], operatorBundle[field], `field "${field}" must be identical under either cause`);
+  }
 
   // Re-enabling: a settings write alone (no source edit, no new dated
   // config) restores exactly the healthy-tree resolution.
@@ -202,10 +235,11 @@ function runGate(root, missionId, gateId, cmd) {
   const neverToggled = initTree('lane-posture-never-toggled');
   setPreflight(neverToggled, { codex: { routing: 'present' }, gemini: { routing: 'present' } });
   assert.deepStrictEqual(restored.review_routing, activeOf(neverToggled).review_routing, 're-enabled tree must resolve identically to one that was never toggled down');
-  assert.strictEqual(
-    runRouting(['review-for', operatorDown, 'claude']).stdout.trim(),
-    runRouting(['review-for', neverToggled, 'claude']).stdout.trim()
-  );
+  const reEnabledBundle = reviewForJson(operatorDown, 'claude');
+  const neverToggledBundle = reviewForJson(neverToggled, 'claude');
+  for (const field of ['seat', 'family', 'model', 'effort', 'independence', 'author_model']) {
+    assert.strictEqual(reEnabledBundle[field], neverToggledBundle[field], `field "${field}" must match a tree that was never toggled down`);
+  }
 }
 
 // =============================================================================
@@ -218,7 +252,6 @@ function runGate(root, missionId, gateId, cmd) {
   for (const klass of CLASSES) {
     const bundle = reviewFor(root, 'claude', klass);
     assert.strictEqual(bundle.independence, 'degraded-path', `${klass}: degraded resolution must be labeled degraded-path`);
-    assert.notStrictEqual(bundle.independence, 'cross-family', `${klass}: a degraded resolution is never cross-family`);
     assert.strictEqual(bundle.family, 'claude', `${klass}: the degraded path is a fresh-context Claude reviewer by definition`);
     assert.ok(bundle.notices.includes(DESIGN_NOTICE), `${klass}: the bundle must carry the design's verbatim decorrelation notice`);
   }
@@ -253,13 +286,21 @@ function runGate(root, missionId, gateId, cmd) {
     assert.strictEqual(bundle.effort, exp.effort, `${label}: wrong reviewer effort`);
     assert.strictEqual(bundle.independence, 'degraded-path');
   }
+
+  // An author model the row does not pair is refused, never silently
+  // defaulted to the row's first entry.
+  assert.throws(
+    () => reviewFor(root, 'claude', 'standard', 'opus-5'),
+    /has no pairing for author model "opus-5"/,
+    'an unpaired author model must refuse rather than default'
+  );
 }
 
 // =============================================================================
-// (D) the same-model fresh-instance fallback: legal, carries what a caller
-//     needs to record fallback_used/fallback_reason, and resolution never
-//     throws or holds merely because the preferred model would be
-//     unavailable — at any class.
+// (D) the same-model fresh-instance fallback's STATIC SHAPE, design-
+//     conformant on every degraded bundle: this is shape/design-conformance
+//     coverage, not conditional-behaviour coverage — see the file header for
+//     exactly what is and is not proven here, and why (step 7a dependency).
 // =============================================================================
 {
   const root = initTree('same-model-fallback');
@@ -277,19 +318,22 @@ function runGate(root, missionId, gateId, cmd) {
 
   for (const exp of expectations) {
     const label = `${exp.klass}${exp.authorModel ? ` (author ${exp.authorModel})` : ''}`;
-    // The resolution itself never throws — this module has no signal by
-    // which a Claude model could be reported "unavailable" (Claude is the
-    // runtime; no probe represents it), so nothing here can ever hold a
-    // class solely for the preferred degraded-path model being unavailable.
-    let bundle;
-    assert.doesNotThrow(() => {
-      bundle = reviewFor(root, 'claude', exp.klass, exp.authorModel);
-    }, `${label}: resolving the degraded path must never throw for preferred-model unavailability`);
+    // Resolving does not throw under this tree's fixtures. This is NOT a
+    // test of "never held for preferred-model unavailability" — nothing here
+    // ever makes the preferred partner unavailable, since routing.js has no
+    // such signal for a Claude model (Claude is the runtime; no probe
+    // represents it) — it is the same doesNotThrow (E) and (B)/(C) already
+    // establish for this tree, restated so the fallback-field reads below
+    // are against a bundle this file actually produced.
+    const bundle = reviewFor(root, 'claude', exp.klass, exp.authorModel);
     assert.strictEqual(bundle.independence, 'degraded-path');
-    // The fallback the bundle carries is the caller's fallback_used/reason
-    // material: same model as the author, fresh context, effort high (never
-    // the preferred seat's own — possibly lower — effort), and the design's
-    // verbatim fallback-variant notice.
+    // The bundle's static fallback field, checked against the design's table
+    // (tiered-dispatch-final-design.md:322-327): same model as the author,
+    // fresh context, effort high (never the preferred seat's own — possibly
+    // lower — effort), and the verbatim fallback-variant notice. Whether a
+    // caller ever actually engages this fallback, and records fallback_used/
+    // fallback_reason when it does, is unimplemented and untested here (no
+    // writer exists yet — roster.js recordOutcome, step 7a).
     assert.strictEqual(bundle.fallback.model, exp.fallbackModel, `${label}: fallback must name the author's own model`);
     assert.strictEqual(bundle.fallback.effort, 'high', `${label}: the same-model fallback always reviews at high effort`);
     assert.strictEqual(bundle.fallback.fresh_instance, true);
@@ -306,7 +350,10 @@ function runGate(root, missionId, gateId, cmd) {
   const root = initTree('hold-posture-every-class');
   setPreflight(root, {});
 
-  fs.writeFileSync(path.join(root, 'settings.json'), JSON.stringify({ degraded_review: 'hold' }) + '\n');
+  // degraded_review is a real settings schema key (settings.js:44), so the
+  // sanctioned writer sets it — the same writer section (A) already uses for
+  // the sibling provider_lanes knob.
+  settingsMod.write(root, { degraded_review: 'hold' });
   for (const klass of CLASSES) {
     assert.throws(
       () => reviewFor(root, 'claude', klass),
@@ -317,9 +364,11 @@ function runGate(root, missionId, gateId, cmd) {
 
   for (const posture of [undefined, 'degraded-path']) {
     if (posture === undefined) {
+      // No sanctioned "unset" exists — settings.js has no delete/reset
+      // command — so the absent-file default case removes the file directly.
       fs.rmSync(path.join(root, 'settings.json'), { force: true });
     } else {
-      fs.writeFileSync(path.join(root, 'settings.json'), JSON.stringify({ degraded_review: posture }) + '\n');
+      settingsMod.write(root, { degraded_review: posture });
     }
     for (const klass of CLASSES) {
       assert.doesNotThrow(
@@ -344,6 +393,11 @@ function runGate(root, missionId, gateId, cmd) {
   const root = customTree('launder-same-family-claude', (config) => {
     config.seats['reviewer-mystery-claude'] = { model: 'opus-5', family: 'claude' };
     config.degraded.gemini_down.seats['reviewer-sol-expert-rev'] = 'reviewer-mystery-claude';
+    // A qualification bound at or above the task class, so the injected
+    // candidate reaches the same-family drop instead of being dropped
+    // earlier by the (unrelated) missing-qualification filter — otherwise
+    // this fixture would pass even with the same-family check removed.
+    config.review_qualification['reviewer-mystery-claude'] = 'apex';
   });
   setPreflight(root, { codex: { routing: 'present' }, gemini: { routing: 'absent' } });
 
@@ -359,6 +413,9 @@ function runGate(root, missionId, gateId, cmd) {
   const rootGemini = customTree('launder-same-family-gemini', (config) => {
     config.seats['reviewer-mystery-gemini'] = { model: 'gemini-3.1-pro-preview', family: 'gemini' };
     config.degraded.codex_down.seats['reviewer-claude'] = 'reviewer-mystery-gemini';
+    // Same reason as the claude fixture above: reach the same-family drop,
+    // not the missing-qualification one.
+    config.review_qualification['reviewer-mystery-gemini'] = 'apex';
   });
   setPreflight(rootGemini, { codex: { routing: 'absent' }, gemini: { routing: 'present' } });
   assert.throws(
@@ -435,10 +492,8 @@ function runGate(root, missionId, gateId, cmd) {
 // (H) route.js's own real primitives: reserveReview refuses cross-family
 //     independence naming the author's own family, and
 //     validateArtifactIdentity refuses a dirty worktree and a shape mismatch.
-//     Both are shipped behaviour on main today — the honest half of the
-//     close-adjacent scope that belongs here, as distinct from (and never a
-//     stand-in for) the two close-time checks named above that only
-//     mission.js's still-unmerged close rewrite can perform.
+//     Distinct from (G): this is the reservation-time fence in route.js
+//     itself, not close's independent one.
 // =============================================================================
 {
   const missionRoot = freshTree('route-primitives-mission');
@@ -533,12 +588,6 @@ function runGate(root, missionId, gateId, cmd) {
   assert.strictEqual(shapeMismatch.ok, false);
   assert.ok(shapeMismatch.errors.some((e) => /"source_head" must be a git object id/.test(e)));
   assert.ok(shapeMismatch.errors.some((e) => /"patch_digest" must be a sha256 digest/.test(e)));
-}
-
-function gitAt(repo, ...args) {
-  const g = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8' });
-  assert.strictEqual(g.status, 0, `git ${args.join(' ')}: ${g.stderr}`);
-  return g.stdout.trim();
 }
 
 // =============================================================================
@@ -641,7 +690,7 @@ function gitAt(repo, ...args) {
   assert.strictEqual(r.status, 0, `a legal degraded close must survive provider recovery: ${r.stderr}`);
   const closed = JSON.parse(r.stdout);
   assert.strictEqual(closed.status, 'done');
-  const { records } = require(path.join(SRC_DIR, 'jsonl.js')).readRecords(path.join(lanesRoot, 'ledger.jsonl'));
+  const { records } = readRecords(path.join(lanesRoot, 'ledger.jsonl'));
   const close = records[records.length - 1];
   assert.strictEqual(close.kind, 'mission-close');
   assert.strictEqual(close.task_class, 'apex', 'no class ceiling — apex closes on the degraded path');
