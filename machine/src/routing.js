@@ -1374,19 +1374,29 @@ function classWithinBound(taskClass, bound) {
   return CLASS_ORDER.indexOf(taskClass) <= CLASS_ORDER.indexOf(bound);
 }
 
-// A candidate is capability-unavailable only on a recorded claim: preflight
-// wrote a models map for its provider, that map tracks the seat's exact
-// model, and the entry is not "present" (unknown routes as unavailable and
-// is never rounded up) or lacks the seat's exact effort. No record is not a
-// claim in either direction. Claude seats never enter here — Claude is the
-// runtime; no probe represents it.
+// Design §11.1: exact model × effort capability, never guessed from a model
+// name. Where preflight wrote a models map for a candidate's provider, that
+// map is the claim, and the candidate is usable only if the map RECORDS it
+// usable: the model tracked and "present" (unknown routes as unavailable and
+// is never rounded up), and the seat's exact effort among the efforts
+// recorded for it. A model the map does not name, and an entry with no
+// recorded efforts, are both things the map does not record — skipped, not
+// guessed up, which is the same discipline that keeps `unknown` from being
+// rounded to `present`.
+//
+// The one thing that is not a claim in either direction is the absence of the
+// map itself: a provider preflight never probed has been measured in no
+// direction at all, and lane state — not this function — is what decides
+// whether such a lane routes. Claude seats never enter here: Claude is the
+// runtime, and no probe represents it.
 function capabilityUnavailable(seat, capability) {
   if (typeof seat.model !== 'string') return false;
   const models = capability[seat.family];
-  if (!isPlainObject(models) || !isPlainObject(models[seat.model])) return false;
+  if (!isPlainObject(models)) return false;
   const entry = models[seat.model];
+  if (!isPlainObject(entry)) return true;
   if (entry.status !== 'present') return true;
-  return typeof seat.effort === 'string' && Array.isArray(entry.efforts) && !entry.efforts.includes(seat.effort);
+  return typeof seat.effort === 'string' && !(Array.isArray(entry.efforts) && entry.efforts.includes(seat.effort));
 }
 
 // Author-aware, class-aware reviewer resolution (execution-plan.md §8): read
@@ -1419,11 +1429,59 @@ function reviewFor(treeRoot, authorFamily, taskClass, authorModel) {
   const seats = effective.seats;
   const subs = effective.seat_substitutions;
   const base = reviewRowOf(effective.base_review_routing, authorFamily, taskClass);
+  const classRow = reviewRowOf(effective.review_routing, authorFamily, taskClass);
+
+  // Availability skips, in the route record's own vocabulary (route.js
+  // SKIP_REASONS): a candidate this class's base ladder named and that could
+  // not be tried because its lane is out or the capability map does not record
+  // it. Recorded from the BASE row, since the effective row is where the
+  // lane-out candidates have already been filtered away — a resolution taken
+  // with a lane down has to be able to say which rungs that cost it, and a
+  // skipped seat is the opposite of a requested one: route.js refuses a route
+  // whose requested seat also appears here.
+  //
+  // Deliberately only these two: a candidate dropped for sharing the author's
+  // family, or for a qualification bound below the class, was available and
+  // refused by law. Those are not availability facts, they have no reason token
+  // in the closed enum, and recording them there would report a live lane as
+  // absent.
+  const candidatesSkipped = [];
+  for (const candidate of base) {
+    if (!classRow.includes(candidate)) {
+      candidatesSkipped.push({ seat: candidate, reason: 'lane-down' });
+      continue;
+    }
+    const resolved = Object.prototype.hasOwnProperty.call(subs, candidate) ? subs[candidate] : candidate;
+    const seat = seats[resolved];
+    if (isPlainObject(seat) && capabilityUnavailable(seat, effective.capability)) {
+      candidatesSkipped.push({ seat: candidate, reason: 'capability-absent' });
+    }
+  }
+
   const shared = {
     class: taskClass,
     routing_config: effective.active_config,
     routing_digest: effective.active_digest,
+    candidates_skipped: candidatesSkipped,
+    // Design §16.2's profile-outcome vocabulary, on both paths. A resolution
+    // is a request and nothing more — no dispatch has run, so nothing has been
+    // observed — and the closed evidence_level enum has an exact token for
+    // that state. The field ships now, at its honest value, so the record a
+    // hosted route carries has the shape §5 requires from the start; the
+    // machinery that would raise it to host-observed or runtime-reported
+    // belongs to the telemetry slice and is deliberately not invented here.
+    evidence_level: 'unknown',
   };
+
+  // The host pair a hosted seat dispatches through (§5, §10): null for native
+  // Claude work, both set for a hosted one, which is exactly the shape
+  // route.js's reviewer_host_model/reviewer_host_effort pair requires. Read off
+  // the resolved seat so a substituted reviewer reports the host it will
+  // actually run on, never the one the row named.
+  const hostOf = (seat) => ({
+    host_model: isPlainObject(seat) && typeof seat.host === 'string' ? seat.host : null,
+    host_effort: isPlainObject(seat) && typeof seat.host_effort === 'string' ? seat.host_effort : null,
+  });
 
   // Class-aware twice over from r4: the row itself is the ladder for this
   // task class, and every seat that row can route carries a
@@ -1436,7 +1494,7 @@ function reviewFor(treeRoot, authorFamily, taskClass, authorModel) {
   // (r1/r2) carry no filter, and configs before the class-keyed rows (r3) read
   // one flat row per family: honest to what each revision's law actually was.
   const qualification = effective.review_qualification;
-  for (const candidate of reviewRowOf(effective.review_routing, authorFamily, taskClass)) {
+  for (const candidate of classRow) {
     const resolved = Object.prototype.hasOwnProperty.call(subs, candidate) ? subs[candidate] : candidate;
     const seat = seats[resolved];
     if (!isPlainObject(seat) || 'alias_of' in seat) continue; // never routable; validation refuses configs that ship this
@@ -1463,6 +1521,7 @@ function reviewFor(treeRoot, authorFamily, taskClass, authorModel) {
       family: seat.family,
       model: seat.model,
       effort: typeof seat.effort === 'string' ? seat.effort : null,
+      ...hostOf(seat),
       independence: 'cross-family',
       // The pairing key is a degraded-path concept and is not consulted on
       // this path; null states that outright, so a caller passing an
@@ -1536,6 +1595,12 @@ function reviewFor(treeRoot, authorFamily, taskClass, authorModel) {
     family: seat.family,
     model: seat.model,
     effort: typeof seat.effort === 'string' ? seat.effort : null,
+    // Native by definition — the degraded path is a fresh-context Claude
+    // reviewer, which validation enforces on every row of the block — so the
+    // pair is null here for the same reason it is null for any native seat,
+    // and the field is present for the same reason every other one is: a
+    // consumer never branches on independence to learn which fields exist.
+    ...hostOf(seat),
     independence: 'degraded-path',
     author_model: modelKey,
     // Preference ladder, not a hard requirement: when this preferred seat's
@@ -1621,11 +1686,15 @@ commands:
               applicable notice on stderr when the choice was rerouted;
               --json prints the full resolution bundle (seat,
               requested_seat, substituted, family, model, effort,
-              independence, author_model — the degraded pairing key
-              actually applied, null on the cross-family path where the
-              argument has no bearing — class, routing_config,
-              routing_digest, notices, and on the degraded path the
-              same-model fallback).
+              host_model/host_effort — both set for a hosted seat, both null
+              for a native one — independence, author_model — the degraded
+              pairing key actually applied, null on the cross-family path
+              where the argument has no bearing — class, routing_config,
+              routing_digest, candidates_skipped — the ladder rungs this
+              class could not try, each with reason lane-down or
+              capability-absent — evidence_level (always "unknown": a
+              resolution is a request, nothing has executed yet), notices,
+              and on the degraded path the same-model fallback).
 
 Exits 0 on success; every refusal prints to stderr and exits 1.
 `;
