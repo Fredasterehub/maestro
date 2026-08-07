@@ -135,7 +135,12 @@ function revision1Tree(name, dateStr) {
   // revise() dates its own writes off the real clock (not the source
   // fixture's `calibrated` field), so the source fixture is built for
   // today's date too — that is the date under which the collision actually
-  // has to be provoked.
+  // has to be provoked. The window between reading the clock here and
+  // revise()'s own internal read is milliseconds, but a run straddling UTC
+  // midnight would otherwise date the new write under tomorrow and produce
+  // an unreproducible, spurious failure rather than a missed collision — so
+  // the date the child process actually used is read back from its own
+  // output and the strict assertion only runs when it agrees with `today`.
   const today = new Date().toISOString().slice(0, 10);
   const { root, dir } = revision1Tree('collision', today);
   // Pre-occupy the slot revise would otherwise claim next (N=2) with an
@@ -145,7 +150,15 @@ function revision1Tree(name, dateStr) {
   const r = run(ROUTING_SRC, ['revise', root]);
   assert.strictEqual(r.status, 0, r.stderr);
   const result = JSON.parse(r.stdout);
-  assert.strictEqual(result.active_config, `routing-${today}-3.json`, 'a collision at N must increment to the next free N, never overwrite it');
+  const writtenDate = result.active_config.match(/^routing-(\d{4}-\d{2}-\d{2})-\d+\.json$/)[1];
+  if (writtenDate !== today) {
+    console.log(`test-migrations: SKIP collision-suffix strict filename assertion (UTC date rolled over mid-test: fixture built for ${today}, revise wrote under ${writtenDate})`);
+  } else {
+    assert.strictEqual(result.active_config, `routing-${today}-3.json`, 'a collision at N must increment to the next free N, never overwrite it');
+  }
+  // Independent of the date race: whatever name revise picked, it must not
+  // be N=2 (already occupied), and the occupant must survive untouched.
+  assert.ok(!result.active_config.endsWith('-2.json'), 'revise must never claim the already-occupied N=2 slot');
 
   const squatter = fs.readFileSync(path.join(dir, `routing-${today}-2.json`), 'utf8');
   assert.strictEqual(squatter, '{"squatter": true}\n', 'the pre-existing occupant of the collided name must be left untouched');
@@ -181,6 +194,69 @@ function revision1Tree(name, dateStr) {
   assert.ok(fs.existsSync(path.join(dir, r2File)), 'the newer dated file is never deleted by a rollback — it stays on disk, just unpointed');
 }
 
+// Byte-patches a copy of routing.js's own MIGRATIONS declaration (never the
+// real file under machine/src/) so a test can exercise more than the one
+// migration that ships today. `migrationsSource` is the literal
+// replacement for `const MIGRATIONS = [migrateSolSplit];` — free to define
+// its own extra migration functions above that assignment, since it is
+// spliced in at the exact point the real declaration lives. Every caller
+// must read CURRENT_ROUTING_REVISION back off the returned module rather
+// than assume a value: the constant is computed once at require time as
+// `1 + MIGRATIONS.length`, so it moves with whatever migration count the
+// patch introduces, and nothing here hardcodes it independently.
+function buildPatchedRoutingModule(migrationsSource, fixtureName) {
+  const marker = 'const MIGRATIONS = [migrateSolSplit];';
+  const requireMarker = "const { readJson, writeJson } = require('./atomic-json.js');";
+  const realSrc = fs.readFileSync(ROUTING_SRC, 'utf8');
+  assert.ok(realSrc.includes(marker) && realSrc.includes(requireMarker), 'test-migrations: routing.js shape moved — update the synthetic-module fixture');
+
+  const patched = realSrc
+    .replace(requireMarker, `const { readJson, writeJson } = require(${JSON.stringify(path.join(SRC_DIR, 'atomic-json.js'))});`)
+    .replace(marker, migrationsSource);
+  const syntheticSrc = path.join(tmp, fixtureName);
+  fs.writeFileSync(syntheticSrc, patched);
+  return { path: syntheticSrc, module: require(syntheticSrc) };
+}
+
+// --- validateRoutingConfig is actually enforced on migration output --------
+//
+// §11 requires each migration's output to be validated before it is
+// written. Proven from outside routing.js (never by editing it): a
+// synthetic single migration that returns a structurally invalid config
+// (no `bans` table) must be refused by revise, and must write no file.
+{
+  const { path: invalidSrc } = buildPatchedRoutingModule(
+    [
+      'function migrateDropsRequiredField(config) {',
+      '  const out = JSON.parse(JSON.stringify(config));',
+      '  delete out.bans;',
+      '  out.revision = 2;',
+      '  return out;',
+      '}',
+      'const MIGRATIONS = [migrateDropsRequiredField];',
+    ].join('\n'),
+    'routing-invalid-migration.js'
+  );
+
+  const dateStr = '2026-08-03';
+  const root = freshTree('validate-on-output');
+  const dir = path.join(root, 'routing');
+  fs.mkdirSync(dir, { recursive: true });
+  const filename = `routing-${dateStr}-1.json`;
+  const { digest } = writeDatedFixture(dir, filename, buildRevision1Config(dateStr));
+  writePointer(dir, filename, digest);
+
+  const r = run(invalidSrc, ['revise', root]);
+  assert.strictEqual(r.status, 1, 'a migration producing an invalid config must be refused, not written');
+  assert.match(r.stderr, /produced an invalid config/);
+  assert.match(r.stderr, /bans must be an object/);
+  assert.deepStrictEqual(
+    fs.readdirSync(dir).filter((f) => DATED_CONFIG_RE.test(f)),
+    [filename],
+    'a refused invalid migration output must write no new dated file'
+  );
+}
+
 // --- multi-step revise, rollback to an intermediate step, and re-upgrade running only the remaining migration ----
 //
 // Only one migration ships today, so exercising a genuine multi-step
@@ -190,28 +266,18 @@ function revision1Tree(name, dateStr) {
 // back from that same copy rather than assumed, since adding a migration
 // moves the constant along with it (1 + MIGRATIONS.length).
 {
-  const marker = "const MIGRATIONS = [migrateSolSplit];";
-  const requireMarker = "const { readJson, writeJson } = require('./atomic-json.js');";
-  const realSrc = fs.readFileSync(ROUTING_SRC, 'utf8');
-  assert.ok(realSrc.includes(marker) && realSrc.includes(requireMarker), 'test-migrations: routing.js shape moved — update the synthetic-module fixture');
-
-  const patched = realSrc
-    .replace(requireMarker, `const { readJson, writeJson } = require(${JSON.stringify(path.join(SRC_DIR, 'atomic-json.js'))});`)
-    .replace(
-      marker,
-      [
-        'function migrateSyntheticTestStep(config) {',
-        '  const out = JSON.parse(JSON.stringify(config));',
-        "  out.seats['synthetic-test-seat'] = { model: 'sonnet-5', family: 'claude', effort: 'low' };",
-        '  out.revision = 3;',
-        '  return out;',
-        '}',
-        'const MIGRATIONS = [migrateSolSplit, migrateSyntheticTestStep];',
-      ].join('\n')
-    );
-  const syntheticSrc = path.join(tmp, 'routing-synthetic.js');
-  fs.writeFileSync(syntheticSrc, patched);
-  const synthetic = require(syntheticSrc);
+  const { path: syntheticSrc, module: synthetic } = buildPatchedRoutingModule(
+    [
+      'function migrateSyntheticTestStep(config) {',
+      '  const out = JSON.parse(JSON.stringify(config));',
+      "  out.seats['synthetic-test-seat'] = { model: 'sonnet-5', family: 'claude', effort: 'low' };",
+      '  out.revision = 3;',
+      '  return out;',
+      '}',
+      'const MIGRATIONS = [migrateSolSplit, migrateSyntheticTestStep];',
+    ].join('\n'),
+    'routing-synthetic.js'
+  );
   assert.strictEqual(synthetic.CURRENT_ROUTING_REVISION, 3, 'the synthetic fixture must carry its own second migration in its current-revision constant');
 
   const dateStr = '2026-08-02';

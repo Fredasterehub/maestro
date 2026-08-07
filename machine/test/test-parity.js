@@ -41,6 +41,18 @@ function parseFrontmatter(text) {
   return fm;
 }
 
+// Recursive, extension-agnostic walk — the haiku ban is "no file anywhere
+// under agents/", not "no .md file at the top level of agents/".
+function walkFiles(dir) {
+  const out = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...walkFiles(p));
+    else out.push(p);
+  }
+  return out;
+}
+
 function loadAgentFiles() {
   const byName = new Map();
   for (const filename of fs.readdirSync(AGENTS_DIR)) {
@@ -63,6 +75,33 @@ function shortClaudeModel(fullModel) {
   return String(fullModel).split('-')[0];
 }
 
+// The family an actual worker model belongs to, derived structurally from
+// the model name itself (never from a maintained lookup table that could
+// drift from routing.js's own seat data). Used to check that a hosted
+// seat's config.family names the worker doing the intellectual work, not
+// the Claude family of whatever hosts it.
+function expectedFamilyForModel(model) {
+  if (typeof model !== 'string') return undefined;
+  if (model.startsWith('gpt-')) return 'gpt';
+  if (model.startsWith('gemini-')) return 'gemini';
+  if (model.startsWith('opus-') || model.startsWith('sonnet-') || model.startsWith('fable-')) return 'claude';
+  return undefined;
+}
+
+// Dormant gpt-ladder seats not yet named in config.seats (Slice 5's r4->r5
+// migration adds them) get no config-driven check at all, which would leave
+// their metadata unguarded for several slices. This table is a literal
+// transcription of execution-plan.md's design references (§5 host tiers,
+// §6.1 review profiles) — the same kind of hardcoded expectation
+// buildRevision1Config already is for the shipped seats — so these three
+// files are still checked byte-for-byte pending their config entry. Retire
+// this table in favor of the config-driven loop once r4->r5 ships.
+const DORMANT_GPT_PROFILES = {
+  'executor-luna': { worker_model: 'gpt-5.6-luna', worker_effort: 'low', model: 'sonnet', effort: 'low' },
+  'executor-terra': { worker_model: 'gpt-5.6-terra', worker_effort: 'medium', model: 'sonnet', effort: 'medium' },
+  'reviewer-terra': { worker_model: 'gpt-5.6-terra', worker_effort: 'high', model: 'sonnet', effort: 'medium' },
+};
+
 // --- load config + agent files ------------------------------------------------
 
 const config = buildDefaultConfig('2026-08-07'); // date is cosmetic (calibrated field) — content is what matters
@@ -72,10 +111,19 @@ const config = buildDefaultConfig('2026-08-07'); // date is cosmetic (calibrated
 }
 const agents = loadAgentFiles();
 
+// Violations accumulate here rather than aborting at the first mismatch —
+// the whole point of a parity sweep is to name every failing seat in one
+// run, not just the first one alphabetically or positionally reached.
+const violations = [];
+function check(condition, message) {
+  if (!condition) violations.push(message);
+}
+
 // --- no haiku token anywhere under agents/ -----------------------------------
 
-for (const [name, { text, filePath }] of agents) {
-  assert.ok(!/haiku/i.test(text), `agents/${name}.md contains the banned "haiku" token (${filePath})`);
+for (const filePath of walkFiles(AGENTS_DIR)) {
+  const text = fs.readFileSync(filePath, 'utf8');
+  assert.ok(!/haiku/i.test(text), `${path.relative(AGENTS_DIR, filePath)} contains the banned "haiku" token (${filePath})`);
 }
 
 // --- every seat named in the active routing config has a file ---------------
@@ -91,95 +139,144 @@ for (const seatName of Object.keys(config.seats)) {
 // across the r1->r2 migration and are checked below for unroutability, not
 // for frontmatter parity — a file shipped for a seat the config does not
 // route (dormant executor-luna/executor-terra/reviewer-terra, still absent
-// from config.seats until Slice 5's r4->r5 migration) is likewise not a
-// parity failure; only a routed seat with no matching, exact file is.
+// from config.seats until Slice 5's r4->r5 migration, checked above against
+// DORMANT_GPT_PROFILES instead) is not itself a parity failure; only a
+// routed seat with no matching, exact file is.
 
 for (const [seatName, seat] of Object.entries(config.seats)) {
   if ('alias_of' in seat) continue; // aliases: existence only, checked separately below
 
   const agent = agents.get(seatName);
-  assert.ok(agent, `routed seat "${seatName}" has no agents/${seatName}.md file`);
+  if (!agent) {
+    violations.push(`${seatName}: no agents/${seatName}.md file`);
+    continue;
+  }
   const fm = agent.frontmatter;
-  assert.ok(fm, `agents/${seatName}.md has no parseable frontmatter block`);
+  if (!fm) {
+    violations.push(`${seatName}: agents/${seatName}.md has no parseable frontmatter block`);
+    continue;
+  }
 
   const hasHostPair = 'host' in seat && 'host_effort' in seat;
-  const hasWorkerPair = 'model' in seat && 'effort' in seat;
+  const hasWorkerEffort = 'effort' in seat;
 
-  if (hasHostPair && hasWorkerPair) {
-    // Full split-worker shape (the four Sol-split seats today): a hosted
-    // gpt/gemini seat whose config carries a genuine worker-level effort
-    // distinct from the host's. Both pairs are mandatory; missing either is
-    // a failure — native and hosted fields are never conflated.
-    assert.strictEqual(
-      fm.worker_model, seat.model,
-      `agents/${seatName}.md: frontmatter worker_model "${fm.worker_model}" must equal config.model "${seat.model}"`
+  if (hasHostPair) {
+    // Hosted gpt/gemini seat. worker_model <-> config.model is checked
+    // unconditionally: config always names the actual worker model for a
+    // hosted seat, so there is always something to compare against — a
+    // hosted seat missing worker_model in frontmatter is a real gap, not a
+    // reason to skip the check (execution-plan.md §10; brief: "a hosted
+    // seat missing either pair is a failure").
+    check(
+      fm.worker_model === seat.model,
+      `${seatName}: frontmatter worker_model "${fm.worker_model}" must equal config.model "${seat.model}"`
     );
-    assert.strictEqual(
-      fm.worker_effort, seat.effort,
-      `agents/${seatName}.md: frontmatter worker_effort "${fm.worker_effort}" must equal config.effort "${seat.effort}"`
+    // worker_effort <-> config.effort is checked only when config actually
+    // records a worker-level effort distinct from the host's — today that
+    // is the four Sol-split seats. executor-gemini/reviewer-gemini's config
+    // entries carry no top-level `effort` at all (no worker effort value
+    // exists anywhere to compare against); enforcing it there would assert
+    // against nothing.
+    if (hasWorkerEffort) {
+      check(
+        fm.worker_effort === seat.effort,
+        `${seatName}: frontmatter worker_effort "${fm.worker_effort}" must equal config.effort "${seat.effort}"`
+      );
+    }
+    check(
+      fm.model === shortClaudeModel(seat.host),
+      `${seatName}: frontmatter model "${fm.model}" must equal config.host "${seat.host}" (short form)`
     );
-    assert.strictEqual(
-      fm.model, shortClaudeModel(seat.host),
-      `agents/${seatName}.md: frontmatter model "${fm.model}" must equal config.host "${seat.host}" (short form)`
-    );
-    assert.strictEqual(
-      fm.effort, seat.host_effort,
-      `agents/${seatName}.md: frontmatter effort "${fm.effort}" must equal config.host_effort "${seat.host_effort}"`
-    );
-  } else if (hasHostPair) {
-    // Host-only legacy shape (executor-gemini, reviewer-gemini): config
-    // records only the host profile, with no separate worker-level effort
-    // to check a worker_model/worker_effort pair against — the two-key
-    // hosted contract (execution-plan.md section 10 / design section 5)
-    // targets the gpt ladder's per-class worker split specifically, which
-    // has not been extended to these seats. The host pair is still checked.
-    assert.strictEqual(
-      fm.model, shortClaudeModel(seat.host),
-      `agents/${seatName}.md: frontmatter model "${fm.model}" must equal config.host "${seat.host}" (short form)`
-    );
-    assert.strictEqual(
-      fm.effort, seat.host_effort,
-      `agents/${seatName}.md: frontmatter effort "${fm.effort}" must equal config.host_effort "${seat.host_effort}"`
+    check(
+      fm.effort === seat.host_effort,
+      `${seatName}: frontmatter effort "${fm.effort}" must equal config.host_effort "${seat.host_effort}"`
     );
   } else if (seat.hosted === true) {
-    // plan-counterpart: `hosted: true` names no specific host model in the
-    // config at all, so only the one comparable field (effort) is checked.
-    assert.strictEqual(
-      fm.effort, seat.effort,
-      `agents/${seatName}.md: frontmatter effort "${fm.effort}" must equal config.effort "${seat.effort}"`
+    // plan-counterpart: `hosted: true` names no host model and no worker
+    // model in config at all (routing.js's config entry is
+    // { family: 'gpt', hosted: true, effort: 'high' } — under-specified
+    // relative to the host/host_effort shape every other hosted seat
+    // carries). The only field with a genuine counterpart on both sides is
+    // `effort`, and even that comparison is provisional: frontmatter's
+    // `effort` here describes the Sonnet host, while config's `effort` is
+    // undifferentiated (neither clearly host- nor worker-scoped) — it only
+    // reads correct today because both happen to be `high`. Reported, not
+    // silently trusted: if design §5's host-tiering-by-worker ever reaches
+    // this seat, config needs host/host_effort fields before this check can
+    // mean anything stronger (out of this slice's scope — machine/src/ is
+    // not touched here).
+    check(
+      fm.effort === seat.effort,
+      `${seatName}: frontmatter effort "${fm.effort}" must equal config.effort "${seat.effort}" (provisional — see comment above)`
     );
   } else {
     // Native Claude seat.
-    assert.strictEqual(
-      fm.model, shortClaudeModel(seat.model),
-      `agents/${seatName}.md: frontmatter model "${fm.model}" must equal config.model "${seat.model}" (short form)`
+    check(
+      fm.model === shortClaudeModel(seat.model),
+      `${seatName}: frontmatter model "${fm.model}" must equal config.model "${seat.model}" (short form)`
     );
-    assert.strictEqual(
-      fm.effort, seat.effort,
-      `agents/${seatName}.md: frontmatter effort "${fm.effort}" must equal config.effort "${seat.effort}"`
+    check(
+      fm.effort === seat.effort,
+      `${seatName}: frontmatter effort "${fm.effort}" must equal config.effort "${seat.effort}"`
     );
   }
 
-  // Family attribution: whichever seat has a host at all, the family it
-  // names is the model doing the intellectual work, never the Claude host.
+  // Family attribution: the config's family must name the model actually
+  // doing the intellectual work. Derived structurally from the worker
+  // model's own name where one exists (catches a hosted seat mislabeled
+  // into the *wrong other* family, not only mislabeled onto the Claude
+  // host); falls back to the weaker "not claude" check only when config
+  // names no worker model to derive a family from (plan-counterpart).
   if (hasHostPair || seat.hosted === true) {
-    assert.notStrictEqual(seat.family, 'claude', `agents/${seatName}.md: hosted seat's config.family must name the worker, not the Claude host`);
+    const expectedFamily = expectedFamilyForModel(seat.model);
+    if (expectedFamily) {
+      check(
+        seat.family === expectedFamily,
+        `${seatName}: config.family "${seat.family}" must name the worker model "${seat.model}"'s family ("${expectedFamily}"), not the host's`
+      );
+    } else {
+      check(seat.family !== 'claude', `${seatName}: hosted seat's config.family must name the worker, not the Claude host`);
+    }
   }
 
-  // Fallback profile: checked whenever both sides state one — a seat whose
-  // frontmatter has not yet been reprofiled to carry a fallback key (e.g.
-  // convergence, ahead of its Slice 4 reprofile) is not required to declare
-  // one, but if it does, it must agree with the config.
-  if ('fallback' in seat && 'fallback' in fm) {
-    assert.strictEqual(fm.fallback, seat.fallback, `agents/${seatName}.md: frontmatter fallback "${fm.fallback}" must equal config.fallback "${seat.fallback}"`);
-  }
-  if ('fallback_effort' in seat && 'fallback_effort' in fm) {
-    assert.strictEqual(
-      fm.fallback_effort, seat.fallback_effort,
-      `agents/${seatName}.md: frontmatter fallback_effort "${fm.fallback_effort}" must equal config.fallback_effort "${seat.fallback_effort}"`
+  // Fallback profile: a config-declared fallback must be stated in
+  // frontmatter — the direction that actually matters, since a fallback
+  // silently absent from a seat's own prompt is invisible drift, while a
+  // frontmatter fallback with no config counterpart (checked in the `else`
+  // arm) is at least loud in the other direction.
+  if ('fallback' in seat) {
+    check(
+      fm.fallback === seat.fallback,
+      `${seatName}: config.fallback "${seat.fallback}" must be stated in frontmatter as fallback (got "${fm.fallback}")`
     );
+  } else if ('fallback' in fm) {
+    check(false, `${seatName}: frontmatter declares fallback "${fm.fallback}" with no counterpart in config`);
+  }
+  if ('fallback_effort' in seat) {
+    check(
+      fm.fallback_effort === seat.fallback_effort,
+      `${seatName}: config.fallback_effort "${seat.fallback_effort}" must be stated in frontmatter as fallback_effort (got "${fm.fallback_effort}")`
+    );
+  } else if ('fallback_effort' in fm) {
+    check(false, `${seatName}: frontmatter declares fallback_effort "${fm.fallback_effort}" with no counterpart in config`);
   }
 }
+
+// --- dormant gpt-ladder seats: hardcoded parity pending their config entry --
+
+for (const [seatName, expected] of Object.entries(DORMANT_GPT_PROFILES)) {
+  const agent = agents.get(seatName);
+  if (!agent) {
+    violations.push(`${seatName}: dormant seat file is missing`);
+    continue;
+  }
+  const fm = agent.frontmatter || {};
+  for (const key of ['worker_model', 'worker_effort', 'model', 'effort']) {
+    check(fm[key] === expected[key], `${seatName}: frontmatter ${key} "${fm[key]}" must equal "${expected[key]}" (execution-plan.md §5/§6.1)`);
+  }
+}
+
+assert.strictEqual(violations.length, 0, `parity violations (${violations.length}):\n${violations.join('\n')}`);
 
 // --- alias seats are unroutable ----------------------------------------------
 
@@ -201,14 +298,23 @@ for (const [seatName, seat] of Object.entries(config.seats)) {
 }
 
 // --- Sol expert and Sol apex are distinct profiles ---------------------------
+//
+// Compared on (model, effort) specifically — the profile §10/§18 mean —
+// rather than the whole seat object, so a cosmetic field difference (e.g.
+// `scope`) can never stand in for a genuine profile split, and collapsing
+// the two seats' actual effort while leaving an unrelated field different
+// is caught rather than waved through.
+function profileTuple(seat) {
+  return `${seat.model}|${seat.effort}`;
+}
 
-assert.notDeepStrictEqual(
-  config.seats['executor-sol-expert'], config.seats['executor-sol-apex'],
-  'executor-sol-expert and executor-sol-apex must be distinct profiles'
+assert.notStrictEqual(
+  profileTuple(config.seats['executor-sol-expert']), profileTuple(config.seats['executor-sol-apex']),
+  'executor-sol-expert and executor-sol-apex must be distinct (model, effort) profiles'
 );
-assert.notDeepStrictEqual(
-  config.seats['reviewer-sol-expert-rev'], config.seats['reviewer-sol-apex-rev'],
-  'reviewer-sol-expert-rev and reviewer-sol-apex-rev must be distinct profiles'
+assert.notStrictEqual(
+  profileTuple(config.seats['reviewer-sol-expert-rev']), profileTuple(config.seats['reviewer-sol-apex-rev']),
+  'reviewer-sol-expert-rev and reviewer-sol-apex-rev must be distinct (model, effort) profiles'
 );
 
 console.log('test-parity: OK');

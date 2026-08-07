@@ -17,33 +17,52 @@ const path = require('node:path');
 
 const AGENTS_DIR = path.join(__dirname, '..', '..', 'agents');
 
+// Recursive, extension-agnostic walk — "no haiku ... anywhere" (§16) means
+// anywhere under agents/, not only its top-level .md files.
+function walkFiles(dir) {
+  const out = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...walkFiles(p));
+    else out.push(p);
+  }
+  return out;
+}
+
 // Each entry: [label, pattern]. Patterns are deliberately specific phrases
 // or compounds, not bare words already in legitimate use elsewhere in these
 // prompts (e.g. "rung" alone names the escalation/dispute ladder, not a
 // model-ranking scheme — "rung-relative" as a compound is the banned form).
+// The comparative and fusion patterns are intentionally wider than a single
+// literal phrase: a one-word paraphrase of a banned phrase states exactly
+// the idea the ban exists to prevent, and a blocklist that only catches the
+// original wording invites the paraphrase instead of the phrase.
 const BANNED = [
   ['ranking: cheapest', /\bcheapest\b/i],
   ['ranking: strongest', /\bstrongest\b/i],
+  ['ranking: weakest', /\bweakest\b/i],
+  ['ranking: most capable', /\bmost capable\b/i],
   ['ranking: rung-relative rank', /\brung-relative\b/i],
   ['ranking: frontier-rank', /\bfrontier[- ]rank/i],
+  ['ranking: comparative ("cheaper/stronger/weaker/more capable than")', /\b(cheaper|stronger|weaker|more capable)\s+than\b/i],
   ['ranking: "more powerful than"', /more powerful than/i],
+  ['ranking: "higher tier than"', /\bhigher tier than\b/i],
+  ['ranking: "costs less"', /\bcosts less\b/i],
   ['ranking: price narrative', /\b(price tag|budget model|cut-rate)\b/i],
   ['ranking: prestige narrative', /\b(prestige|flagship|top-tier|premium)\b/i],
-  ['plan-fusion: apex always requires planning', /apex always requires planning/i],
-  ['plan-fusion: hard fence means plan-first', /hard fence means plan-first/i],
+  ['plan-fusion: apex requires planning', /\bapex\s+\w*\s*requires?\s+planning\b/i],
+  ['plan-fusion: hard fence means/is plan-first', /hard fence\s+(means|is)\s+plan-first/i],
   ['haiku token', /haiku/i],
 ];
 
 let violations = 0;
-for (const filename of fs.readdirSync(AGENTS_DIR)) {
-  if (!filename.endsWith('.md')) continue;
-  const filePath = path.join(AGENTS_DIR, filename);
+for (const filePath of walkFiles(AGENTS_DIR)) {
   const text = fs.readFileSync(filePath, 'utf8');
   for (const [label, pattern] of BANNED) {
     const match = text.match(pattern);
     if (match) {
       violations += 1;
-      console.error(`test-prompt-policy: ${filename} trips ${label} — "${match[0]}"`);
+      console.error(`test-prompt-policy: ${path.relative(AGENTS_DIR, filePath)} trips ${label} — "${match[0]}"`);
     }
   }
 }
