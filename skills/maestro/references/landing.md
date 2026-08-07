@@ -13,8 +13,13 @@ When an executor's envelope reports `done`:
 1. **Route review cross-family.** Dispatch the reviewer seat whose model
    family differs from the author's (`reviewer-claude` for gpt/gemini work,
    `reviewer-sol` for claude/gemini work, `reviewer-gemini` for claude/gpt
-   work). Same-family review inherits the author's blind spots; the
-   close-record writer refuses it structurally, so route it right here.
+   work). Same-family review inherits the author's blind spots — route it
+   cross-family here. Close does not refuse a same-family review
+   structurally; it refuses one dishonestly *labeled* `cross-family`, and
+   accepts the same reviewer honestly labeled `degraded-path` (see "Seat
+   routing" in `references/dispatch.md`). Getting the reviewer right at
+   dispatch is what protects the mission — close is a backstop against a
+   lie about the route, not against the route itself.
 2. **Brief the reviewer for coverage.** Report every finding — including
    low-severity and uncertain ones — with confidence and severity per
    finding. Zero findings is a legitimate outcome and is reported as exactly
@@ -22,29 +27,42 @@ When an executor's envelope reports `done`:
    serious issues": these seats comply literally and recall drops; severity
    filtering is the liaison's job after the report.
 3. **Act on the verdict.** Vocabulary is `approve | revise`, nothing else.
-   - `approve` → run the gate: `gate.js run-gate` against the mission's
+   Either way, record it first — `mission.js record-review` with
+   `{review_route_seq, review_dispatch_seq, verdict, artifact_identity}` —
+   binding the verdict to the exact review route and identity it judged,
+   before anything else happens to the artifact. This is what makes the
+   review-then-gate order real rather than a convention: a gate cited at
+   close must not predate the approve it is supposed to have been run
+   against, so the verdict is recorded here, not after the gate. Recording
+   a revise the same way is what a rejected review being answered, not
+   skipped, actually means for the route being closed — a revise never
+   recorded is a revise close cannot see.
+   - `approve` → then run the gate: `gate.js run-gate` against the mission's
      acceptance command. run-gate is the *only* producer of pass evidence —
      "tests pass" exists only as a recorded gate with exit code 0; a green
      run narrated in prose is a claim, not evidence.
-   - `revise` → record the round first — `friction.js record` with
+   - `revise` → then record the round — `friction.js record` with
      `{kind: 'revise-verdict', mission_id, detail}` — then resume the
      **same executor** (resume-don't-respawn) with the findings as the fix
      list. Silent recording, no real-time line (`references/supervision.md`
      "Friction"); the round count surfaces in the landing note below.
-4. **Record the verdict, then merge and close.** `mission.js record-review`
-   first — `{review_route_seq, review_dispatch_seq, verdict,
-   artifact_identity}` — binds the approve to the exact review route and
-   identity it judged (a revise is recorded the same way, so a rejected
-   review can never be silently skipped). With that record and a passing
-   gate both on the ledger, the liaison merges the worktree into the
-   mainline locally (squashing the worker's WIP checkpoints is fine —
-   checkpoint commits served recovery, not history), then `mission.js
-   close`. Close takes nothing but sequence references — author, review, and
-   gate seqs — and derives everything it enforces from the records those
-   name: the recorded approve, the author and reviewer families, and the
-   gate's exit code. If close refuses, something in the procedure was
-   skipped or a record disagrees with another; fix the record, do not work
-   around the refusal.
+4. **Merge and close.** With a recorded approve and a passing gate both on
+   the ledger, the liaison merges the worktree into the mainline locally
+   (squashing the worker's WIP checkpoints is fine — checkpoint commits
+   served recovery, not history), then `mission.js close`. Close's stdin is
+   nothing but sequence references — author, review, and gate seqs — and it
+   derives what it enforces from the records those name: the recorded
+   approve, the author and reviewer families, and the gate's exit code. One
+   check is not a ledger derivation: close also proves, against the real
+   repository named by `--repo` (the liaison's cwd when omitted), that the
+   reviewed commit actually landed — by commit containment for an ordinary
+   merge, by patch identity for a squash. Three things follow from that: the
+   merge must land on `main` or `master`; close must be pointed at (or run
+   from) the repository it landed in; and the reviewed commit must still be
+   resolvable there when close runs — deleting the branch and pruning before
+   closing makes the mission uncloseable. If close refuses, something in the
+   procedure was skipped or a record disagrees with another; fix the record,
+   do not work around the refusal.
 5. **Report the outcome** — see "The landing note" below.
 
 ## The landing note

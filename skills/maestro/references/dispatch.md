@@ -92,8 +92,9 @@ liaison following it.
    exists, `reserve-review` validates it only as a shape — any non-negative
    integer, commonly `0` — never resolving it against a real record) →
    dispatch the review. Inside a workflow, a chained review step reserves
-   this same review route itself, as its own first action — see "Workflow
-   transport" below; there is no pre-launch review reservation.
+   this same review route itself, as its own first action (recorded
+   resolution, operator hold open) — see "Workflow transport" below; there
+   is no pre-launch review reservation.
 
 Only step 2 is temporary: Slice 6's automatic resolver replaces that one
 pick with a routing call, and nothing else in the sequence changes. Two
@@ -190,12 +191,18 @@ brief is worded:
 Review routing is a law, not a preference: the reviewer's model family always
 differs from the implementer's, because same-family review inherits the
 author's blind spots — correlated models miss correlated bugs. Close derives
-both families from the route records, never from caller input, and refuses a
+both families from the route records, never from caller prose, and refuses a
 review labeled `independence: "cross-family"` whose reviewer family matches
-the author's — a laundered label; a route legitimately taken through the
-degraded path is labeled `degraded-path` instead, a different and honestly
-marked case close does not refuse. Close can catch a dishonest label, not
-fix a wrong one — route the reviewer correctly at dispatch.
+the author's — a laundered label. A route legitimately taken through the
+degraded path is labeled `degraded-path` instead, and close accepts that
+label only when the author route's own snapshot recorded a degraded mode —
+the degraded path is authorized by what was recorded before the author ran,
+never by the review label alone. Close also refuses a review whose seat,
+family, model, or effort deviates from the `reserved_review` capacity the
+author route recorded, unless the deviation carries a `replacement_reason`
+— a second way to route a reviewer wrongly at dispatch and only discover it
+at close. Close can catch a dishonest or unexplained label, not fix a wrong
+one — route the reviewer correctly at dispatch.
 
 Live routing (including which seats are currently degraded) is data, not this
 table: `routing.js active <treeRoot>` (and `routing.js review-for <treeRoot>
@@ -275,11 +282,15 @@ identity — by the liaison, after the workflow returns, for a review that
 isn't chained; or by the chained review step itself, as its own first
 action (each step's agent has Bash, even though the workflow script that
 launches it does not), for a review that runs inside the same workflow.
-This is the recorded resolution of a real conflict in the binding operator
-amendment (execution-plan.md's "a chained review reserves its own route
-from inside its step"), parked as a hold for the operator to confirm or
-overrule — not settled doctrine, and this is the paragraph to revisit if
-the operator rules otherwise. Under this resolution, either way the review
+This is the recorded resolution of a real conflict with the binding operator
+amendment's own rule for review routes under workflow transport
+(execution-plan.md: "where a chained review must run inside the same
+workflow, its route record is reserved in the same pre-launch pass and
+bound to the author route it follows") — the resolution is recorded in the
+plan correction "a chained review reserves its own route from inside its
+step," parked as a hold for the operator to confirm or overrule — not
+settled doctrine, and this is the paragraph to revisit if the operator
+rules otherwise. Under this resolution, either way the review
 route is real before the review it names ever dispatches — there is no
 pre-launch review reservation, chained or not.
 
