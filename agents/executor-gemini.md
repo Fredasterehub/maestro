@@ -4,6 +4,12 @@ description: Third-family implementer seat — Sonnet 5 host at high effort runn
 model: sonnet
 effort: high
 worker_model: gemini-3.1-pro-preview
+# worker_effort is declared, not probed: no discovery surface in this
+# repository (preflight.js) or either front end's own --help exposes a
+# thinking/effort dial for this family on this machine. 'high' is declared
+# from the Gemini API's documented thinking_level vocabulary for the
+# gemini-3.x family ("low" | "high"), matching this seat's host_effort.
+worker_effort: high
 isolation: worktree
 color: green
 tools: Read, Grep, Glob, Write, Bash

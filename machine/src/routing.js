@@ -82,10 +82,27 @@ function buildRevision1Config(dateStr) {
       'context-keeper': { model: 'opus-5', family: 'claude', effort: 'high' },
       'executor-sol': { model: 'gpt-5.6-sol', family: 'gpt', host: 'sonnet-5', host_effort: 'high' },
       'executor-claude': { model: 'opus-5', family: 'claude', effort: 'high' },
-      'executor-gemini': { model: 'gemini-3.1-pro-preview', family: 'gemini', host: 'sonnet-5', host_effort: 'high' },
+      // gemini's own `effort` (battery finding D9): no discovery surface in
+      // this repository probes a per-model effort dial for gemini or
+      // antigravity (preflight.js's PROVIDER_MODEL_IDS stays 'unknown' with
+      // no proven efforts by design), and `gemini --help`/`antigravity --help`
+      // expose no thinking/effort flag on this machine (antigravity is not
+      // even installed here) — so this value is declared, not probed, from
+      // the Gemini API's documented thinking-level vocabulary for the
+      // gemini-3.x family (`thinking_level: "low" | "high"`), the same
+      // tri-state honesty preflight.js's 'unknown' stays unknown extends to a
+      // value nothing on this machine can verify. 'high' matches this seat's
+      // host_effort and the full-depth reasoning large-context/rotation
+      // implementation work needs.
+      'executor-gemini': { model: 'gemini-3.1-pro-preview', family: 'gemini', effort: 'high', host: 'sonnet-5', host_effort: 'high' },
       'reviewer-claude': { model: 'sonnet-5', family: 'claude', effort: 'high' },
       'reviewer-sol': { model: 'gpt-5.6-sol', family: 'gpt', host: 'sonnet-5', host_effort: 'medium', scope: 'scoped' },
-      'reviewer-gemini': { model: 'gemini-3.1-pro-preview', family: 'gemini', host: 'sonnet-5', host_effort: 'medium', scope: 'scoped' },
+      // Declared-not-probed, same reasoning as executor-gemini above: no
+      // verifiable dial exists on this machine, so 'high' is declared from
+      // the Gemini API's documented thinking_level vocabulary (low | high)
+      // for the gemini-3.x family, matching the full-depth reading a review
+      // judgment needs.
+      'reviewer-gemini': { model: 'gemini-3.1-pro-preview', family: 'gemini', effort: 'high', host: 'sonnet-5', host_effort: 'medium', scope: 'scoped' },
       convergence: { model: 'fable-5', fallback: 'opus-5', effort: 'high' },
       'plan-counterpart': { family: 'gpt', hosted: true, effort: 'high' },
       crystallizer: { model: 'sonnet-5', family: 'claude', effort: 'high' },

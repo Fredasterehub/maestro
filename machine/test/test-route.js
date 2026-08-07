@@ -11,12 +11,14 @@ const MISSION = path.join(__dirname, '..', 'src', 'mission.js');
 const GATE = path.join(__dirname, '..', 'src', 'gate.js');
 const JSONL = path.join(__dirname, '..', 'src', 'jsonl.js');
 const ROUTING = path.join(__dirname, '..', 'src', 'routing.js');
+const SETTINGS = path.join(__dirname, '..', 'src', 'settings.js');
 
 const { readRecords } = require(JSONL);
 const { BRIEF_TIER_VALUES } = require(path.join(__dirname, '..', 'src', 'validators.js'));
 const { reserve, reserveReview, supersede, seatFamily, CLASS_ORDER, ROUTE_KIND, SUPERSEDED_KIND } = require(ROUTE);
 const { artifactIdentity } = require(GATE);
 const routing = require(ROUTING);
+const settings = require(SETTINGS);
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-route-'));
 process.on('exit', () => fs.rmSync(tmp, { recursive: true, force: true }));
@@ -1400,6 +1402,113 @@ function reviewInput(authorRouteSeq, overrides) {
   // zero-repair rule is proven above rather than here — this walk stays on the
   // expert class where §9's repair and escalation rungs live.
   assert.deepStrictEqual(seat('executor-claude-mech'), { model: 'sonnet-5', family: 'claude', effort: 'low' });
+}
+
+// --- D9 regression: both gemini seats produce route-acceptable bundles
+// through the resolver's own output -------------------------------------------
+//
+// Before this fix, executor-gemini and reviewer-gemini declared a host pair
+// but no worker-level `effort` in the seat table, so routing.js's own bundles
+// carried `effort: null` straight into route.js's non-empty-string checks —
+// refused before the live default resolution (claude-authored standard work
+// reviewed by reviewer-gemini) could ever be recorded. Neither half of that
+// path had a test naming either gemini seat until now.
+{
+  const m = openMission();
+  const config = routingConfig;
+  const seat = (name) => config.seats[name];
+
+  // The live project's recorded lane posture (design §11.3): gpt operator-down,
+  // gemini auto — the exact state the battery's live probe ran under, and the
+  // one that puts reviewer-gemini in claude-standard's class row without a gpt
+  // rung ahead of it.
+  settings.write(root, { provider_lanes: { gpt: 'operator-down', gemini: 'auto' } });
+
+  // The live default: claude-authored standard work resolves reviewer-gemini.
+  const reviewBundle = routing.reviewFor(root, 'claude', 'standard');
+  assert.strictEqual(reviewBundle.seat, 'reviewer-gemini', 'standard claude-authored work is reviewed on reviewer-gemini');
+  assert.strictEqual(typeof reviewBundle.effort, 'string', 'reviewFor must not resolve a null worker effort for reviewer-gemini');
+  assert.notStrictEqual(reviewBundle.effort, '', 'reviewFor must not resolve an empty worker effort for reviewer-gemini');
+
+  // Feed that bundle straight into an author route's reserved_review field —
+  // the exact input D9 quotes route.js refusing.
+  const author = reserve(
+    root,
+    authorInput({
+      mission_id: m,
+      task_class: 'standard',
+      requested_seat: 'executor-claude-standard',
+      resolved_seat: 'executor-claude-standard',
+      author_family: 'claude',
+      worker_model: seat('executor-claude-standard').model,
+      worker_effort: seat('executor-claude-standard').effort,
+      host_model: null,
+      host_effort: null,
+      reserved_review: {
+        seat: reviewBundle.seat,
+        family: reviewBundle.family,
+        model: reviewBundle.model,
+        effort: reviewBundle.effort,
+        independence: reviewBundle.independence,
+      },
+      lane_state: { claude: 'auto', gpt: 'operator-down', gemini: 'auto' },
+      degraded_modes: [],
+      notices: [],
+    })
+  );
+  assert.strictEqual(author.reserved_review.seat, 'reviewer-gemini');
+  assert.strictEqual(author.reserved_review.effort, reviewBundle.effort);
+
+  // The review route naming reviewer-gemini as the reviewer, fed from the same
+  // resolver bundle — the review-side half of D9's refusal.
+  const review = reserveReview(
+    root,
+    reviewInput(author.seq, {
+      mission_id: m,
+      reviewer_seat: reviewBundle.seat,
+      reviewer_family: reviewBundle.family,
+      reviewer_model: reviewBundle.model,
+      reviewer_effort: reviewBundle.effort,
+      reviewer_host_model: reviewBundle.host_model,
+      reviewer_host_effort: reviewBundle.host_effort,
+      independence: reviewBundle.independence,
+    })
+  );
+  assert.strictEqual(review.phase, 'review');
+  assert.strictEqual(review.reviewer_seat, 'reviewer-gemini');
+
+  // The author side of the gemini lane: an author route naming executor-gemini
+  // directly, worker_model/worker_effort read straight off the seat table —
+  // D9's second quoted refusal (`validateAuthorRoute(executor-gemini,
+  // worker_effort: null)`).
+  const geminiReview = routing.reviewFor(root, 'gemini', 'standard');
+  const geminiAuthor = reserve(
+    root,
+    authorInput({
+      mission_id: m,
+      task_class: 'standard',
+      requested_seat: 'executor-gemini',
+      resolved_seat: 'executor-gemini',
+      author_family: 'gemini',
+      worker_model: seat('executor-gemini').model,
+      worker_effort: seat('executor-gemini').effort,
+      host_model: seat('executor-gemini').host,
+      host_effort: seat('executor-gemini').host_effort,
+      reserved_review: {
+        seat: geminiReview.seat,
+        family: geminiReview.family,
+        model: geminiReview.model,
+        effort: geminiReview.effort,
+        independence: geminiReview.independence,
+      },
+      lane_state: { claude: 'auto', gpt: 'operator-down', gemini: 'auto' },
+      degraded_modes: [],
+      notices: [],
+    })
+  );
+  assert.strictEqual(geminiAuthor.worker_model, 'gemini-3.1-pro-preview');
+  assert.strictEqual(typeof geminiAuthor.worker_effort, 'string');
+  assert.notStrictEqual(geminiAuthor.worker_effort, '');
 }
 
 // --- a crash between the two writes leaves an orphan, never a dangling pointer
