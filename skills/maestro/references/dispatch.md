@@ -5,11 +5,17 @@ because a worker holding a malformed contract produces malformed work — and
 per the contract, a worker that receives an invalid brief returns `blocked`
 naming the validator errors instead of guessing at intent.
 
-Flow: write the brief → `validators.js validate-brief` (brief JSON via stdin) → spawn the seat (worktree
-isolation for anything that mutates) → `roster.js register` →
-`mission.js open` / record the dispatch. For small ship tasks the liaison
-writes the brief directly; for goal-shaped work, dispatch the `planner` seat
-and it returns validated briefs plus acceptance criteria.
+Flow: write the brief → `validators.js validate-brief` (brief JSON via
+stdin) → `mission.js open` — every write below targets this mission and
+`route.js` refuses against one that isn't open → pick the author seat and
+resolve its reviewer → `route.js reserve` for the author phase, carrying the
+reserved review capacity → spawn the seat (worktree isolation for anything
+that mutates) → `roster.js register`. On author completion: compute the
+artifact identity → `route.js reserve-review`, naming that identity →
+dispatch the review. See "Dispatching through the route lifecycle" below for
+the full shape of that sequence. For small ship tasks the liaison writes the
+brief directly; for goal-shaped work, dispatch the `planner` seat and it
+returns validated briefs plus acceptance criteria.
 
 ## The eight fields
 
@@ -40,6 +46,66 @@ Anchors carry paths, not content, because the worker reads files itself in its
 own context — pasting content into a brief freezes a snapshot that goes stale
 the moment anything moves, and spends liaison context on what worker context
 is for.
+
+## Dispatching through the route lifecycle
+
+Every dispatch — ship or goal-shaped — routes through `route.js` before a
+worker ever spawns. Some of the order below is machine-enforced — the writer
+that receives the next call refuses one that arrives out of turn — and that
+enforcement is noted at the point of each claim; where nothing yet consults
+the record before it, that is noted just as plainly, because a step this
+document states and the machine does not check is only as reliable as the
+liaison following it.
+
+1. `mission.js open`, if the mission isn't already. Every step below writes
+   against this mission, and `route.js reserve` refuses one that isn't open
+   (`route.js`'s `requireOpenInState`) — the one enforced fact behind
+   route-before-spawn today; nothing yet checks that a spawn didn't happen
+   first.
+2. Pick the author seat (today: liaison judgment against the seat-routing
+   table below). A later step (Slice 6's automatic resolver) replaces only
+   this pick with a routing call; the rest of the sequence never changes.
+3. Resolve the reviewer this author will need — `routing.js review-for
+   <treeRoot> <author_family> [class] [author_model] --json` returns the
+   whole `reserved_review` bundle in one call (`seat`, `family`, `model`,
+   `effort`, `independence`, cross-family by law); the bare two-argument
+   form, with no `--json`, prints only the reviewer *seat*, for a caller
+   that just needs the name. Under degraded modes the resolved reviewer may
+   be a same-family seat labeled `independence: "degraded-path"` instead —
+   see "Seat routing" below.
+4. `route.js reserve` — writes the author-phase route record, which already
+   carries the resolved reviewer as `reserved_review`. This is the step that
+   needs the open mission from step 1.
+5. Spawn the seat.
+6. `roster.js register`, naming the author route this dispatch belongs to
+   with `route_seq` (Slice 2c's addition to `REGISTER_OPTIONAL_KEYS`; see
+   "Roster registration" below for the full call shape). Nothing here is
+   machine-enforced yet: `roster.js register` validates `route_seq` only as
+   a shape — a nonnegative integer — and consults no route record, so a
+   registration naming the wrong seq, or none at all, is accepted today,
+   not refused.
+7. On author completion: compute the artifact identity — the
+   `{source_head, source_tree, patch_digest, dirty}` object `gate.js`'s
+   `artifactIdentity` helper produces and `route.js` validates (there is no
+   separate CLI subcommand for it; the liaison calls the same helper
+   `run-gate` uses internally) → `route.js reserve-review`, naming that
+   identity, the author route it reviews, and `author_dispatch_seq` (the
+   roster dispatch record this last field names is Slice 7a's; until it
+   exists, `reserve-review` validates it only as a shape — any non-negative
+   integer, commonly `0` — never resolving it against a real record) →
+   dispatch the review. Inside a workflow, a chained review step reserves
+   this same review route itself, as its own first action (recorded
+   resolution, operator hold open) — see "Workflow transport" below; there
+   is no pre-launch review reservation.
+
+Only step 2 is temporary: Slice 6's automatic resolver replaces that one
+pick with a routing call, and nothing else in the sequence changes. One
+field inside it is still pending, for a reason distinct from `route_seq`
+(step 6's `roster.js register` accepts that key today, Slice 2c having
+added it) — `author_dispatch_seq`'s real binding in step 7 waits on a
+writer that doesn't exist at all — the roster dispatch ledger record
+Slice 7a adds. It is named at the point the call needs it, not only in a
+later paragraph.
 
 ## Writing for the seat's model
 
@@ -125,9 +191,22 @@ brief is worded:
 
 Review routing is a law, not a preference: the reviewer's model family always
 differs from the implementer's, because same-family review inherits the
-author's blind spots — correlated models miss correlated bugs. The
-close-record writer refuses `review.family == author_family` structurally, so
-routing a same-family review just fails later; route it correctly at dispatch.
+author's blind spots — correlated models miss correlated bugs. Close derives
+both families from the route records, never from caller prose, and refuses a
+review labeled `independence: "cross-family"` whose reviewer family matches
+the author's — a laundered label. A route legitimately taken through the
+degraded path is labeled `degraded-path` instead, and close accepts that
+label only when the author route's own snapshot recorded a degraded mode —
+the degraded path is authorized by what was recorded before the author ran,
+never by the review label alone. Close also refuses a review whose seat,
+family, model, effort, or independence deviates from the `reserved_review`
+capacity the author route recorded, unless the deviation carries a
+`replacement_reason` — a second way to route a reviewer wrongly at dispatch
+and only discover it at close. `independence` is the field this covers most
+often: a reservation taken cross-family whose lane is lost while the author
+runs is reviewed on the degraded path instead, and it closes only because a
+`replacement_reason` is recorded. Close can catch a dishonest or unexplained
+label, not fix a wrong one — route the reviewer correctly at dispatch.
 
 Live routing (including which seats are currently degraded) is data, not this
 table: `routing.js active <treeRoot>` (and `routing.js review-for <treeRoot>
@@ -159,13 +238,19 @@ the tree in place and write only under `.maestro/missions/<id>/artifacts/`.
 ## Roster registration
 
 Register every spawn immediately: `roster.js register <treeRoot> ...` with
-seat, task id, family, and the continuity handles (`codex_session` for Sol
+seat, task id, family, the continuity handles (`codex_session` for Sol
 seats, which do resume; `gemini_handle` for Gemini seats, which do not — it
-holds the saved dispatch prompt and hash a re-dispatch reconstructs from). The roster exists so that
-continuity never depends on liaison memory: resume-don't-respawn
-(`references/supervision.md`) and restart recovery (`references/recovery.md`)
-both look up handles in `roster.json`, and a worker that was never registered
-is a worker recovery cannot find.
+holds the saved dispatch prompt and hash a re-dispatch reconstructs from),
+and `route_seq` (Slice 2c's addition), naming the author route the entry
+belongs to directly. Register right after `route.js reserve` (see
+"Dispatching through the route lifecycle" above); nothing yet cross-checks
+the seq against a real route record, so the field names the route but does
+not yet bind to it.
+
+The roster exists so that continuity never depends on liaison memory:
+resume-don't-respawn (`references/supervision.md`) and restart recovery
+(`references/recovery.md`) both look up handles in `roster.json`, and a
+worker that was never registered is a worker recovery cannot find.
 
 ## Parallel by default
 
@@ -176,3 +261,46 @@ incompatible migration). The fleet ceiling in `settings.json` is the only
 numeric limit. While workers run, the liaison keeps working — supervision is
 event-driven, and waiting idle on a running worker is spending session
 lifetime on nothing.
+
+## Workflow transport
+
+A workflow is the preferred transport whenever a slice or a wave has two or
+more independent routed steps; a bare single spawn stays correct for a lone
+step with nothing to run beside it. `.claude-plugin/plugin.json` advertises
+delegation to "background subagents, teams, and Workflows" — this section is
+what makes the third one usable from a brief.
+
+A workflow is a transport, never a routing decision. Routing still picks the
+seat, its pinned model × effort, and the reviewer — a workflow step names
+that seat and never re-profiles it. One workflow step per routed dispatch,
+and each step's review is chained directly behind its own author, so a fast
+track never waits on a slow sibling.
+
+Author routes are reserved by the liaison before the workflow launches, one
+per author route in the wave, unchanged from the bare-spawn flow — workflow
+scripts have no filesystem access and cannot call `route.js` themselves, so
+this is stricter than the bare-spawn flow's route-before-spawn, not looser.
+Review routes are never reserved pre-launch, because `reserve-review` needs
+a real artifact identity and no author has run yet to produce one. Instead,
+a review route is reserved from the workflow's returned author artifact
+identity — by the liaison, after the workflow returns, for a review that
+isn't chained; or by the chained review step itself, as its own first
+action (each step's agent has Bash, even though the workflow script that
+launches it does not), for a review that runs inside the same workflow.
+This is the recorded resolution of a real conflict with the binding operator
+amendment's own rule for review routes under workflow transport
+(execution-plan.md: "where a chained review must run inside the same
+workflow, its route record is reserved in the same pre-launch pass and
+bound to the author route it follows") — the resolution is recorded in the
+plan correction "a chained review reserves its own route from inside its
+step," parked as a hold for the operator to confirm or overrule — not
+settled doctrine, and this is the paragraph to revisit if the operator
+rules otherwise. Under this resolution, either way the review
+route is real before the review it names ever dispatches — there is no
+pre-launch review reservation, chained or not.
+
+Gates, merges, and close stay with the liaison after the workflow returns —
+a workflow orchestrates work, it never seals it. And structured returns
+replace prose relay: workflow steps return schema-validated objects, so
+envelopes and verdicts arrive as data rather than text to parse. The
+six-field envelope and its word ceiling are unchanged.
