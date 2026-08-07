@@ -279,7 +279,9 @@ let m1Repo;
 let m1Chain;
 {
   m1Repo = fx.newWorkRepo(tmp);
-  m1Chain = fx.reserveChain(root, 'm1', fx.artifactIdentity(m1Repo));
+  const m1Identity = fx.artifactIdentity(m1Repo);
+  m1Chain = fx.reserveChain(root, 'm1', m1Identity);
+  fx.recordApprove(root, 'm1', m1Chain, m1Identity);
   const r = ok(run('gate.js', ['run-gate', '--worktree', m1Repo, root, 'm1', 'tests', '--', 'true']), 'run-gate');
   const out = JSON.parse(r.stdout);
   assert.strictEqual(out.exit_code, 0);

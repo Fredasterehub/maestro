@@ -140,6 +140,23 @@ function reserveChain(root, missionId, identity, opts = {}) {
   return { authorSeq: author.seq, reviewSeq: review.seq, author, review };
 }
 
+function recordReview(root, missionId, input) {
+  return runNode(MISSION, ['record-review', root, missionId], input);
+}
+
+// Records the approve verdict close requires, bound to the chain's review
+// route and the reviewed identity.
+function recordApprove(root, missionId, chain, identity, dispatchSeq) {
+  const r = recordReview(root, missionId, {
+    review_route_seq: chain.reviewSeq,
+    review_dispatch_seq: dispatchSeq === undefined ? chain.reviewSeq : dispatchSeq,
+    verdict: 'approve',
+    artifact_identity: identity,
+  });
+  assert.strictEqual(r.status, 0, `fixture approve must record: ${r.stderr}`);
+  return JSON.parse(r.stdout).ledger_seq;
+}
+
 function runGreenGate(root, missionId, gateId, repo) {
   const r = runNode(GATE, ['run-gate', '--worktree', repo, root, missionId, gateId, '--', 'true']);
   assert.strictEqual(r.status, 0, r.stderr);
@@ -165,14 +182,16 @@ function runClose(root, missionId, repo, input) {
   return runNode(MISSION, ['close', '--repo', repo, root, missionId], input);
 }
 
-// The one-shot: review -> gate -> land -> close, on an already-open mission.
-// opts: { dir (required scratch dir), landing: 'merge'|'squash' (default
-// 'merge'), gateId (default 'tests'), author, review } — returns every seq.
+// The one-shot: review -> recorded approve -> gate -> land -> close, on an
+// already-open mission. opts: { dir (required scratch dir), landing:
+// 'merge'|'squash' (default 'merge'), gateId (default 'tests'), author,
+// review } — returns every seq.
 function closeMissionFully(root, missionId, opts) {
   const landing = opts.landing === undefined ? 'merge' : opts.landing;
   const repo = newWorkRepo(opts.dir);
   const identity = artifactIdentity(repo);
   const chain = reserveChain(root, missionId, identity, opts);
+  recordApprove(root, missionId, chain, identity);
   const gateSeq = runGreenGate(root, missionId, opts.gateId === undefined ? 'tests' : opts.gateId, repo);
   land(repo, landing);
   const input = closeInputOf(chain, gateSeq);
@@ -187,6 +206,8 @@ module.exports = {
   authorRouteInput,
   reviewRouteInput,
   reserveChain,
+  recordReview,
+  recordApprove,
   runGreenGate,
   closeInputOf,
   runClose,

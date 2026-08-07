@@ -3,7 +3,8 @@
 // maestro machine layer — mission lifecycle CLI.
 //
 // Sole sanctioned writer of:
-//   ledger.jsonl kinds:            mission-open, envelope, consult, mission-close
+//   ledger.jsonl kinds:            mission-open, envelope, consult,
+//                                  review-outcome, mission-close
 //   missions/<id>/progress.jsonl:  genesis, checkpoint
 //   missions/<id>/brief.json, missions/<id>/envelopes/*.json
 //   state.json.missions[<id>] entries (status + next_action)
@@ -27,6 +28,13 @@
 // legality is judged under the route snapshot that authorized it: close reads
 // no present-day provider or settings state, so a provider coming back online
 // after a legal degraded review has nothing here to retroactively invalidate.
+//
+// record-review is the sole producer of the verdict close depends on: a
+// review-outcome record binding the review route, the verdict, and the exact
+// identity that was reviewed. A revise is recorded the same way as an approve
+// — a revise that vanished is how a mission would quietly close on a rejected
+// review — and close requires the latest recorded verdict for its review
+// route to be an approve against the same identity every other stage names.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -341,6 +349,99 @@ function recordConsult(treeRoot, missionId, input) {
   });
 }
 
+// --- record-review -----------------------------------------------------------
+
+const REVIEW_VERDICTS = ['approve', 'revise'];
+
+// The verdict, recorded at the moment it is given (§17) and bound to the
+// review route and the exact identity the reviewer judged. Both verdicts are
+// recorded the same way: an approve is what close later requires, and a
+// revise on the record is what stops a rejected review from quietly closing.
+function recordReview(treeRoot, missionId, input) {
+  if (!isSafeSegment(missionId)) {
+    throw new TypeError(`mission: missionId must match ${SEGMENT_RE}`);
+  }
+  if (!isPlainObject(input)) {
+    throw new TypeError('mission: record-review requires a JSON object via stdin');
+  }
+  assertExactKeys(
+    input,
+    ['review_route_seq', 'review_dispatch_seq', 'verdict', 'artifact_identity'],
+    [],
+    'review input'
+  );
+  for (const key of ['review_route_seq', 'review_dispatch_seq']) {
+    if (!Number.isSafeInteger(input[key]) || input[key] < 0) {
+      throw new TypeError(`mission: "${key}" must be a nonnegative integer naming a ledger seq`);
+    }
+  }
+  if (!REVIEW_VERDICTS.includes(input.verdict)) {
+    throw new TypeError(
+      `mission: "verdict" must be one of ${REVIEW_VERDICTS.join(', ')} (got ${JSON.stringify(input.verdict)})`
+    );
+  }
+  if (!isPlainObject(input.artifact_identity)) {
+    throw new TypeError('mission: "artifact_identity" must be the reviewed identity object');
+  }
+  assertExactKeys(input.artifact_identity, IDENTITY_FIELDS, [], 'review artifact_identity');
+
+  const statePath = statePathOf(treeRoot);
+  const ledgerPath = ledgerPathOf(treeRoot);
+
+  // Same discipline as every other writer: verdicts land only on an open
+  // mission, decided under the state lock a racing close would hold.
+  return withLock(statePath, () => {
+    const state = readJson(statePath, undefined);
+    requireOpenMission(state, statePath, missionId);
+
+    const { records, errors } = readRecords(ledgerPath);
+    if (errors.length > 0) {
+      const detail = errors.map((e) => `line ${e.line}: ${e.reason}`).join('; ');
+      throw new Error(`mission: ${ledgerPath} has malformed record(s) — refusing to trust this stream: ${detail}`);
+    }
+
+    const reviewRoute = routeOfMission(
+      records,
+      missionId,
+      input.review_route_seq,
+      'review',
+      'review route',
+      'record-review'
+    );
+    // The verdict must name the identity the review route bound: a verdict on
+    // some other artifact is a broken chain, not a recordable fact.
+    const bound = reviewRoute.artifact_identity;
+    if (!isPlainObject(bound)) {
+      throw new Error(
+        `mission: record-review refused — review route at seq ${input.review_route_seq} carries no artifact identity to verdict against`
+      );
+    }
+    const changed = IDENTITY_FIELDS.filter((field) => input.artifact_identity[field] !== bound[field]);
+    if (changed.length > 0) {
+      throw new Error(
+        `mission: record-review refused — the verdict names a different artifact than the review route bound: field(s) ${changed.join(', ')} differ`
+      );
+    }
+    checkDispatchMembership(records, missionId, input.review_dispatch_seq, 'review dispatch seq', 'record-review');
+
+    const identity = {};
+    for (const field of IDENTITY_FIELDS) identity[field] = input.artifact_identity[field];
+    const seq = appendRecord(ledgerPath, {
+      kind: 'review-outcome',
+      payload: {
+        mission_id: missionId,
+        review_route_seq: input.review_route_seq,
+        review_dispatch_seq: input.review_dispatch_seq,
+        verdict: input.verdict,
+        artifact_identity: identity,
+      },
+      correlation_id: missionId,
+    }).seq;
+
+    return { mission_id: missionId, verdict: input.verdict, review_route_seq: input.review_route_seq, ledger_seq: seq };
+  });
+}
+
 // --- close: ledger derivation ------------------------------------------------
 
 // The whole close input: sequence references and nothing else. Every enforced
@@ -519,28 +620,28 @@ function recordsAtSeq(records, seq) {
   return records.filter((r) => isPlainObject(r) && r.seq === seq);
 }
 
-function routeOfMission(records, missionId, seq, phase, label) {
+function routeOfMission(records, missionId, seq, phase, label, who = 'close') {
   const matches = recordsAtSeq(records, seq);
   if (matches.length === 0) {
-    throw new Error(`mission: close refused — no ledger record has seq ${seq} (${label})`);
+    throw new Error(`mission: ${who} refused — no ledger record has seq ${seq} (${label})`);
   }
   if (matches.length > 1) {
-    throw new Error(`mission: close refused — seq ${seq} is ambiguous (${matches.length} records carry it)`);
+    throw new Error(`mission: ${who} refused — seq ${seq} is ambiguous (${matches.length} records carry it)`);
   }
   const route = matches[0];
   if (route.kind !== 'route') {
     throw new Error(
-      `mission: close refused — ledger record at seq ${seq} has kind "${route.kind}", not "route" (${label})`
+      `mission: ${who} refused — ledger record at seq ${seq} has kind "${route.kind}", not "route" (${label})`
     );
   }
   if (route.mission_id !== missionId) {
     throw new Error(
-      `mission: close refused — ${label} at seq ${seq} belongs to mission ${JSON.stringify(route.mission_id)}, not "${missionId}"`
+      `mission: ${who} refused — ${label} at seq ${seq} belongs to mission ${JSON.stringify(route.mission_id)}, not "${missionId}"`
     );
   }
   if (route.phase !== phase) {
     throw new Error(
-      `mission: close refused — ${label} at seq ${seq} is a "${route.phase}"-phase route, not "${phase}"-phase`
+      `mission: ${who} refused — ${label} at seq ${seq} is a "${route.phase}"-phase route, not "${phase}"-phase`
     );
   }
   return route;
@@ -553,10 +654,10 @@ function routeOfMission(records, missionId, seq, phase, label) {
 // seq that names another mission's record is a provable lie and refuses the
 // close; a seq no record carries yet claims nothing either way, and a legal
 // close is never invalidated by a writer arriving later.
-function checkDispatchMembership(records, missionId, seq, label) {
+function checkDispatchMembership(records, missionId, seq, label, who = 'close') {
   const matches = recordsAtSeq(records, seq);
   if (matches.length > 1) {
-    throw new Error(`mission: close refused — seq ${seq} is ambiguous (${matches.length} records carry it)`);
+    throw new Error(`mission: ${who} refused — seq ${seq} is ambiguous (${matches.length} records carry it)`);
   }
   if (matches.length === 0) return;
   const record = matches[0];
@@ -567,7 +668,7 @@ function checkDispatchMembership(records, missionId, seq, label) {
       : null;
   if (owner !== null && owner !== missionId) {
     throw new Error(
-      `mission: close refused — ${label} ${seq} names a record belonging to mission "${owner}", not "${missionId}"`
+      `mission: ${who} refused — ${label} ${seq} names a record belonging to mission "${owner}", not "${missionId}"`
     );
   }
 }
@@ -707,6 +808,42 @@ function deriveCloseFacts(records, missionId, input) {
   checkReviewLegality(authorRoute, reviewRoute);
   const identity = reviewedIdentityOf(reviewRoute, input.review_route_seq);
 
+  // The recorded verdict (§17): the latest review-outcome record naming this
+  // review route must be an approve, for the very dispatch being credited,
+  // against the same identity every other stage names. Latest-by-seq for the
+  // same reason a superseding red gate refuses — a revise that a later record
+  // has not answered is a rejection, not a formality.
+  let outcome = null;
+  for (const record of records) {
+    if (!isPlainObject(record) || record.kind !== 'review-outcome') continue;
+    if (record.mission_id !== missionId || record.review_route_seq !== input.review_route_seq) continue;
+    if (!Number.isSafeInteger(record.seq) || record.seq < 0) continue;
+    if (outcome === null || record.seq > outcome.seq) outcome = record;
+  }
+  if (outcome === null) {
+    throw new Error(
+      `mission: close refused — no review-outcome record names review route ${input.review_route_seq}; a close needs a recorded verdict, not a narrated one`
+    );
+  }
+  if (outcome.review_dispatch_seq !== input.review_dispatch_seq) {
+    throw new Error(
+      `mission: close refused — the recorded verdict (seq ${outcome.seq}) names review dispatch ${outcome.review_dispatch_seq}, not the ${input.review_dispatch_seq} being credited`
+    );
+  }
+  if (outcome.verdict !== 'approve') {
+    throw new Error(
+      `mission: close refused — the latest recorded review verdict (seq ${outcome.seq}) is ${JSON.stringify(outcome.verdict)}, and only a recorded approve closes a mission`
+    );
+  }
+  const verdictDrift = IDENTITY_FIELDS.filter(
+    (field) => !isPlainObject(outcome.artifact_identity) || outcome.artifact_identity[field] !== identity[field]
+  );
+  if (verdictDrift.length > 0) {
+    throw new Error(
+      `mission: close refused — the recorded approve (seq ${outcome.seq}) names a different artifact than the review route bound: field(s) ${verdictDrift.join(', ')} differ`
+    );
+  }
+
   // Gate evidence: kind, mission, real exit 0, latest-by-seq for its gate_id
   // (check-honesty's law — a stale success can never paper over a later
   // failure), and the §7 identity binding.
@@ -745,7 +882,7 @@ function deriveCloseFacts(records, missionId, input) {
   }
   checkGateIdentity(gate, identity, gateSeq);
 
-  return { authorRoute, reviewRoute, gate, identity };
+  return { authorRoute, reviewRoute, outcome, gate, identity };
 }
 
 function closePayloadOf(missionId, input, facts, landing) {
@@ -763,6 +900,7 @@ function closePayloadOf(missionId, input, facts, landing) {
     author_family: facts.authorRoute.author_family,
     author_seat: facts.authorRoute.resolved_seat,
     task_class: facts.authorRoute.task_class,
+    review_outcome_seq: facts.outcome.seq,
     review: {
       seat: facts.reviewRoute.reviewer_seat,
       family: facts.reviewRoute.reviewer_family,
@@ -870,6 +1008,15 @@ commands:
       missions/<id>/envelopes/<ts>-<seat>.json, then ledger kind "envelope".
   record-consult <treeRoot> <missionId>
       stdin { consult_id, question, verdict, anchor } — ledger kind "consult".
+  record-review <treeRoot> <missionId>
+      stdin { review_route_seq, review_dispatch_seq, verdict,
+      artifact_identity } — verdict "approve" or "revise", both recorded the
+      same way (ledger kind "review-outcome"): the approve is what close
+      later requires, the revise on record is what stops a rejected review
+      from quietly closing. REFUSES a verdict whose artifact_identity differs
+      field by field from the identity the named review route bound, a seq
+      that is not this mission's review-phase route, or a review dispatch seq
+      naming another mission's record.
   close [--repo <path>] <treeRoot> <missionId>
       stdin: sequence references and nothing else —
       { ${CLOSE_KEYS.join(', ')} }
@@ -884,7 +1031,10 @@ commands:
       names another mission's record; the winning seqs are not the dispatches
       the cited chain binds; a review labeled cross-family names a reviewer
       of the author's own family; the review profile differs from the
-      capacity reserved at route time with no replacement_reason; the gate is
+      capacity reserved at route time with no replacement_reason; no
+      review-outcome record names the review route, or the latest one is a
+      revise, is for a different review dispatch, or approves a different
+      identity than the review route bound; the gate is
       not exit 0, not this mission's, not the latest run of its gate_id, or
       names a different artifact identity than the review (field by field —
       a digest is never compared with a commit sha) or reports its tree
@@ -922,6 +1072,7 @@ const COMMAND_ARITY = {
   checkpoint: 2,
   'record-envelope': 3,
   'record-consult': 2,
+  'record-review': 2,
   close: 2,
 };
 
@@ -973,6 +1124,8 @@ function main(argv) {
       result = recordEnvelope(treeRoot, rest[1], rest[2], input);
     } else if (command === 'record-consult') {
       result = recordConsult(treeRoot, rest[1], input);
+    } else if (command === 'record-review') {
+      result = recordReview(treeRoot, rest[1], input);
     } else {
       result = closeMission(treeRoot, rest[1], input, { repo: closeRepo });
     }
@@ -993,8 +1146,10 @@ module.exports = {
   checkpointMission,
   recordEnvelope,
   recordConsult,
+  recordReview,
   closeMission,
   CLOSE_KEYS,
+  REVIEW_VERDICTS,
   LANDING_BRANCHES,
   MISSION_STATUSES,
 };
