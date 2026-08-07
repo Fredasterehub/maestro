@@ -6,11 +6,10 @@
 
 ### He runs the work. You keep the decisions.
 
-A Claude Code plugin that stops your session from doing the work itself. It
-dispatches thirty-one agents — thirty workers and the butler — writes each of them a brief,
-dispatches the work into isolated worktrees, has it signed off by a rival family,
-records everything that happened, and interrupts you only when the decision is
-genuinely yours.
+A Claude Code plugin that stops your session from doing the work itself. Thirty
+workers and one butler: he sizes each job, writes its brief, sends it to an
+isolated worktree, has it signed off by a rival model family, records what
+happened, and interrupts you only when the decision is genuinely yours.
 
 <p>
 <img src="https://img.shields.io/badge/license-MIT-2A2536?style=flat-square&labelColor=0A0911" alt="MIT licensed">
@@ -21,7 +20,7 @@ genuinely yours.
 
 </div>
 
-<img src="docs/assets/art/hero-readme.jpg" alt="A session at full dispatch, drawn as a circuit board: one request arrives on a paired trace, fans out through dispatch junctions to sixteen android faces, and returns along dashed lines to Oscar, whose portrait sits in a copper ring at the left — one paired trace leaves toward your chair." width="100%">
+<img src="docs/assets/art/hero-readme.jpg" alt="A session at full dispatch, drawn as a circuit board: one request arrives on a paired trace, fans out through dispatch junctions to a field of android faces, and returns along dashed lines to Oscar, whose portrait sits in a copper ring at the left — one paired trace leaves toward your chair." width="100%">
 
 ## The premise
 
@@ -34,9 +33,6 @@ every job — arguing with the linter at midnight with six hundred lines of log 
 working memory, watching context fill until the session died mid-phrase, starting
 the same work over the next morning because nothing had been written down.
 
-Sessions died young. Work got done twice. Nothing was recorded, so nothing could
-be resumed.
-
 Then Oscar took the post.
 
 <img src="docs/assets/terminal-session.svg" alt="A terminal session: one request in, work dispatched to the workers, outcomes reported back." width="100%">
@@ -44,14 +40,16 @@ Then Oscar took the post.
 ## What he actually does
 
 **The roster.** Thirty-one agents, filled the day you install him, never
-improvised mid-mission. (Closed roster: three implementer families — five
-claude seats and four gpt seats scaled across task classes, one gemini seat
-— a reviewer ladder to match (three claude, three gpt, one gemini) plus four
-degraded-path fallback reviewers for when no cross-family reviewer is
-available, a planner, two convergence agents, and the support group of six
-— scout, researcher, context-keeper, crystallizer, handoff-recorder,
-fleet-medic. Two more names, `executor-sol` and `reviewer-sol`, are retired
-r1→r2 aliases that no longer route and are not counted above.)
+improvised mid-mission. Ten implementers across three model families, seven
+cross-family reviewers, four fallback reviewers, a planner, two convergence
+agents, and six support seats. (Two further files, `executor-sol` and
+`reviewer-sol`, are retired aliases that no longer route and are not counted.)
+
+**The size of the job picks the seat.** Every brief carries one of five classes —
+recon, mechanical, standard, expert, apex — and the class decides which model does
+the work, at what effort, and which reviewer is strong enough to judge it. The
+whole route is written down before anything spawns, so a restart reads what was
+supposed to run instead of guessing.
 
 **The record.** "Tests pass" is not a sentence. It is a stamped entry with an exit
 code. Not in the record? It didn't happen. (`.maestro/ledger.jsonl`, append-only,
@@ -59,8 +57,15 @@ written only by the machine layer — never by a model in a hurry.)
 
 **No worker reviews its own work.** A worker builds in an isolated worktree, and a
 reviewer from a *different* model family signs the work before it lands. The
-script that closes a mission refuses to record a same-family review. (Worktree
-isolation plus mandatory cross-family review. That rule cannot be lowered.)
+script that closes a mission refuses to record a same-family review as
+independent. When no rival family is reachable, review drops to a fresh Claude
+reviewer that never sees the author's transcript — recorded as `degraded-path`,
+counted as such, never as cross-family.
+
+**Only the reviewed work lands.** Close proves it against git: the landing branch
+has to carry the exact reviewed commit, or a squash with the reviewed patch's
+identity, with nothing else riding along under the same signature. A landing
+repository with uncommitted changes refuses to close at all.
 
 **The record survives the night.** Send every worker home mid-mission. At dawn new
 workers read the record and resume at the exact step where work stopped. (Per-step
@@ -83,14 +88,13 @@ one answer, or bring you both positions verbatim.
 
 | Role | Agent | What it does |
 |---|---|---|
-| The gpt implementer ladder | `executor-luna` · `executor-terra` · `executor-sol-expert` · `executor-sol-apex` | GPT-5.6 (Luna/Terra/Sol) via Codex CLI, one rung per task class — mechanical, standard, expert, apex. (`executor-sol` is now an alias of `executor-sol-expert` and does not route.) |
-| The specialist | `executor-claude` | Opus 5. Interface and creative work, and the same-family substitute when the gpt lane is down. |
-| The claude implementer ladder | `executor-claude-mech` · `executor-claude-standard` · `executor-fable-low` · `executor-fable` | Sonnet 5 (mechanical, standard) and Fable 5 (expert escalation, apex), class-scaled alongside the specialist. |
+| The claude implementer ladder | `executor-claude-mech` · `executor-claude-standard` · `executor-claude` · `executor-fable-low` · `executor-fable` | Sonnet 5 for mechanical and standard, Opus 5 for expert and for interface and creative work, Fable 5 for expert escalation and apex. |
+| The gpt implementer ladder | `executor-luna` · `executor-terra` · `executor-sol-expert` · `executor-sol-apex` | GPT-5.6 (Luna/Terra/Sol) via Codex CLI, one rung per class. Ships dormant; the lane opens only once it is verified and switched on. (`executor-sol` is a retired alias of `executor-sol-expert`.) |
 | The wide-context worker | `executor-gemini` | Gemini 3.1 Pro. Large context, and the rotation agent. |
-| The reviewers, for gpt/gemini work | `reviewer-claude` · `reviewer-claude-expert` · `reviewer-claude-apex` | Never from the family that wrote the code; class-scaled recon/standard through expert/apex. |
-| The reviewers, for claude/gemini work | `reviewer-terra` · `reviewer-sol-expert-rev` · `reviewer-sol-apex-rev` | GPT-5.6 via Codex CLI, class-scaled. (`reviewer-sol` is now an alias of `reviewer-sol-expert-rev` and does not route.) |
-| The reviewer, for claude/gpt work | `reviewer-gemini` | Gemini 3.1 Pro. All claude classes; recon/mechanical/standard gpt classes only — gpt expert/apex route to the claude reviewers instead. |
-| The degraded-path reviewers | `reviewer-degraded-opus` · `reviewer-degraded-sonnet` · `reviewer-degraded-opus-apex` · `reviewer-degraded-fable-apex` | Same-family, fresh-context fallback used only when no cross-family reviewer is effectively available — always labeled, never counted as cross-family. |
+| The reviewers, for gpt and gemini work | `reviewer-claude` · `reviewer-claude-expert` · `reviewer-claude-apex` | Sonnet 5, Opus 5, Fable 5 — one rung per class. Since Claude Code is the runtime, this lane is always reachable. |
+| The reviewers, for claude and gemini work | `reviewer-terra` · `reviewer-sol-expert-rev` · `reviewer-sol-apex-rev` | GPT-5.6 via Codex CLI, one rung per class, dormant with the rest of the lane. (`reviewer-sol` is a retired alias of `reviewer-sol-expert-rev`.) |
+| The reviewer, for claude and gpt work | `reviewer-gemini` | Gemini 3.1 Pro. Standard-class work and below, whoever wrote it; expert and apex never route here. |
+| The degraded-path reviewers | `reviewer-degraded-opus` · `reviewer-degraded-sonnet` · `reviewer-degraded-opus-apex` · `reviewer-degraded-fable-apex` | Fresh-context Claude reviewers, on a different Claude model than the author wherever one is free. Used only when no rival family is reachable, always labeled, never counted as cross-family. |
 | The planner | `planner` | Turns "fix everything" into numbered briefs with acceptance criteria. |
 | The convergence pair | `convergence` · `plan-counterpart` | Two uninvolved families, one closed room. Two passes. One answer. |
 | The context-keeper | `context-keeper` | Holds what you meant, not just what you said. |
@@ -141,7 +145,7 @@ it arguing about who is in charge.
 | `/maestro:status` | Where everything stands: needs you, just landed, still moving, waiting in line. |
 | `/maestro:handoff` | Before you close the session — everything worth keeping, moved somewhere durable. |
 | `/maestro:doctor` | Install and state health. Reads everything, touches nothing. |
-| `/maestro:audit` | The record read back to you: revise rates, ladder engagements, workers lost in service. |
+| `/maestro:audit` | The record read back to you: revise rates, first-pass rate by class, degraded closes, workers lost in service. |
 
 ## Provenance
 
@@ -152,10 +156,9 @@ notifications. The worker contracts and roster design honour kiln's protocol wor
 the report envelope, the dispatch brief, the verdict and stop vocabularies, the
 convergence passes. No tmux, no watchers, no external processes.
 
-Built with Claude Code and hardened across three evaluation iterations;
-cross-family review was verified live rather than asserted. What is here is what
-shipped — a fleet-of-projects registry, detached workers, push notifications and
-milestone machinery are all deliberately outside v1.
+Built with Claude Code. What is here is what shipped — a fleet-of-projects
+registry, detached workers, push notifications and milestone machinery are all
+deliberately outside v1.
 
 <div align="center">
 <br>

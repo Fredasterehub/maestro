@@ -4,10 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>maestro — He runs the work. You keep the decisions.</title>
-<meta name="description" content="A butler for your session. maestro is a Claude Code plugin: it dispatches sixteen agents, keeps the record on disk, and taps your shoulder only when the decision is genuinely yours.">
+<meta name="description" content="A butler for your session. maestro is a Claude Code plugin: it dispatches thirty workers, keeps the record on disk, and taps your shoulder only when the decision is genuinely yours.">
 <meta name="color-scheme" content="dark">
 <meta property="og:title" content="maestro — He runs the work. You keep the decisions.">
-<meta property="og:description" content="A butler for your session. maestro is a Claude Code plugin: it dispatches sixteen agents, keeps the record on disk, and taps your shoulder only when the decision is genuinely yours.">
+<meta property="og:description" content="A butler for your session. maestro is a Claude Code plugin: it dispatches thirty workers, keeps the record on disk, and taps your shoulder only when the decision is genuinely yours.">
 <meta property="og:image" content="https://fredasterehub.github.io/maestro/assets/art/og-social.jpg">
 <meta property="og:type" content="website">
 <link rel="icon" href="./assets/art/favicon-64.png" sizes="64x64">
@@ -56,14 +56,14 @@
         <span class="holder-name">assets/art/hero.jpg</span>
         <span class="holder-note">the plate has not arrived</span>
       </div>
-      <img src="./assets/art/hero.jpg" alt="A session at full dispatch, drawn as a circuit board: one request arrives on a paired trace, fans out through dispatch junctions to sixteen android faces, and returns along dashed lines to Oscar, whose portrait sits in a copper ring at the left — one paired trace leaves toward your chair." fetchpriority="high" decoding="async">
+      <img src="./assets/art/hero.jpg" alt="A session at full dispatch, drawn as a circuit board: one request arrives on a paired trace, fans out through dispatch junctions to a field of android faces, and returns along dashed lines to Oscar, whose portrait sits in a copper ring at the left — one paired trace leaves toward your chair." fetchpriority="high" decoding="async">
     </div>
   </figure>
 
   <div class="hero-text">
     <h1 class="wordmark">Maestro</h1>
     <p class="tagline">He runs the work. You keep the decisions.</p>
-    <p class="subhead">A butler for your session — it dispatches sixteen agents, keeps the record on disk, and taps your shoulder only when the decision is genuinely yours.</p>
+    <p class="subhead">A butler for your session — he sizes each job, dispatches it to one of thirty workers, keeps the record on disk, and taps your shoulder only when the decision is genuinely yours.</p>
     <p class="cta">
       <a class="btn btn-primary" href="#install">Install</a>
       <a class="btn btn-ghost" href="https://github.com/Fredasterehub/maestro">GitHub</a>
@@ -77,8 +77,9 @@
 <section class="band" id="household">
   <div class="band-head">
     <p class="sec-no"><span>01</span> The Roster</p>
-    <h2 class="sec-title">Sixteen workers. None of them you.</h2>
+    <h2 class="sec-title">Thirty workers. None of them you.</h2>
     <p class="sec-lede">The one you talk to never touches the code. That is the whole trick — one mind keeps the shape, and no worker has to hold anybody else&rsquo;s brief in its head. The roster ships fixed: no one joins mid-run, and the one you actually talk to is forbidden from implementing. There is a law against it.</p>
+    <p class="sec-lede">Every brief carries one of five classes — recon, mechanical, standard, expert, apex. The class decides which model does the work, at what effort, and which reviewer is strong enough to judge the result.</p>
   </div>
 
   <table class="roster">
@@ -87,10 +88,13 @@
       <tr><th scope="col">Role</th><th scope="col">Agent</th><th scope="col">What it does</th></tr>
     </thead>
     <tbody>
-      <tr><th scope="row">The default implementer</th><td class="seat">executor-sol</td><td>GPT-5.6-Sol via Codex CLI. Takes most of the implementation work.</td></tr>
-      <tr><th scope="row">The specialist</th><td class="seat">executor-claude</td><td>Opus 5. Called in for interface and creative work.</td></tr>
+      <tr><th scope="row">The claude implementers</th><td class="seat">executor-claude-mech<br>executor-claude-standard<br>executor-claude<br>executor-fable-low<br>executor-fable</td><td>Sonnet 5 through standard, Opus 5 for expert work and for anything with an interface, Fable 5 for escalation and apex.</td></tr>
+      <tr><th scope="row">The gpt implementers</th><td class="seat">executor-luna<br>executor-terra<br>executor-sol-expert<br>executor-sol-apex</td><td>GPT-5.6 via Codex CLI, one rung per class. Ships dormant; the lane opens only once it is verified and switched on.</td></tr>
       <tr><th scope="row">The wide-context worker</th><td class="seat">executor-gemini</td><td>Gemini 3.1 Pro. Large context, and the rotation agent.</td></tr>
-      <tr><th scope="row">The reviewers</th><td class="seat">reviewer-claude<br>reviewer-sol<br>reviewer-gemini</td><td>Never from the family that wrote the code. It is a law, not a setting.</td></tr>
+      <tr><th scope="row">The reviewers, for gpt and gemini work</th><td class="seat">reviewer-claude<br>reviewer-claude-expert<br>reviewer-claude-apex</td><td>Sonnet 5, Opus 5, Fable 5 — one rung per class, never below the class being judged. Claude Code is the runtime, so this lane is always reachable.</td></tr>
+      <tr><th scope="row">The reviewers, for claude and gemini work</th><td class="seat">reviewer-terra<br>reviewer-sol-expert-rev<br>reviewer-sol-apex-rev</td><td>GPT-5.6 via Codex CLI, one rung per class, dormant with the rest of that lane.</td></tr>
+      <tr><th scope="row">The reviewer, for claude and gpt work</th><td class="seat">reviewer-gemini</td><td>Gemini 3.1 Pro. Standard work and below, whoever wrote it; expert and apex never route here.</td></tr>
+      <tr><th scope="row">The fallback reviewers</th><td class="seat">reviewer-degraded-opus<br>reviewer-degraded-sonnet<br>reviewer-degraded-opus-apex<br>reviewer-degraded-fable-apex</td><td>For when no rival family is reachable at all: a fresh Claude reviewer that never sees the author&rsquo;s transcript. Always labeled, never counted as cross-family.</td></tr>
       <tr><th scope="row">The planner</th><td class="seat">planner</td><td>Turns &ldquo;fix everything&rdquo; into numbered briefs with acceptance criteria.</td></tr>
       <tr><th scope="row">The convergence pair</th><td class="seat">convergence<br>plan-counterpart</td><td>When two workers disagree, two uninvolved families take independent positions — two passes, no more — and come out with one answer, or bring you both.</td></tr>
       <tr><th scope="row">The context-keeper</th><td class="seat">context-keeper</td><td>Remembers what you meant, not just what you said. Answers the workers&rsquo; questions so they don&rsquo;t reach you.</td></tr>
@@ -132,12 +136,13 @@
       <div class="ledger-bar"><span>.maestro/ledger.jsonl</span><span class="ledger-tag">append-only</span></div>
       <div class="ledger-body">
 <pre><code><span class="ln">01</span> {<span class="k">"seq"</span>:41,<span class="k">"kind"</span>:<span class="v-open">"mission-open"</span>,<span class="k">"payload"</span>:{<span class="k">"mission_id"</span>:<span class="v">"m-014"</span>,<span class="k">"title"</span>:<span class="v">"rate-limit /export"</span>}}
-<span class="ln">02</span> {<span class="k">"seq"</span>:42,<span class="k">"kind"</span>:<span class="v">"gate"</span>,<span class="k">"payload"</span>:{<span class="k">"cmd"</span>:<span class="v">"npm test"</span>,<span class="k">"exit_code"</span>:<span class="bad">1</span>}}
-<span class="ln">03</span> {<span class="k">"seq"</span>:43,<span class="k">"kind"</span>:<span class="v-warn">"revise-verdict"</span>,<span class="k">"payload"</span>:{<span class="k">"seat"</span>:<span class="v">"reviewer-gemini"</span>,<span class="k">"detail"</span>:<span class="v">"round 1"</span>}}
-<span class="ln">04</span> {<span class="k">"seq"</span>:44,<span class="k">"kind"</span>:<span class="v">"gate"</span>,<span class="k">"payload"</span>:{<span class="k">"cmd"</span>:<span class="v">"npm test"</span>,<span class="k">"exit_code"</span>:<span class="ok">0</span>}}
-<span class="ln">05</span> {<span class="k">"seq"</span>:45,<span class="k">"kind"</span>:<span class="v">"stop"</span>,<span class="k">"payload"</span>:{<span class="k">"stop_state"</span>:<span class="v-ok">"DONE"</span>,<span class="k">"reporter"</span>:<span class="v">"maestro"</span>}}</code></pre>
+<span class="ln">02</span> {<span class="k">"seq"</span>:42,<span class="k">"kind"</span>:<span class="v">"route"</span>,<span class="k">"payload"</span>:{<span class="k">"phase"</span>:<span class="v">"author"</span>,<span class="k">"task_class"</span>:<span class="v">"standard"</span>,<span class="k">"resolved_seat"</span>:<span class="v">"executor-claude-standard"</span>,<span class="k">"reserved_review"</span>:{<span class="k">"seat"</span>:<span class="v">"reviewer-gemini"</span>}}}
+<span class="ln">03</span> {<span class="k">"seq"</span>:43,<span class="k">"kind"</span>:<span class="v">"gate"</span>,<span class="k">"payload"</span>:{<span class="k">"cmd"</span>:<span class="v">"npm test"</span>,<span class="k">"exit_code"</span>:<span class="bad">1</span>}}
+<span class="ln">04</span> {<span class="k">"seq"</span>:44,<span class="k">"kind"</span>:<span class="v-warn">"revise-verdict"</span>,<span class="k">"payload"</span>:{<span class="k">"seat"</span>:<span class="v">"reviewer-gemini"</span>,<span class="k">"detail"</span>:<span class="v">"round 1"</span>}}
+<span class="ln">05</span> {<span class="k">"seq"</span>:45,<span class="k">"kind"</span>:<span class="v">"gate"</span>,<span class="k">"payload"</span>:{<span class="k">"cmd"</span>:<span class="v">"npm test"</span>,<span class="k">"exit_code"</span>:<span class="ok">0</span>}}
+<span class="ln">06</span> {<span class="k">"seq"</span>:46,<span class="k">"kind"</span>:<span class="v">"stop"</span>,<span class="k">"payload"</span>:{<span class="k">"stop_state"</span>:<span class="v-ok">"DONE"</span>,<span class="k">"reporter"</span>:<span class="v">"maestro"</span>}}</code></pre>
       </div>
-      <p class="ledger-foot">Five lines. The whole morning. Line 02 is in there on purpose — the record keeps failures at the same volume as successes. Every line also carries a stamped <span class="mono">ts</span>, <span class="mono">correlation_id</span> and <span class="mono">schema_version</span>, trimmed here for width.</p>
+      <p class="ledger-foot">Six lines. The whole morning. Line 02 was written before the worker existed — who would do the job and who would judge it, decided and recorded first. Line 03 is in there on purpose: the record keeps failures at the same volume as successes. Every line also carries a stamped <span class="mono">ts</span>, <span class="mono">correlation_id</span> and <span class="mono">schema_version</span>, trimmed here for width.</p>
     </div>
 
     <aside class="notes">
@@ -162,7 +167,7 @@
 
   <div class="split split--portrait">
     <div class="prose">
-      <p>Send every worker home at midnight. Close the laptop mid-sentence, run out of context, kill the session in a temper — it makes no difference. At dawn new workers read the record, reconcile the roster against what is actually still running, and resume at the exact step where work stopped. Nothing is rebuilt twice. Restart is reconciliation, not re-planning.</p>
+      <p>Send every worker home at midnight. Close the laptop mid-sentence, run out of context, kill the session in a temper — it makes no difference. At dawn new workers read the record, reconcile the roster against what is actually still running, and resume at the exact step where work stopped. Restart is reconciliation, not re-planning.</p>
       <div class="checkpoint">
         <p class="checkpoint-title">Why it can do that</p>
         <p>Every executor commits after each coherent step in its own worktree and writes one line to <code>progress.jsonl</code>:</p>
@@ -193,7 +198,8 @@
   <div class="band-head">
     <p class="sec-no"><span>04</span> Review</p>
     <h2 class="sec-title">No worker reviews its own work.</h2>
-    <p class="sec-lede">Whoever wrote it does not get to approve it. The reviewer always comes from a different model family than the author — and the script that closes a mission structurally refuses to write the record when the two families match. This rule cannot be lowered in settings. It is not a preference.</p>
+    <p class="sec-lede">Whoever wrote it does not get to approve it. The reviewer comes from a different model family than the author, and the script that closes a mission derives both families from the routing config rather than believing what the record claims about itself. A same-family review reported as independent does not close. The floor is locked in settings; it cannot be lowered.</p>
+    <p class="sec-lede">When no rival family is reachable at all, work is not held hostage to it: review drops to a fresh Claude reviewer with no access to the author&rsquo;s transcript, usually on a different Claude model. That is a lower floor and it is named as one — recorded as <span class="mono">degraded-path</span>, counted separately, never called cross-family.</p>
   </div>
 
   <ul class="crests">
@@ -217,7 +223,7 @@
         </g>
       </svg>
       <p class="crest-name">gpt</p>
-      <p class="crest-note">default implementer</p>
+      <p class="crest-note">implements, reviews — ships dormant</p>
       <p class="crest-rev">reviewed by <b>claude</b> · <b>gemini</b></p>
     </li>
     <li class="crest crest--gemini">
@@ -237,8 +243,9 @@
     <h3>And when the roster disagrees</h3>
     <ol class="rungs">
       <li><span class="rung-n">1</span> The reviewer says <em>revise</em>. The same worker resumes — same session, same memory. Twice at most.</li>
-      <li><span class="rung-n">2</span> Still stuck: two families with no stake in the dispute take independent positions, then reconcile. Two passes, hard cap.</li>
-      <li><span class="rung-n">3</span> Small disagreements park in the drawer with their evidence. Only a foundational one — S1 — reaches you, with both positions verbatim.</li>
+      <li><span class="rung-n">2</span> Still failing on quality: the job moves up one rung to a stronger model, once per mission and never twice. A CLI that fell over is not a quality failure — that reroutes at the same rung and costs nothing.</li>
+      <li><span class="rung-n">3</span> Still stuck: two families with no stake in the dispute take independent positions, then reconcile. Two passes, hard cap.</li>
+      <li><span class="rung-n">4</span> Small disagreements park in the drawer with their evidence. Only a foundational one — S1 — reaches you, with both positions verbatim.</li>
     </ol>
     <p class="ladder-foot">Ambiguity about what <em>you</em> meant skips the ladder entirely and comes straight to your chair, as one question.</p>
   </div>
@@ -271,7 +278,7 @@ claude plugin install maestro@maestro</code>
         <li><code>/maestro:status</code><span>needs-you · done · self-progressing · queued</span></li>
         <li><code>/maestro:handoff</code><span>sweep session knowledge somewhere durable</span></li>
         <li><code>/maestro:doctor</code><span>install and state health</span></li>
-        <li><code>/maestro:audit</code><span>process health: revise rates, ladder use, worker deaths</span></li>
+        <li><code>/maestro:audit</code><span>process health: revise rates, first-pass rate by class, degraded closes, worker deaths</span></li>
       </ul>
     </div>
 
@@ -296,7 +303,8 @@ claude plugin install maestro@maestro</code>
   <div class="band-head">
     <p class="sec-no"><span>06</span> The Trees</p>
     <h2 class="sec-title">Every job gets its own worktree.</h2>
-    <p class="sec-lede">No work happens in the checkout you are sitting in. Each job is dispatched into an isolated worktree and nothing lands until a reviewer from another family signs for it. The second diagram is the one that decides whether you are disturbed at all.</p>
+    <p class="sec-lede">No work happens in the checkout you are sitting in. Each job is dispatched into an isolated worktree and nothing lands until a reviewer from another family signs for it.</p>
+    <p class="sec-lede">The close then proves the landing instead of trusting it. Your branch has to carry the exact commit that was reviewed, or a squash with that commit&rsquo;s patch identity — nothing else may ride in under the same signature, and a repository with uncommitted changes does not close at all. The second diagram is the one that decides whether you are disturbed at all.</p>
   </div>
 
   <div class="trees">
