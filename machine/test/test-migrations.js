@@ -112,6 +112,15 @@ function revision1Tree(name, dateStr) {
     /not a revision-4 shape/,
     'migrateGptLadder must refuse a revision-3 source instead of stamping revision 5 onto it'
   );
+  // Once more at the top of the chain: the r5->r6 tiers block names the gpt
+  // author rungs r4->r5 seats, so a revision-4 source (the Claude ladder
+  // applied, the GPT one not) must be refused rather than stamped revision 6
+  // with a ladder naming seats the table does not carry.
+  assert.throws(
+    () => MIGRATIONS[4](MIGRATIONS[2](MIGRATIONS[1](MIGRATIONS[0](buildRevision1Config('2026-08-01'))))),
+    /not a revision-5 shape/,
+    'migrateTiersBlock must refuse a revision-4 source instead of stamping revision 6 onto it'
+  );
 }
 
 // --- init writes the current revision directly, never revision 1 -----------
