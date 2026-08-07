@@ -1591,12 +1591,16 @@ commands:
       must carry all three supersession keys — the standing record's seq, a
       single-line reason, and an evidence_seq naming a GATE record of this
       mission recorded after the verdict being answered — because a verdict is
-      an assertion, not a re-executed command, and a recorded verdict is
-      answered only by recorded contradictory repository evidence, never
-      silently replaced (a first verdict must carry none of the three).
-      A verdict is not its own refutation: an evidence_seq naming a
-      review-outcome, the mission-open record, or another mission's record is
-      refused. REFUSES a verdict whose artifact_identity
+      an assertion, not a re-executed command (a first verdict must carry none
+      of the three). What that buys is worth stating exactly: on work that did
+      NOT change, no gate can transition, so the record named is a
+      re-observation of the repository recorded after the finding, plus a
+      stated reason — not a contradiction of the finding. The rule enforces
+      that overturning a verdict costs a fresh gate run and a reason on the
+      record, never a silent replacement; judging whether the reason is good is
+      a human's job, not this CLI's. A verdict is not its own refutation: an
+      evidence_seq naming a review-outcome, the mission-open record, or another
+      mission's record is refused. REFUSES a verdict whose artifact_identity
       differs field by field from the identity the named review route bound,
       a seq that is not this mission's review-phase route, a review dispatch
       seq naming another mission's record, or a supersession naming anything
@@ -1621,13 +1625,17 @@ commands:
       model/effort ordering exists yet to rank the replacement); no
       review-outcome record names the review route, the standing one is a
       revise, a replacing verdict failed to answer the one before it with a
-      reason and a later gate record of this mission, the verdict is for a
+      reason and a later gate record of its own mission, the verdict is for a
       different review dispatch, or it approves a different identity than the
-      review route bound; ANY review route of this mission carries a standing
-      revise against the identity being closed (a finding is answered on its
-      own route, or by superseding that route with evidence held to the same
-      standard — never by reserving a second route on the byte-identical
-      artifact and approving there); the gate is
+      review route bound; ANY review route IN THIS LEDGER — this mission's or
+      another mission's — carries a standing revise against the artifact being
+      closed, matched on content (source_tree and patch_digest, so an empty
+      commit is a relabel and not a second round). Such a finding is answered
+      in the mission that recorded it: on its own route, or by superseding that
+      route with evidence held to the same standard — never by reserving a
+      second route, and never by opening a second mission, on the
+      byte-identical artifact and approving there. A foreign finding that WAS
+      answered any of those ways does not block. Also refuses when: the gate is
       not exit 0, not this mission's, not the latest run of its gate_id,
       older than the standing approve (the final gate runs on the approved
       artifact), omits its identity fields in a stream whose gate records
