@@ -14,6 +14,7 @@ const JSONL = path.join(__dirname, '..', 'src', 'jsonl.js');
 const { readRecords } = require(JSONL);
 const { BRIEF_TIER_VALUES } = require(path.join(__dirname, '..', 'src', 'validators.js'));
 const { reserve, reserveReview, supersede, CLASS_ORDER, ROUTE_KIND, SUPERSEDED_KIND } = require(ROUTE);
+const { artifactIdentity } = require(GATE);
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-route-'));
 process.on('exit', () => fs.rmSync(tmp, { recursive: true, force: true }));
@@ -320,6 +321,37 @@ function reviewInput(authorRouteSeq, overrides) {
   assert.strictEqual(rec.replacement_reason, null, 'the reserved reviewer was honoured');
   assert.strictEqual(rec.predecessor, null);
   assert.ok(rec.seq > author.seq, 'the review route is written after the author route');
+}
+
+// --- review route: embeds a really-computed identity, field for field -------
+// The reviewer is told what it will see by the same helper the gate uses, so
+// "what was reviewed" and "what was gated" are one object, not two narratives.
+{
+  const repo = path.join(tmp, 'worktree');
+  fs.mkdirSync(repo);
+  const git = (...args) => {
+    const r = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8' });
+    assert.strictEqual(r.status, 0, `git ${args.join(' ')}: ${r.stderr}`);
+  };
+  git('init', '-q', '-b', 'main');
+  git('config', 'user.email', 'test@maestro.invalid');
+  git('config', 'user.name', 'maestro test');
+  fs.writeFileSync(path.join(repo, 'a.txt'), 'one\n');
+  git('add', '-A');
+  git('commit', '-q', '-m', 'base');
+  git('checkout', '-q', '-b', 'work');
+  fs.writeFileSync(path.join(repo, 'a.txt'), 'one\ntwo\n');
+  git('add', '-A');
+  git('commit', '-q', '-m', 'work');
+
+  const identity = artifactIdentity(repo);
+  const m = openMission();
+  const author = reserve(root, authorInput({ mission_id: m }));
+  const rec = reserveReview(root, reviewInput(author.seq, { mission_id: m, artifact_identity: identity }));
+
+  assert.deepStrictEqual(rec.artifact_identity, identity, 'the route names exactly the computed identity');
+  const onDisk = recordsOf(m, ROUTE_KIND).find((r) => r.phase === 'review');
+  assert.deepStrictEqual(onDisk.artifact_identity, identity, 'and it survives the ledger unchanged');
 }
 
 // --- review route: a lost reserved reviewer must say so ----------------------

@@ -9,17 +9,45 @@ const { spawnSync } = require('node:child_process');
 const GATE = path.join(__dirname, '..', 'src', 'gate.js');
 const MISSION = path.join(__dirname, '..', 'src', 'mission.js');
 const { readRecords } = require(path.join(__dirname, '..', 'src', 'jsonl.js'));
+const { artifactIdentity } = require(GATE);
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-gate-'));
 process.on('exit', () => fs.rmSync(tmp, { recursive: true, force: true }));
 
 const root = path.join(tmp, '.maestro');
 
-function run(script, args, stdin) {
+// Every run happens in tmp, which is no git worktree, so these tests never
+// depend on the ambient repository; the identity blocks below name a real one.
+function run(script, args, stdin, cwd) {
   return spawnSync(process.execPath, [script, ...args], {
     input: stdin === undefined ? '' : JSON.stringify(stdin),
     encoding: 'utf8',
+    cwd: cwd === undefined ? tmp : cwd,
   });
+}
+
+function git(repo, ...args) {
+  const r = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8' });
+  assert.strictEqual(r.status, 0, `git ${args.join(' ')}: ${r.stderr}`);
+  return r.stdout.trim();
+}
+
+let repoCounter = 0;
+function newRepo() {
+  repoCounter += 1;
+  const repo = path.join(tmp, `worktree${repoCounter}`);
+  fs.mkdirSync(repo);
+  git(repo, 'init', '-q', '-b', 'main');
+  git(repo, 'config', 'user.email', 'test@maestro.invalid');
+  git(repo, 'config', 'user.name', 'maestro test');
+  fs.writeFileSync(path.join(repo, 'a.txt'), 'one\n');
+  git(repo, 'add', '-A');
+  git(repo, 'commit', '-q', '-m', 'base');
+  git(repo, 'checkout', '-q', '-b', 'work');
+  fs.writeFileSync(path.join(repo, 'a.txt'), 'one\ntwo\n');
+  git(repo, 'add', '-A');
+  git(repo, 'commit', '-q', '-m', 'work');
+  return repo;
 }
 
 const BRIEF = {
@@ -71,6 +99,83 @@ function ledgerOf() {
   assert.strictEqual(out.log, path.join(root, 'missions', 'm1', 'artifacts', 'gate-tests.log'));
   assert.match(log, /exit_code: 0/);
   assert.match(log, /hello\nworld/);
+}
+
+// --- run-gate: outside a git worktree, the missing identity is recorded ------
+{
+  const { records } = ledgerOf();
+  const rec = records[records.length - 1];
+  assert.strictEqual(rec.artifact_identity, null, 'no git context yields no identity');
+  assert.strictEqual(rec.identity_check.verified, null, 'nothing was verified, and it does not claim to be');
+  assert.match(rec.identity_check.error, /not a git worktree/);
+  assert.deepStrictEqual(rec.identity_check.changed, null);
+}
+
+// --- run-gate: records the identity it actually tested -----------------------
+{
+  const repo = newRepo();
+  const expected = artifactIdentity(repo);
+
+  const r = run(GATE, ['run-gate', '--worktree', repo, root, 'm1', 'identity', '--', 'sh', '-c', 'cat a.txt'], undefined);
+  assert.strictEqual(r.status, 0, r.stderr);
+  const out = JSON.parse(r.stdout);
+  assert.strictEqual(out.exit_code, 0);
+  assert.deepStrictEqual(out.artifact_identity, expected, 'the gate names the identity of the tree it ran in');
+
+  const rec = ledgerOf().records[ledgerOf().records.length - 1];
+  assert.deepStrictEqual(rec.artifact_identity, expected, 'the record carries it too');
+  assert.strictEqual(rec.identity_check.verified, true, 'the tree was unchanged across the gate');
+  assert.deepStrictEqual(rec.identity_check.changed, []);
+  assert.strictEqual(rec.identity_check.error, null);
+
+  const log = fs.readFileSync(out.log, 'utf8');
+  assert.match(log, new RegExp(`source_head: ${expected.source_head}`));
+  assert.match(log, /one\ntwo/, 'the command really ran in the worktree');
+
+  // and the pass is honest evidence
+  assert.strictEqual(run(GATE, ['check-honesty', root, 'm1', 'identity']).status, 0);
+}
+
+// --- run-gate: a gate that mutates the tree it tested is a recorded defect ---
+{
+  const repo = newRepo();
+  const before = artifactIdentity(repo);
+
+  const r = run(GATE, [
+    'run-gate', '--worktree', repo, root, 'm1', 'mutating', '--',
+    'sh', '-c', 'echo three >> a.txt',
+  ]);
+  assert.strictEqual(r.status, 0, 'recording the defect is itself a success');
+  const out = JSON.parse(r.stdout);
+  assert.strictEqual(out.exit_code, 0, 'the command really did exit 0 — that is recorded honestly');
+
+  const rec = ledgerOf().records[ledgerOf().records.length - 1];
+  assert.deepStrictEqual(rec.artifact_identity, before, 'the identity recorded is the one that was tested');
+  assert.strictEqual(rec.identity_check.verified, false);
+  assert.deepStrictEqual(
+    rec.identity_check.changed,
+    [{ field: 'dirty', before: false, after: true }],
+    'the mutation is named field by field'
+  );
+  assert.match(fs.readFileSync(out.log, 'utf8'), /identity_mutation: .*dirty/);
+
+  // A pass produced by a gate that changed the tree under it is not evidence.
+  const honesty = run(GATE, ['check-honesty', root, 'm1', 'mutating']);
+  assert.strictEqual(honesty.status, 1, 'a tree-mutating gate cannot back a pass');
+  const verdict = JSON.parse(honesty.stdout);
+  assert.strictEqual(verdict.ok, false);
+  assert.match(verdict.reason, /mutated the tree it tested.*dirty/);
+
+  assert.strictEqual(artifactIdentity(repo).dirty, true, 'the mutation is left in place, not tidied away');
+}
+
+// --- run-gate: --worktree must name a real git worktree ----------------------
+{
+  const before = ledgerOf().records.length;
+  const r = run(GATE, ['run-gate', '--worktree', path.join(tmp, 'nowhere'), root, 'm1', 'ghosttree', '--', 'true']);
+  assert.strictEqual(r.status, 1, 'an explicitly named worktree that does not exist is a refusal');
+  assert.match(r.stderr, /no such worktree/);
+  assert.strictEqual(ledgerOf().records.length, before, 'refused gate records nothing');
 }
 
 // --- run-gate: only the last 20 output lines are kept ------------------------
