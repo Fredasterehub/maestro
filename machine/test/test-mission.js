@@ -61,6 +61,23 @@ function appendRaw(kind, missionId, payload) {
   return appendRecord(path.join(root, 'ledger.jsonl'), { kind, payload, correlation_id: missionId });
 }
 
+function gitAt(repo, ...args) {
+  const g = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8' });
+  assert.strictEqual(g.status, 0, `git ${args.join(' ')}: ${g.stderr}`);
+  return g.stdout.trim();
+}
+
+// A sibling step lands on main while this work is under review — the ordinary
+// shape of parallel work, and what makes a rebase happen at all.
+function landSibling(repo, name) {
+  const branch = gitAt(repo, 'rev-parse', '--abbrev-ref', 'HEAD');
+  gitAt(repo, 'checkout', '-q', 'main');
+  fs.writeFileSync(path.join(repo, `${name}.txt`), `${name}\n`);
+  gitAt(repo, 'add', '-A');
+  gitAt(repo, 'commit', '-q', '-m', `sibling ${name} lands`);
+  gitAt(repo, 'checkout', '-q', branch);
+}
+
 // --- help --------------------------------------------------------------------
 {
   const r = mission(['--help']);
@@ -1307,7 +1324,7 @@ const mxGateSeq = fx.runGreenGate(root, 'mx', 'tests', mxRepo);
     r.stderr,
     new RegExp(`mission "mvictim" carries a standing revise \\(seq ${reviseSeq}\\) on its review route ${victim.reviewSeq}`)
   );
-  assert.match(r.stderr, /never by opening a second mission on the byte-identical artifact/);
+  assert.match(r.stderr, /never by opening a second mission on the same work/);
   assert.strictEqual(stateOf().missions.mclean.status, 'open');
   assert.strictEqual(stateOf().missions.mvictim.status, 'open');
 }
@@ -1629,6 +1646,181 @@ const mxGateSeq = fx.runGreenGate(root, 'mx', 'tests', mxRepo);
   assert.strictEqual(r.status, 1, 'an empty-commit relabel must not escape a standing revise');
   assert.match(r.stderr, /carries a standing revise \(seq \d+\) against the very artifact being closed/);
   assert.strictEqual(stateOf().missions.mempty.status, 'open');
+}
+
+// --- close: a rebase is a relabel too, and so is a reparent ------------------
+// Neither of these needs an attacker. A sibling step lands on main, the author
+// runs `git rebase main`, and the canonical patch the review route recorded is
+// byte-identical while the tree now carries the sibling's file — so a match
+// requiring BOTH content fields stops firing and the rejected change closes.
+// The mirror image (the same tree reparented onto the moved mainline) moves
+// the patch instead. The predicate is disjunctive precisely so that either
+// field alone still identifies the work.
+{
+  const cases = [
+    [
+      'mreb',
+      'sibling-a',
+      (repo) => gitAt(repo, 'rebase', '-q', 'main'),
+      (moved, rejected) => {
+        assert.strictEqual(moved.patch_digest, rejected.patch_digest, 'the rebase preserves the patch');
+        assert.notStrictEqual(moved.source_tree, rejected.source_tree, 'the rebase moves the tree');
+      },
+    ],
+    [
+      'mrepar',
+      'sibling-b',
+      (repo) => {
+        const reparented = gitAt(
+          repo,
+          'commit-tree',
+          gitAt(repo, 'rev-parse', 'HEAD^{tree}'),
+          '-p',
+          gitAt(repo, 'rev-parse', 'main'),
+          '-m',
+          'reparent onto the moved mainline'
+        );
+        gitAt(repo, 'reset', '-q', '--hard', reparented);
+      },
+      (moved, rejected) => {
+        assert.strictEqual(moved.source_tree, rejected.source_tree, 'the reparent preserves the tree');
+        assert.notStrictEqual(moved.patch_digest, rejected.patch_digest, 'the reparent moves the patch');
+      },
+    ],
+  ];
+  for (const [id, sibling, move, expectShape] of cases) {
+    openM(id);
+    const repo = fx.newWorkRepo(tmp);
+    const rejected = fx.artifactIdentity(repo);
+    const chain = fx.reserveChain(root, id, rejected);
+    const revise = fx.recordReview(root, id, {
+      review_route_seq: chain.reviewSeq,
+      review_dispatch_seq: chain.reviewSeq,
+      verdict: 'revise',
+      artifact_identity: rejected,
+    });
+    assert.strictEqual(revise.status, 0, revise.stderr);
+
+    landSibling(repo, sibling);
+    move(repo);
+    const moved = fx.artifactIdentity(repo);
+    expectShape(moved, rejected);
+
+    const round2 = reserveReview(root, fx.reviewRouteInput(id, chain.authorSeq, chain.authorSeq, moved));
+    const approve = fx.recordReview(root, id, {
+      review_route_seq: round2.seq,
+      review_dispatch_seq: round2.seq,
+      verdict: 'approve',
+      artifact_identity: moved,
+    });
+    assert.strictEqual(approve.status, 0, approve.stderr);
+    const gateSeq = fx.runGreenGate(root, id, 'tests', repo);
+    fx.land(repo, 'merge');
+    const r = fx.runClose(
+      root,
+      id,
+      repo,
+      fx.closeInputOf({ authorSeq: chain.authorSeq, reviewSeq: round2.seq }, gateSeq)
+    );
+    assert.strictEqual(r.status, 1, `${id}: one content field surviving is still the same work`);
+    assert.match(r.stderr, /carries a standing revise \(seq \d+\) against the very artifact being closed/);
+    assert.strictEqual(stateOf().missions[id].status, 'open');
+  }
+}
+
+// --- close: the same predicate across the mission boundary -------------------
+{
+  openM('mrebv');
+  const repo = fx.newWorkRepo(tmp);
+  const rejected = fx.artifactIdentity(repo);
+  const victim = fx.reserveChain(root, 'mrebv', rejected);
+  const revise = fx.recordReview(root, 'mrebv', {
+    review_route_seq: victim.reviewSeq,
+    review_dispatch_seq: victim.reviewSeq,
+    verdict: 'revise',
+    artifact_identity: rejected,
+  });
+  assert.strictEqual(revise.status, 0, revise.stderr);
+  const reviseSeq = JSON.parse(revise.stdout).ledger_seq;
+
+  landSibling(repo, 'sibling-c');
+  gitAt(repo, 'rebase', '-q', 'main');
+  const rebased = fx.artifactIdentity(repo);
+  assert.strictEqual(rebased.patch_digest, rejected.patch_digest, 'the rebase preserves the patch');
+
+  openM('mrebc');
+  const clean = fx.reserveChain(root, 'mrebc', rebased);
+  const approve = fx.recordReview(root, 'mrebc', {
+    review_route_seq: clean.reviewSeq,
+    review_dispatch_seq: clean.reviewSeq,
+    verdict: 'approve',
+    artifact_identity: rebased,
+  });
+  assert.strictEqual(approve.status, 0, approve.stderr);
+  const gateSeq = fx.runGreenGate(root, 'mrebc', 'tests', repo);
+  fx.land(repo, 'merge');
+  const r = fx.runClose(root, 'mrebc', repo, fx.closeInputOf(clean, gateSeq));
+  assert.strictEqual(r.status, 1, 'a rebase does not dissolve another mission\'s finding either');
+  assert.match(
+    r.stderr,
+    new RegExp(`mission "mrebv" carries a standing revise \\(seq ${reviseSeq}\\) on its review route ${victim.reviewSeq}`)
+  );
+  assert.strictEqual(stateOf().missions.mrebc.status, 'open');
+}
+
+// --- close: after a rebase the finding is still ANSWERABLE on its own route --
+// The fence and the answer share one predicate, so the honest path stays open:
+// a gate run after the rebase is evidence about the same work the finding
+// judged, the superseding verdict records it, and the mission closes with the
+// finding answered rather than dissolved.
+{
+  openM('mansrb');
+  const repo = fx.newWorkRepo(tmp);
+  const rejected = fx.artifactIdentity(repo);
+  const chain = fx.reserveChain(root, 'mansrb', rejected);
+  const revise = fx.recordReview(root, 'mansrb', {
+    review_route_seq: chain.reviewSeq,
+    review_dispatch_seq: chain.reviewSeq,
+    verdict: 'revise',
+    artifact_identity: rejected,
+  });
+  assert.strictEqual(revise.status, 0, revise.stderr);
+
+  landSibling(repo, 'sibling-d');
+  gitAt(repo, 'rebase', '-q', 'main');
+  const rebased = fx.artifactIdentity(repo);
+  const evidenceSeq = fx.runGreenGate(root, 'mansrb', 'tests', repo);
+  // the verdict names the identity ITS route bound; the evidence is the gate
+  // that ran on the rebased tree, and the two are the same work
+  const answer = fx.recordReview(root, 'mansrb', {
+    review_route_seq: chain.reviewSeq,
+    review_dispatch_seq: chain.reviewSeq,
+    verdict: 'approve',
+    artifact_identity: rejected,
+    supersedes_seq: JSON.parse(revise.stdout).ledger_seq,
+    reason: 'finding answered by a gate run after the rebase',
+    evidence_seq: evidenceSeq,
+  });
+  assert.strictEqual(answer.status, 0, `a post-rebase gate must answer the finding it postdates: ${answer.stderr}`);
+
+  const round2 = reserveReview(root, fx.reviewRouteInput('mansrb', chain.authorSeq, chain.authorSeq, rebased));
+  const approve = fx.recordReview(root, 'mansrb', {
+    review_route_seq: round2.seq,
+    review_dispatch_seq: round2.seq,
+    verdict: 'approve',
+    artifact_identity: rebased,
+  });
+  assert.strictEqual(approve.status, 0, approve.stderr);
+  const gateSeq = fx.runGreenGate(root, 'mansrb', 'tests', repo);
+  fx.land(repo, 'merge');
+  const r = fx.runClose(
+    root,
+    'mansrb',
+    repo,
+    fx.closeInputOf({ authorSeq: chain.authorSeq, reviewSeq: round2.seq }, gateSeq)
+  );
+  assert.strictEqual(r.status, 0, `an answered finding must leave the work closable: ${r.stderr}`);
+  assert.strictEqual(stateOf().missions.mansrb.status, 'done');
 }
 
 // --- close: the evidence rule is re-derived, not trusted to the writer -------

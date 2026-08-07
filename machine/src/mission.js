@@ -63,9 +63,11 @@
 // AND no standing revise anywhere in this LEDGER — any mission's review route,
 // not just this mission's — against that same identity. The unit of that law is
 // the artifact, not the route and not the mission: a finding against an
-// artifact is answered by evidence or by changing the artifact, never by
-// reviewing the byte-identical artifact again somewhere quieter, and neither a
-// second route nor a second mission is quiet enough. A second TREE is, and
+// artifact is answered by evidence or by changing the work, never by reviewing
+// the same work again somewhere quieter, and neither a second route nor a
+// second mission is quiet enough. What "the same work" means is one predicate
+// (`namesSameArtifact`), shared by the scan that dissolves a finding and the
+// check that answers one, so the two can never disagree. A second TREE is, and
 // that is the boundary named above: the fence is as wide as the ledger it
 // reads, and no wider.
 
@@ -382,6 +384,46 @@ function recordConsult(treeRoot, missionId, input) {
   });
 }
 
+// --- the same work -----------------------------------------------------------
+
+// ONE predicate for "these two records are about the same change", defined
+// here and used by every comparison that asks that question: the standing-
+// revise scan (this mission's routes and every other mission's alike) and the
+// overturn-evidence check that answers a finding. The path that DISSOLVES a
+// finding and the path that ANSWERS it must never disagree about what they are
+// looking at — when they did, answering a finding became impossible in exactly
+// the case where dissolving it became free, and the incentive pointed at the
+// escape.
+//
+// It is disjunctive: the same work when source_tree matches OR patch_digest
+// matches. Each is already proof of the same change by construction — the same
+// tree is the same bytes, the same canonical patch is the same diff — so
+// requiring both means the fence fires only where the evidence is redundant,
+// and every ordinary git operation that moves one while preserving the other
+// walks through it:
+//   - `git rebase main` after a sibling step lands: the patch is byte-identical,
+//     the tree carries the sibling's file. No intent, no forgery — the normal
+//     shape of parallel work, dissolving a standing revise as a side effect.
+//   - a reparent (`git commit-tree` of the same tree onto a moved parent): the
+//     tree is byte-identical, the patch now also undoes the sibling.
+//   - `git commit --allow-empty`: both survive; only the head is fresh.
+// A genuine repair moves both, and stays exactly as legal as it was.
+//
+// Neither source_head nor dirty participates. A head is a label — round three
+// removed it from the match and that correction stands — and dirty describes
+// the worktree an identity was measured in, not the work.
+//
+// A field matches only on a value actually recorded on BOTH records: under a
+// disjunction, two absences agreeing would make an empty identity match
+// everything, which is the opposite of what this is for.
+const CONTENT_IDENTITY_FIELDS = ['source_tree', 'patch_digest'];
+
+function namesSameArtifact(recorded, identity) {
+  return CONTENT_IDENTITY_FIELDS.some(
+    (field) => isNonEmptyString(recorded[field]) && recorded[field] === identity[field]
+  );
+}
+
 // --- record-review -----------------------------------------------------------
 
 const REVIEW_VERDICTS = ['approve', 'revise'];
@@ -407,9 +449,14 @@ const REASON_CEILING = 200;
 //   (2) this mission's; and
 //   (3) LATER than the record it answers — a fact that already existed when
 //       the finding was written cannot be what contradicts it; and
-//   (4) about the same artifact the answered verdict judged, where the gate
-//       record names one — a green gate on some other commit is a true fact
-//       that contradicts nothing here.
+//   (4) about the same WORK the answered verdict judged, where the gate record
+//       names an artifact — a green gate on some other change is a true fact
+//       that answers nothing here. "Same work" is `namesSameArtifact` above,
+//       the one predicate, so a gate run after an ordinary rebase still
+//       answers the finding it postdates: the rebase moved the tree and left
+//       the patch, and the fence reads that pair the same way this check does.
+//       When the two disagreed, a finding survived every honest answer in
+//       precisely the case where it dissolved for free.
 // The gate's own exit code is deliberately not constrained: a red gate is
 // exactly the contradictory evidence that overturns an approve, just as a
 // green one is what answers a revise.
@@ -483,12 +530,9 @@ function checkOverturnEvidence(records, missionId, evidenceSeq, answered, who, w
     }
   }
   if (isPlainObject(evidence.artifact_identity) && isPlainObject(answered.artifact_identity)) {
-    const differ = IDENTITY_FIELDS.filter(
-      (field) => evidence.artifact_identity[field] !== answered.artifact_identity[field]
-    );
-    if (differ.length > 0) {
+    if (!namesSameArtifact(evidence.artifact_identity, answered.artifact_identity)) {
       throw new Error(
-        `mission: ${who} refused — ${what} cites gate record ${evidenceSeq}, which tested a different artifact than the verdict it answers: field(s) ${differ.join(', ')} differ; a gate on other work contradicts nothing here`
+        `mission: ${who} refused — ${what} cites gate record ${evidenceSeq}, which tested a different artifact than the verdict it answers: neither ${CONTENT_IDENTITY_FIELDS.join(' nor ')} matches the identity that verdict judged; a gate on other work contradicts nothing here`
       );
     }
   }
@@ -1160,27 +1204,6 @@ function standingVerdictsOf(records, missionId, citedRouteSeq) {
   return { own, byMission };
 }
 
-// What "the same artifact" means when a finding is matched to the work being
-// closed: the CONTENT, not the commit that carries it. source_tree is the bytes
-// HEAD points at and patch_digest is the canonical patch that produced them, so
-// two identities agreeing on both are the same work under a different name.
-//
-// source_head is deliberately excluded, and that exclusion is the whole point:
-// `git commit --allow-empty` mints a fresh source_head while leaving tree and
-// patch byte-identical, which under a four-field match was a two-second escape
-// from a standing revise — relabel the head, bind a fresh review route to the
-// "new" identity, approve it. Matching on content refuses that and leaves the
-// genuine repair (which changes the tree) exactly as legal as before.
-//
-// dirty is excluded for the opposite reason: it describes the worktree the
-// identity was measured in, not the work, and a close never reaches here on a
-// dirty identity (reviewedIdentityOf refuses one outright).
-const CONTENT_IDENTITY_FIELDS = ['source_tree', 'patch_digest'];
-
-function namesSameArtifact(recorded, identity) {
-  return !CONTENT_IDENTITY_FIELDS.some((field) => recorded[field] !== identity[field]);
-}
-
 // The one escape a standing revise has outside its own verdict chain:
 // `route.js supersede` naming that route, in the mission that recorded it,
 // whose evidence_seq is held to the SAME standard as a superseding verdict's —
@@ -1237,19 +1260,22 @@ function requireReviseAnswered(records, ownerMissionId, routeSeq, last, label, r
 // exactly as this one would be.
 //
 // Refusing on a foreign mission's revise is fail-closed in the direction this
-// design prefers: two verdicts naming the byte-identical artifact are about the
-// same work by construction, never a coincidence.
+// design prefers: two verdicts whose identities share a tree or a patch are
+// about the same work by construction, never a coincidence.
 //
 // The limit of the rule is that third escape, and `namesSameArtifact` is what
-// decides how wide it is. It is content, so no relabelling of the same bytes
-// reaches it: an empty commit buys a fresh source_head and nothing else. What
-// remains is a commit that genuinely changes the tree while changing nothing
+// decides how wide it is. It is disjunctive, so no relabelling reaches it: an
+// empty commit preserves both fields, a rebase preserves the patch, a reparent
+// preserves the tree, and any one match is enough. What remains is a commit
+// that genuinely changes both the tree and the patch while changing nothing
 // that matters — a reformatting, a stray newline — and nothing on the record
 // can tell that from a repair, because the record holds hashes and not
 // meaning. That is the honest statement of the limit: the fence costs a real
-// tree change, and a real tree change is cheap. What the rule does buy is that
-// overturning a finding on UNCHANGED bytes always costs a recorded gate run
-// and a stated reason, in the mission that recorded the finding.
+// edit to the work, and a real edit is cheap. What the rule does buy is that
+// overturning a finding without editing the work always costs a recorded gate
+// run and a stated reason, in the mission that recorded the finding — and,
+// because the same predicate governs that gate, editing is never the only path
+// left open.
 //
 // The other limit is where this scan can look, and it has moved twice already:
 // review round one scoped the rule to the cited route, round two to every
@@ -1282,7 +1308,7 @@ function requireNoStandingRevise(records, missionId, verdicts, identity, citedRo
       () =>
         `mission: close refused — review route ${routeSeq} carries a standing revise (seq ${last.seq}) against the very artifact being closed${
           routeSeq === citedRouteSeq ? '' : `, and route ${citedRouteSeq} is being cited instead`
-        }; a finding is answered on its own route or by superseding that route with recorded evidence, never by reviewing the byte-identical artifact again elsewhere`
+        }; a finding is answered on its own route or by superseding that route with recorded evidence, never by reviewing the same work again elsewhere`
     );
   }
 
@@ -1309,7 +1335,7 @@ function requireNoStandingRevise(records, missionId, verdicts, identity, citedRo
         last,
         `mission ${JSON.stringify(foreignId)}'s review route ${routeSeq}`,
         () =>
-          `mission: close refused — mission ${JSON.stringify(foreignId)} carries a standing revise (seq ${last.seq}) on its review route ${routeSeq} against the very artifact being closed; a finding is answered in the mission that recorded it — on its own route, or by superseding that route with recorded evidence — never by opening a second mission on the byte-identical artifact and approving there`
+          `mission: close refused — mission ${JSON.stringify(foreignId)} carries a standing revise (seq ${last.seq}) on its review route ${routeSeq} against the very artifact being closed; a finding is answered in the mission that recorded it — on its own route, or by superseding that route with recorded evidence — never by opening a second mission on the same work and approving there`
       );
     }
   }
@@ -1645,9 +1671,12 @@ commands:
       stated reason — not a contradiction of the finding. The rule enforces
       that overturning a verdict costs a fresh gate run and a reason on the
       record, never a silent replacement; judging whether the reason is good is
-      a human's job, not this CLI's. A verdict is not its own refutation: an
-      evidence_seq naming a review-outcome, the mission-open record, or another
-      mission's record is refused. REFUSES a verdict whose artifact_identity
+      a human's job, not this CLI's. The gate must be about the same work the
+      answered verdict judged, by the same predicate the close-side fence uses
+      (source_tree OR patch_digest) — so a gate run after an ordinary rebase
+      still answers the finding it postdates. A verdict is not its own
+      refutation: an evidence_seq naming a review-outcome, the mission-open
+      record, or another mission's record is refused. REFUSES a verdict whose artifact_identity
       differs field by field from the identity the named review route bound,
       a seq that is not this mission's review-phase route, a review dispatch
       seq naming another mission's record, or a supersession naming anything
@@ -1676,8 +1705,11 @@ commands:
       different review dispatch, or it approves a different identity than the
       review route bound; ANY review route IN THIS LEDGER — this mission's or
       another mission's — carries a standing revise against the artifact being
-      closed, matched on content (source_tree and patch_digest, so an empty
-      commit is a relabel and not a second round). Such a finding is answered
+      closed. "The same artifact" is one predicate used by every check that
+      asks it: the same work when source_tree OR patch_digest matches, since
+      either alone already proves the same change. An empty commit, a rebase
+      onto a moved mainline and a reparent are all relabels, not second rounds;
+      only a real edit to the work is one. Such a finding is answered
       in the mission that recorded it: on its own route, or by superseding that
       route with evidence held to the same standard — never by reserving a
       second route, and never by opening a second mission, on the
