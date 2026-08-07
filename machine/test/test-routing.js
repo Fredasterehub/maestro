@@ -7,7 +7,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
 const SRC = path.join(__dirname, '..', 'src', 'routing.js');
-const { DATED_CONFIG_RE, CURRENT_ROUTING_REVISION, buildRevision1Config } = require(SRC);
+const { DATED_CONFIG_RE, CURRENT_ROUTING_REVISION, buildRevision1Config, buildDefaultConfig, validateRoutingConfig } = require(SRC);
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-routing-'));
 process.on('exit', () => fs.rmSync(tmp, { recursive: true, force: true }));
@@ -27,6 +27,27 @@ function initTree(name) {
   const r = run(['init', root]);
   assert.strictEqual(r.status, 0, r.stderr);
   return { root, init: JSON.parse(r.stdout) };
+}
+
+// A tree whose dated config is the shipped default with one mutation — for
+// exercising read-path refusals that the shipped content never triggers.
+// The digest is computed from the mutated bytes, so only shape validation
+// stands between the mutation and the resolver.
+function customTree(name, mutate) {
+  const root = freshTree(name);
+  const dir = path.join(root, 'routing');
+  fs.mkdirSync(dir, { recursive: true });
+  const config = buildDefaultConfig('2026-08-07');
+  mutate(config);
+  const filename = 'routing-2026-08-07-1.json';
+  fs.writeFileSync(path.join(dir, filename), JSON.stringify(config, null, 2) + '\n');
+  const digest =
+    'sha256:' + require('node:crypto').createHash('sha256').update(fs.readFileSync(path.join(dir, filename))).digest('hex');
+  fs.writeFileSync(
+    path.join(dir, 'active.json'),
+    JSON.stringify({ schema_version: 1, active_config: filename, digest }) + '\n'
+  );
+  return root;
 }
 
 function setPreflight(root, perProvider) {
@@ -307,6 +328,48 @@ function setPreflight(root, perProvider) {
   // Only the exact token holds; the explicit non-default resolves normally.
   fs.writeFileSync(path.join(root, 'settings.json'), JSON.stringify({ degraded_review: 'degraded-path' }) + '\n');
   assert.strictEqual(run(['review-for', root, 'claude']).stdout.trim(), 'reviewer-degraded-opus');
+}
+
+// --- the no-laundering invariant refuses a family-less reviewer seat ---------
+{
+  // Validation half: a routed reviewer seat that declares no family is
+  // refused at the read boundary, not compared open through undefined.
+  const config = buildDefaultConfig('2026-08-07');
+  config.seats['reviewer-mystery'] = { model: 'opus-5', effort: 'high' }; // a Claude model, no declared family
+  config.review_routing.claude.push('reviewer-mystery');
+  const { ok, errors } = validateRoutingConfig(config);
+  assert.strictEqual(ok, false, 'a family-less seat in a cross-family row must fail validation');
+  assert.ok(errors.some((e) => /declares no family/.test(e)), errors.join('; '));
+}
+{
+  // Resolution half: a degraded substitution can land on a seat no review
+  // row names, so row validation never saw it — the guard itself must
+  // refuse rather than resolve the seat as cross-family.
+  const root = customTree('launder-familyless', (config) => {
+    config.seats['reviewer-mystery'] = { model: 'opus-5', effort: 'high' };
+    config.degraded.codex_down.seats['reviewer-gemini'] = 'reviewer-mystery';
+  });
+  setPreflight(root, { codex: { routing: 'absent' }, gemini: { routing: 'present' } });
+  const r = run(['review-for', root, 'claude']);
+  assert.strictEqual(r.status, 1, 'a family-less resolved reviewer must refuse, never resolve');
+  assert.match(r.stderr, /declares no family/);
+}
+
+// --- a degraded seat in a cross-family row is refused by name ----------------
+{
+  // The rows-membership check alone is self-referential: omit the seat
+  // from this config's own degraded_review.rows and it would pass. The
+  // reserved reviewer-degraded-* namespace closes that door.
+  const config = buildDefaultConfig('2026-08-07');
+  for (const row of Object.values(config.degraded_review.rows)) {
+    for (const key of Object.keys(row)) {
+      if (row[key] === 'reviewer-degraded-opus') row[key] = 'reviewer-degraded-sonnet';
+    }
+  }
+  config.review_routing.gpt.push('reviewer-degraded-opus'); // claude-family seat in a gpt row: the family check alone passes it
+  const { ok, errors } = validateRoutingConfig(config);
+  assert.strictEqual(ok, false, 'a degraded-named seat in a cross-family row must fail validation even when rows omit it');
+  assert.ok(errors.some((e) => /"reviewer-degraded-opus", which never appears in a cross-family row/.test(e)), errors.join('; '));
 }
 
 // --- revise: a failed dated-config write consumes no immutable name ----------

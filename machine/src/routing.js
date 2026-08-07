@@ -349,13 +349,21 @@ function checkReviewRouting(table, label, seats, degradedRowSeats, errors) {
         continue;
       }
       // Cross-family rows carry the laundering invariant in their shape:
-      // no row ever names the author family's own seat, and no row ever
-      // names a degraded seat — the degraded path is only ever reached as
-      // an explicit, relabeled transition, never as a table entry.
-      if (isPlainObject(seat) && seat.family === family) {
+      // no row ever names the author family's own seat, none names a seat
+      // whose family is undeclared (the invariant compares families and
+      // refuses what it cannot establish), and no row ever names a
+      // degraded seat — the degraded path is only ever reached as an
+      // explicit, relabeled transition, never as a table entry.
+      if (!isPlainObject(seat) || typeof seat.family !== 'string' || seat.family === '') {
+        errors.push(`${label}.${family} names seat "${seatName}", which declares no family — a routed reviewer seat without one fails the no-laundering invariant open`);
+      } else if (seat.family === family) {
         errors.push(`${label}.${family} names seat "${seatName}" of the author's own family "${family}"`);
       }
-      if (degradedRowSeats.has(seatName)) {
+      // Membership in this config's own degraded_review.rows is
+      // self-referential (a config could name a degraded seat here and
+      // omit it from rows), so the reserved reviewer-degraded-* namespace
+      // is refused by name as well.
+      if (degradedRowSeats.has(seatName) || seatName.startsWith('reviewer-degraded-')) {
         errors.push(`${label}.${family} names degraded reviewer seat "${seatName}", which never appears in a cross-family row`);
       }
     }
@@ -942,6 +950,15 @@ function revise(treeRoot) {
 // refused outright. A same-family reviewer is lawful only under the
 // explicit degraded-path label.
 function refuseLaundering(independence, reviewerFamily, authorFamily) {
+  // A guard that cannot establish the fact it guards has not established
+  // it: a reviewer seat with no declared family must refuse, never fail
+  // open through `undefined !== authorFamily`.
+  if (independence === 'cross-family' && (typeof reviewerFamily !== 'string' || reviewerFamily === '')) {
+    throw new Error(
+      'routing: resolved reviewer seat declares no family while claiming cross-family independence — the ' +
+        'no-laundering invariant compares author and reviewer families and refuses what it cannot establish'
+    );
+  }
   if (independence === 'cross-family' && reviewerFamily === authorFamily) {
     throw new Error(
       `routing: resolved reviewer family "${reviewerFamily}" equals the author family while claiming ` +
