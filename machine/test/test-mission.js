@@ -10,7 +10,7 @@ const MISSION = path.join(__dirname, '..', 'src', 'mission.js');
 const GATE = path.join(__dirname, '..', 'src', 'gate.js');
 const { readRecords, appendRecord } = require(path.join(__dirname, '..', 'src', 'jsonl.js'));
 const { readJson } = require(path.join(__dirname, '..', 'src', 'atomic-json.js'));
-const { supersede, reserveReview } = require(path.join(__dirname, '..', 'src', 'route.js'));
+const { supersede, reserveReview, reserve } = require(path.join(__dirname, '..', 'src', 'route.js'));
 const fx = require('./close-fixture.js');
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-mission-'));
@@ -2715,6 +2715,153 @@ const mxGateSeq = fx.runGreenGate(root, 'mx', 'tests', mxRepo);
   assert.match(env.stderr, /symlink/);
   assert.deepStrictEqual(fs.readdirSync(outside), [], 'no envelope escaped the tree');
   assert.strictEqual(ledgerOf().records.length, before, 'no ledger record for the refused envelope');
+}
+
+// --- close: terminal outcomes for non-winning dispatches (§16.3) ------------
+
+// A fresh author-phase route plus its real "dispatch" ledger record
+// (roster.js register), seat retired immediately so the fixture's small pool
+// of seat names is reusable across many independent lineages in one mission.
+function authorLineage(missionId, overrides) {
+  const route = reserve(root, fx.authorRouteInput(missionId, overrides));
+  const dispatchSeq = fx.registerDispatch(root, missionId, route.seq, 'executor-claude', 'claude');
+  return { route, dispatchSeq };
+}
+
+function reviewLineage(missionId, authorRouteSeq, authorDispatchSeq, identity, overrides) {
+  const route = reserveReview(
+    root,
+    fx.reviewRouteInput(missionId, authorRouteSeq, authorDispatchSeq, identity, overrides)
+  );
+  const dispatchSeq = fx.registerDispatch(root, missionId, route.seq, 'reviewer-degraded-sonnet', 'claude');
+  return { route, dispatchSeq };
+}
+
+// Reserves, registers, reviews-approves, gates green, lands and closes a
+// winning chain, using the real dispatch seqs roster.js minted — the shape
+// every one of this section's fixtures closes through.
+function closeWinningChain(missionId) {
+  const author = authorLineage(missionId, {});
+  const repo = fx.newWorkRepo(tmp);
+  const identity = fx.artifactIdentity(repo);
+  const review = reviewLineage(missionId, author.route.seq, author.dispatchSeq, identity, {});
+  const chain = { authorSeq: author.route.seq, reviewSeq: review.route.seq };
+  fx.recordApprove(root, missionId, chain, identity, review.dispatchSeq);
+  const gateSeq = fx.runGreenGate(root, missionId, 'tests', repo);
+  fx.land(repo, 'merge');
+  const input = fx.closeInputOf(chain, gateSeq, {
+    author_dispatch_seq: author.dispatchSeq,
+    review_dispatch_seq: review.dispatchSeq,
+    winning_author_dispatch_seq: author.dispatchSeq,
+    winning_review_dispatch_seq: review.dispatchSeq,
+  });
+  const r = fx.runClose(root, missionId, repo, input);
+  return { r, author, review };
+}
+
+function closeRecordOf(missionId) {
+  return ledgerOf()
+    .records.filter((rec) => rec.kind === 'mission-close' && rec.mission_id === missionId)
+    .pop();
+}
+
+// --- close: a single-attempt mission writes no terminal outcomes -----------
+{
+  const missionId = 'mterm-single';
+  openM(missionId);
+  const { r } = closeWinningChain(missionId);
+  assert.strictEqual(r.status, 0, r.stderr);
+  const closeRecord = closeRecordOf(missionId);
+  assert.deepStrictEqual(closeRecord.terminal_outcomes, [], 'nothing else to account for');
+}
+
+// --- close: every vocabulary word, each reached by its own fixture ---------
+{
+  const missionId = 'mterm';
+  const openSeq = openM(missionId);
+
+  function supersededAuthor(transition, reason, replacementOverrides) {
+    const predecessor = authorLineage(missionId, {});
+    supersede(root, {
+      mission_id: missionId,
+      predecessor_route_seq: predecessor.route.seq,
+      transition,
+      reason,
+      evidence_seq: openSeq,
+      replacement: fx.authorRouteInput(missionId, {
+        attempt: transition === 'same-profile-resume' ? 1 : 2,
+        ...replacementOverrides,
+      }),
+    });
+    return predecessor.dispatchSeq;
+  }
+
+  const runtimeFailedSeq = supersededAuthor('same-profile-resume', 'infrastructure', {});
+  const providerReroutedSeq = supersededAuthor('same-class-provider-reroute', 'infrastructure', {});
+  const quotaReroutedSeq = supersededAuthor('same-class-provider-reroute', 'quota', {});
+  const safetyRefusedSeq = supersededAuthor('same-class-provider-reroute', 'safety-refusal', {});
+  const profileEscalatedSeq = supersededAuthor('within-class-profile-escalation', 'quality', {
+    worker_effort: 'medium',
+  });
+  const supersededGenericSeq = supersededAuthor('convergence', 'quality', {});
+
+  // "revised": a plain revise verdict, no supersession on either route —
+  // classifies both the author dispatch and the review dispatch that gave it.
+  const revisedAuthor = authorLineage(missionId, {});
+  const revisedRepo = fx.newWorkRepo(tmp);
+  const revisedIdentity = fx.artifactIdentity(revisedRepo);
+  const revisedReview = reviewLineage(missionId, revisedAuthor.route.seq, revisedAuthor.dispatchSeq, revisedIdentity, {});
+  const revised = fx.recordReview(root, missionId, {
+    review_route_seq: revisedReview.route.seq,
+    review_dispatch_seq: revisedReview.dispatchSeq,
+    verdict: 'revise',
+    artifact_identity: revisedIdentity,
+  });
+  assert.strictEqual(revised.status, 0, revised.stderr);
+
+  // "blocked": no supersession, no review at all — only the worker's own
+  // envelope names its fate.
+  const blockedAuthor = authorLineage(missionId, {});
+  const blockedEnvelope = mission(['record-envelope', root, missionId, 'executor-claude'], {
+    state: 'blocked',
+    result: 'stuck',
+    evidence: 'cannot proceed without a decision',
+    risks: 'none',
+    artifact: '',
+    question: 'which direction should this take',
+  });
+  assert.strictEqual(blockedEnvelope.status, 0, blockedEnvelope.stderr);
+
+  const { r, author: winAuthor, review: winReview } = closeWinningChain(missionId);
+  assert.strictEqual(r.status, 0, r.stderr);
+
+  const closeRecord = closeRecordOf(missionId);
+  const byDispatch = new Map(closeRecord.terminal_outcomes.map((o) => [o.dispatch_seq, o.outcome]));
+
+  assert.strictEqual(byDispatch.get(runtimeFailedSeq), 'runtime-failed');
+  assert.strictEqual(byDispatch.get(providerReroutedSeq), 'provider-rerouted');
+  assert.strictEqual(byDispatch.get(quotaReroutedSeq), 'quota-rerouted');
+  assert.strictEqual(byDispatch.get(safetyRefusedSeq), 'safety-refused');
+  assert.strictEqual(byDispatch.get(profileEscalatedSeq), 'profile-escalated');
+  assert.strictEqual(byDispatch.get(supersededGenericSeq), 'superseded');
+  assert.strictEqual(byDispatch.get(revisedAuthor.dispatchSeq), 'revised');
+  assert.strictEqual(byDispatch.get(revisedReview.dispatchSeq), 'revised');
+  assert.strictEqual(byDispatch.get(blockedAuthor.dispatchSeq), 'blocked');
+  assert.strictEqual(byDispatch.has(winAuthor.dispatchSeq), false, 'the winning author dispatch names no terminal outcome');
+  assert.strictEqual(byDispatch.has(winReview.dispatchSeq), false, 'the winning review dispatch names no terminal outcome');
+  assert.strictEqual(closeRecord.terminal_outcomes.length, 9, 'exactly the nine non-winning dispatches, no more');
+}
+
+// --- close: an unclassifiable dispatch refuses, naming itself ---------------
+{
+  const missionId = 'mterm-refuse';
+  openM(missionId);
+  const stray = authorLineage(missionId, {}); // no supersession, no review, no envelope
+
+  const { r } = closeWinningChain(missionId);
+  assert.strictEqual(r.status, 1, 'an unclassifiable dispatch must refuse the close');
+  assert.match(r.stderr, new RegExp(`dispatch ${stray.dispatchSeq} `));
+  assert.strictEqual(stateOf().missions[missionId].status, 'open', 'a refused close leaves the mission open');
 }
 
 // --- argv fail-closed --------------------------------------------------------
