@@ -66,22 +66,24 @@ liaison following it.
    table below). A later step (Slice 6's automatic resolver) replaces only
    this pick with a routing call; the rest of the sequence never changes.
 3. Resolve the reviewer this author will need — `routing.js review-for
-   <treeRoot> <author_family>` prints the reviewer *seat* (cross-family by
-   law; under degraded modes it may substitute a same-family seat labeled
-   `independence: "degraded-path"` — see "Seat routing" below). The other
-   four `reserved_review` fields — `family`, `model`, `effort`,
-   `independence` — come from the seat table (`routing.js active`) plus that
-   independence label, not from `review-for` alone.
+   <treeRoot> <author_family> [class] [author_model] --json` returns the
+   whole `reserved_review` bundle in one call (`seat`, `family`, `model`,
+   `effort`, `independence`, cross-family by law); the bare two-argument
+   form, with no `--json`, prints only the reviewer *seat*, for a caller
+   that just needs the name. Under degraded modes the resolved reviewer may
+   be a same-family seat labeled `independence: "degraded-path"` instead —
+   see "Seat routing" below.
 4. `route.js reserve` — writes the author-phase route record, which already
    carries the resolved reviewer as `reserved_review`. This is the step that
    needs the open mission from step 1.
 5. Spawn the seat.
 6. `roster.js register`, naming the author route this dispatch belongs to
-   (`route_seq` — lands with Slice 2c; until then, register in this position
-   and see "Roster registration" below for what today's call actually
-   carries). Nothing here is machine-enforced yet: `roster.js register`
-   consults no route at all, so a registration with no route record behind
-   it is accepted today, not refused.
+   with `route_seq` (Slice 2c's addition to `REGISTER_OPTIONAL_KEYS`; see
+   "Roster registration" below for the full call shape). Nothing here is
+   machine-enforced yet: `roster.js register` validates `route_seq` only as
+   a shape — a nonnegative integer — and consults no route record, so a
+   registration naming the wrong seq, or none at all, is accepted today,
+   not refused.
 7. On author completion: compute the artifact identity — the
    `{source_head, source_tree, patch_digest, dirty}` object `gate.js`'s
    `artifactIdentity` helper produces and `route.js` validates (there is no
@@ -97,14 +99,13 @@ liaison following it.
    is no pre-launch review reservation.
 
 Only step 2 is temporary: Slice 6's automatic resolver replaces that one
-pick with a routing call, and nothing else in the sequence changes. Two
-fields inside it are pending rather than the sequence itself, for two
-different reasons — `route_seq` in step 6 is a key `roster.js register`
-doesn't accept yet (Slice 2c adds it to `REGISTER_OPTIONAL_KEYS`; the
-writer itself already exists), and `author_dispatch_seq`'s real binding in
-step 7 waits on a writer that doesn't exist at all — the roster dispatch
-ledger record Slice 7a adds. Both are named at the point the call needs
-them, not only in a later paragraph.
+pick with a routing call, and nothing else in the sequence changes. One
+field inside it is still pending, for a reason distinct from `route_seq`
+(step 6's `roster.js register` accepts that key today, Slice 2c having
+added it) — `author_dispatch_seq`'s real binding in step 7 waits on a
+writer that doesn't exist at all — the roster dispatch ledger record
+Slice 7a adds. It is named at the point the call needs it, not only in a
+later paragraph.
 
 ## Writing for the seat's model
 
@@ -198,11 +199,14 @@ degraded path is labeled `degraded-path` instead, and close accepts that
 label only when the author route's own snapshot recorded a degraded mode —
 the degraded path is authorized by what was recorded before the author ran,
 never by the review label alone. Close also refuses a review whose seat,
-family, model, or effort deviates from the `reserved_review` capacity the
-author route recorded, unless the deviation carries a `replacement_reason`
-— a second way to route a reviewer wrongly at dispatch and only discover it
-at close. Close can catch a dishonest or unexplained label, not fix a wrong
-one — route the reviewer correctly at dispatch.
+family, model, effort, or independence deviates from the `reserved_review`
+capacity the author route recorded, unless the deviation carries a
+`replacement_reason` — a second way to route a reviewer wrongly at dispatch
+and only discover it at close. `independence` is the field this covers most
+often: a reservation taken cross-family whose lane is lost while the author
+runs is reviewed on the degraded path instead, and it closes only because a
+`replacement_reason` is recorded. Close can catch a dishonest or unexplained
+label, not fix a wrong one — route the reviewer correctly at dispatch.
 
 Live routing (including which seats are currently degraded) is data, not this
 table: `routing.js active <treeRoot>` (and `routing.js review-for <treeRoot>
@@ -234,13 +238,14 @@ the tree in place and write only under `.maestro/missions/<id>/artifacts/`.
 ## Roster registration
 
 Register every spawn immediately: `roster.js register <treeRoot> ...` with
-seat, task id, family, and the continuity handles (`codex_session` for Sol
+seat, task id, family, the continuity handles (`codex_session` for Sol
 seats, which do resume; `gemini_handle` for Gemini seats, which do not — it
-holds the saved dispatch prompt and hash a re-dispatch reconstructs from).
-Slice 2c adds `route_seq` to that list, so the entry names the author route
-it belongs to directly; until it lands, keep registering right after
-`route.js reserve` (see "Dispatching through the route lifecycle" above) —
-the order is already correct, only the field is still missing.
+holds the saved dispatch prompt and hash a re-dispatch reconstructs from),
+and `route_seq` (Slice 2c's addition), naming the author route the entry
+belongs to directly. Register right after `route.js reserve` (see
+"Dispatching through the route lifecycle" above); nothing yet cross-checks
+the seq against a real route record, so the field names the route but does
+not yet bind to it.
 
 The roster exists so that continuity never depends on liaison memory:
 resume-don't-respawn (`references/supervision.md`) and restart recovery

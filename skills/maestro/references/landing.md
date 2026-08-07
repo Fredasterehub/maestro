@@ -16,10 +16,11 @@ When an executor's envelope reports `done`:
    work). Same-family review inherits the author's blind spots — route it
    cross-family here. Close does not refuse a same-family review
    structurally; it refuses one dishonestly *labeled* `cross-family`, and
-   accepts the same reviewer honestly labeled `degraded-path` (see "Seat
-   routing" in `references/dispatch.md`). Getting the reviewer right at
-   dispatch is what protects the mission — close is a backstop against a
-   lie about the route, not against the route itself.
+   accepts the same reviewer honestly labeled `degraded-path` only when the
+   author route's own snapshot recorded a degraded mode (see "Seat routing"
+   in `references/dispatch.md`). Getting the reviewer right at dispatch is
+   what protects the mission — close is a backstop against a lie about the
+   route, not against the route itself.
 2. **Brief the reviewer for coverage.** Report every finding — including
    low-severity and uncertain ones — with confidence and severity per
    finding. Zero findings is a legitimate outcome and is reported as exactly
@@ -36,7 +37,15 @@ When an executor's envelope reports `done`:
    against, so the verdict is recorded here, not after the gate. Recording
    a revise the same way is what a rejected review being answered, not
    skipped, actually means for the route being closed — a revise never
-   recorded is a revise close cannot see.
+   recorded is a revise close cannot see. These four keys are what a FIRST
+   verdict on a review route needs. The ordinary revise-then-fix loop
+   reserves a fresh review route for round two (`references/dispatch.md`'s
+   route lifecycle — a new review dispatch, not a second verdict on the old
+   route), so it needs nothing more; only a verdict that REPLACES the
+   standing one on its own route needs three more keys —
+   `supersedes_seq`, `reason`, `evidence_seq` naming a gate record that
+   postdates and answers the verdict it replaces — and that path is for
+   overturning a finding with new evidence, not for the loop above.
    - `approve` → then run the gate: `gate.js run-gate` against the mission's
      acceptance command. run-gate is the *only* producer of pass evidence —
      "tests pass" exists only as a recorded gate with exit code 0; a green
@@ -62,7 +71,10 @@ When an executor's envelope reports `done`:
    resolvable there when close runs — deleting the branch and pruning before
    closing makes the mission uncloseable. If close refuses, something in the
    procedure was skipped or a record disagrees with another; fix the record,
-   do not work around the refusal.
+   do not work around the refusal. (Close's stdin is seven sequence
+   references in total, not three — the author, author-dispatch, review, and
+   review-dispatch seqs, the gate seq, and two winning-attempt seqs held
+   equal to the review pair today; `mission.js --help` has the exact shape.)
 5. **Report the outcome** — see "The landing note" below.
 
 ## The landing note
