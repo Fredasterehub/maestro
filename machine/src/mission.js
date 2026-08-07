@@ -1055,17 +1055,32 @@ function firstDerivedFamilySeq(records, spec) {
 // honestly-derived claude reviewer read as cross-family, which is the same
 // laundering the reviewer-side derivation prevents, entered from the other end.
 //
-// What CAN be tolerated is the family that cannot be derived at all — a seat
-// this config does not carry, an alias, an entry with no family, a tree whose
-// routing table has since been rolled back. A legal close is never invalidated
-// by a rule arriving later, so a record from before the rule closes over an
-// underivable seat. That tolerance is BOUNDED in the same shape as the gate
+// EXACTLY ONE THING is tolerated: a family that cannot be derived AT ALL — the
+// seat table does not carry the seat, the name is an alias, the entry records
+// no family, or the config cannot be read. A legal close is never invalidated
+// by a rule arriving later, so a record from before the rule closes over a seat
+// nothing can resolve. That tolerance is BOUNDED in the same shape as the gate
 // identity check: once any route of that phase in this stream carries the
 // derived marker, a later one without it is an omission, not a legacy record,
 // and omission would otherwise be the cheapest way past this binding — name a
 // seat nobody has heard of and the family goes unchecked. Each phase is bounded
 // by its own records, so a stream that derived reviewers before it derived
 // authors does not retroactively condemn its own author routes.
+//
+// A DERIVED FAMILY THAT DISAGREES IS NEVER TOLERATED — not at any age, not
+// under any marker, no exception. The two cases must not be read as one, and a
+// rolled-back routing table is precisely where they part company: a rollback
+// that leaves the seat unresolvable takes the tolerance above, while a rollback
+// that reseats the SAME seat to a different concrete family produces a
+// derivation that succeeds and disagrees, and that refuses. Failing closed is
+// deliberate — this fence cannot tell a config that was corrected from one that
+// was rewritten to launder a past review, and the two are indistinguishable
+// from inside the ledger. The cost is the known limit recorded against this
+// step: the derivation reads the tree's ACTIVE config, not the dated one the
+// record names, so a rollback can refuse a close that was lawful when it was
+// recorded. Closing that needs the record's own dated config, which is routing
+// knowledge and belongs to whoever owns that hold — not to a widened tolerance
+// here, which would trade a refused honest close for an accepted false one.
 function checkRouteFamily(treeRoot, phase, route, routeSeq, records) {
   const spec = FAMILY_DERIVATION[phase];
   const seatName = route[spec.seatField];
