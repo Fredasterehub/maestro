@@ -104,6 +104,7 @@
 // "dispatch-outcome" ledger record rather than an array on the close record,
 // so a mission with many attempts still fits under one line's ceiling.
 
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
@@ -895,50 +896,186 @@ function requireCleanLandingRepo(repo) {
   }
 }
 
-// Commit containment is a one-way proof by itself: "the reviewed commit is an
-// ancestor of the landing branch" is equally true when the landing branch's
-// tip is a later, never-reviewed descendant of the reviewed commit — the
-// reviewed commit still rides along inside it, but so does everything added
-// after it. What closes the gap without breaking the two shapes this mission
-// actually lands with is checking WHERE the reviewed commit sits relative to
-// the landing branch's own tip, not merely whether it is reachable from it:
-//   - a fast-forward / direct landing: the branch tip IS the reviewed commit
-//   - a no-ff merge of exactly the reviewed head: the reviewed commit is one
-//     of the tip's OWN parents
-// A rebase-then-gate flow needs no special case here — the rebase produces a
-// new commit object, which is re-gated and becomes the identity's OWN
-// source_head, so it is the "reviewed commit" this check is applied to, not
-// an ancestor of it. What it refuses: a landing tip whose parents are some
-// other, unreviewed descendant of the reviewed commit — exactly the 4.2c
-// shape, where a second commit rode the work branch to the merge after the
-// gate ran.
-function verifyLandedAtTip(repo, head, landing) {
-  if (landing.head === head) return;
-  const parentsOut = gitOut(repo, ['show', '-s', '--format=%P', landing.head], 'landing head parents');
-  const parents = parentsOut === '' ? [] : parentsOut.split(/\s+/);
-  if (parents.includes(head)) return;
-  throw new Error(
-    `mission: close refused — ${landing.branch} head ${landing.head} contains the reviewed commit ${head} but does not land it directly (its parent(s): ${parents.join(', ') || 'none'}); content beyond the reviewed identity rode along unreviewed`
-  );
+// Commit containment alone is a one-way proof: "the reviewed commit is an
+// ancestor of the landing branch" stays equally true when the branch's own
+// tip is a later, never-reviewed descendant of it — an ordinary commit
+// stacked directly on top, a merge that carries the reviewed head in some
+// position OTHER than the one an honest `git merge` produces, an octopus with
+// a third rider. Testing the tip's own parent list (round one of this fix)
+// is a fixture-shaped proxy for that: membership says the reviewed commit is
+// reachable, never that it is what actually introduced what is on the branch
+// now, and it missed exactly the shapes a rearranged merge produces.
+//
+// What proves the stronger claim — locateLanding, below — is finding the
+// SPECIFIC commit that introduced the reviewed work into the landing
+// branch's own first-parent history, then proving that commit introduced
+// EXACTLY the gated work and nothing riding along with it: the gate record's
+// own patch_digest for an ordinary merge or a direct/rebased landing, patch
+// identity for a squash (whose landed commit is a different object by
+// construction — see gate.js's PATCH_ARGS comment for why patch-id, not the
+// digest, is the right tool there; the digest is exact-byte, patch-id
+// normalises whitespace and hunk offsets, and a squash is exactly the case
+// that normalisation is for).
+//
+// Walking the tip's first-parent chain downward, rather than testing the tip
+// alone, is what survives later, unrelated work landing on the same branch
+// before this mission closes: once the reviewed commit is already contained
+// in a first parent, that parent's own history is where it was actually
+// introduced, and everything stacked above it — however it landed — is
+// simply walked past, because it played no part in landing THIS work. A
+// later sibling's merge (F3) is exactly such a stack: its first parent
+// already carries the reviewed commit, so the walk descends past it without
+// ever inspecting its content. An unreviewed commit or merge sitting where
+// the introduction itself happened is not walked past — it IS the
+// introduction being judged, and it refuses at the point it is found.
+function parentsOf(repo, commit) {
+  const out = gitOut(repo, ['show', '-s', '--format=%P', commit], 'commit parents');
+  return out === '' ? [] : out.split(/\s+/);
+}
+
+function isAncestorOrSelf(repo, ancestor, descendant) {
+  const outcome = git(repo, ['merge-base', '--is-ancestor', ancestor, descendant]);
+  if (outcome.status === 0) return true;
+  if (outcome.status === 1) return false;
+  const detail = (outcome.stderr || '').trim().split('\n')[0] || `exit ${outcome.status}`;
+  throw new Error(`mission: git merge-base failed in "${repo}" (containment): ${detail}`);
+}
+
+// The digest half of §7's canonical patch — pinned knob for knob to gate.js's
+// (not exported), so a merge's own introduced diff is measured the same way
+// the reviewed patch_digest was.
+function canonicalPatchDigest(repo, from, to) {
+  const patch = gitOut(repo, [...PATCH_ARGS, from, to], 'canonical patch');
+  return 'sha256:' + crypto.createHash('sha256').update(patch, 'utf8').digest('hex');
+}
+
+function locateLanding(repo, identity, landing) {
+  const head = identity.source_head;
+
+  // A fast-forward / direct landing (also what a rebase-then-gate flow ends
+  // as, once re-gated: the rebase produces a new object that becomes the
+  // identity's OWN source_head, so it is the "reviewed commit" here, not an
+  // ancestor of it) — the tip IS the reviewed commit, nothing to walk.
+  if (landing.head === head) {
+    return { method: 'commit-containment', landed_head: landing.head };
+  }
+
+  // The reviewed patch's own identity, for matching a squash landing — lazy
+  // and memoized, computed only the first time a commit is actually a squash
+  // candidate (below), against THAT commit rather than the tip: computing it
+  // against a tip already descended from head (the ordinary commit-
+  // containment case) would hand `git merge-base` a commit and its own
+  // ancestor, which returns the ancestor itself — head — turning "the
+  // reviewed patch" into a diff of head against itself. The candidacy check
+  // (isAncestorOrSelf below) is exactly what keeps this call for genuinely
+  // disjoint commits only, where head is not yet reachable from the parent
+  // side and merge-base(head, candidate) is a real, unrelated fork point.
+  let reviewedId;
+  let reviewedIdReady = false;
+  function reviewedPatchId(candidate) {
+    if (reviewedIdReady) return reviewedId;
+    const baseOutcome = git(repo, ['merge-base', head, candidate]);
+    if (baseOutcome.status !== 0) return null;
+    const base = baseOutcome.stdout.trim();
+    const id = patchIdOf(repo, gitOut(repo, [...PATCH_ARGS, base, head], 'reviewed canonical patch'));
+    if (id === null) {
+      throw new Error(
+        `mission: close refused — the reviewed change is empty against its merge base; there is nothing whose landing could be proven`
+      );
+    }
+    reviewedId = id;
+    reviewedIdReady = true;
+    return reviewedId;
+  }
+
+  let cur = landing.head;
+  for (;;) {
+    const parents = parentsOf(repo, cur);
+    if (parents.length === 0) {
+      throw new Error(
+        `mission: close refused — ${landing.branch} neither contains the reviewed commit ${head} nor carries any commit with its patch identity; the landed result is not proven to be the reviewed result`
+      );
+    }
+    if (parents.length === 1) {
+      const [parent] = parents;
+      // The reviewed commit sitting directly in the first-parent chain, with
+      // no merge or squash between it and the tip, means content landed on
+      // this branch without ever going through either landing shape — the
+      // 4.2c-family "ordinary commit stacked on the tip" attack.
+      if (cur === head) {
+        throw new Error(
+          `mission: close refused — ${landing.branch} carries the reviewed commit ${head} directly in its first-parent history with no landing merge or squash between it and ${landing.head}; content beyond the reviewed identity rode along unreviewed`
+        );
+      }
+      if (isAncestorOrSelf(repo, head, parent)) {
+        // head is already contained further down — this ordinary commit is
+        // unrelated to it (another mission's own direct landing, most
+        // likely) and is walked past exactly like a later sibling merge is.
+        cur = parent;
+        continue;
+      }
+      const patch = gitOut(repo, [...PATCH_ARGS, parent, cur], 'landed canonical patch');
+      if (patchIdOf(repo, patch) === reviewedPatchId(cur)) {
+        return { method: 'squash-patch-identity', landed_head: cur };
+      }
+      // An ordinary commit that neither carries the reviewed commit nor
+      // matches its patch identity refuses here rather than being walked
+      // past: unlike a merge, a bare commit carries no structural proof of
+      // WHERE it sits relative to the reviewed work (a merge's own second
+      // parent is that proof; a squash commit has nothing equivalent), so a
+      // later, unrelated commit and unreviewed content riding along a squash
+      // are indistinguishable from here on. The two legitimate shapes tolerate
+      // this: a later sibling still closes when it lands through its own
+      // merge (isAncestorOrSelf above walks past that structurally), and a
+      // squash landing this mission's own close proves must be looked at
+      // before anything else lands as a bare commit on top of it.
+      throw new Error(
+        `mission: close refused — ${cur} is an ordinary commit that neither is the reviewed commit ${head} nor carries its patch identity; content beyond the reviewed identity rode along unreviewed`
+      );
+    }
+    if (parents.length !== 2) {
+      throw new Error(
+        `mission: close refused — ${cur} is an octopus merge (${parents.length} parents); a landing must be an ordinary two-parent merge or a squash, never more`
+      );
+    }
+    const [firstParent, secondParent] = parents;
+    if (isAncestorOrSelf(repo, head, firstParent)) {
+      // The reviewed commit is already contained on the target side of this
+      // merge — it was introduced earlier, and this merge (a later sibling's
+      // own landing, most likely) is not the introduction being judged.
+      cur = firstParent;
+      continue;
+    }
+    if (secondParent !== head) {
+      throw new Error(
+        `mission: close refused — ${cur} merges commit ${secondParent}, not the reviewed commit ${head}; content beyond the reviewed identity rode along unreviewed`
+      );
+    }
+    // The parent shape alone does not bind the merge commit's own tree —
+    // nothing stops a hand-crafted merge object from naming the right
+    // parents and an arbitrary tree — so what the merge itself introduced is
+    // verified independently against the gate record's own patch_digest.
+    const digest = canonicalPatchDigest(repo, firstParent, cur);
+    if (digest !== identity.patch_digest) {
+      throw new Error(
+        `mission: close refused — ${cur} merges the reviewed commit ${head}, but its diff against ${firstParent} does not match the gated patch_digest; content beyond the reviewed identity rode along in the merge itself`
+      );
+    }
+    return { method: 'commit-containment', landed_head: cur };
+  }
 }
 
 // Post-merge proof that the landed result is the reviewed result (§7 chain):
-// an ordinary merge is proven by commit containment — the exact reviewed
-// commit is an ancestor of the landing branch, and (verifyLandedAtTip) sits
-// directly at the landing branch's own tip so nothing unreviewed rides along
-// with it; a squash merge, whose landed commit is a different object by
-// construction, is proven by patch identity over the canonical patch. Nothing
-// weaker closes.
+// locateLanding proves landed-equivalence for both landing shapes — commit
+// containment for an ordinary merge or a direct/rebased landing, patch
+// identity for a squash. Nothing weaker closes.
 //
 // Known limits, stated rather than implied: the repository itself is
 // caller-located (--repo) — no earlier record names a repository yet, so the
 // proof binds the recorded identity to A repository containing it, and the
 // close record therefore names which one (toplevel, root commits, origin) so
 // the proof is re-auditable; binding the repository to a record written
-// earlier in the chain belongs to the step that writes one. And patch_digest
-// is compared record-to-record only: after the merge the merge base has
-// moved, so the review-time digest genuinely cannot be recomputed here —
-// head and tree are re-derived against real git objects, the digest is not.
+// earlier in the chain belongs to the step that writes one.
 function proveLanding(repo, identity) {
   requireLandingRepo(repo);
   requireCleanLandingRepo(repo);
@@ -971,42 +1108,8 @@ function proveLanding(repo, identity) {
     origin: originOutcome.status === 0 && originOutcome.stdout.trim() !== '' ? originOutcome.stdout.trim() : null,
   };
 
-  const contained = git(repo, ['merge-base', '--is-ancestor', head, landing.head]);
-  if (contained.status === 0) {
-    verifyLandedAtTip(repo, head, landing);
-    return { method: 'commit-containment', branch: landing.branch, landed_head: landing.head, repository };
-  }
-  if (contained.status !== 1) {
-    const detail = (contained.stderr || '').trim().split('\n')[0] || `exit ${contained.status}`;
-    throw new Error(`mission: git merge-base failed in "${repo}" (containment): ${detail}`);
-  }
-
-  const baseOutcome = git(repo, ['merge-base', head, landing.head]);
-  if (baseOutcome.status !== 0) {
-    throw new Error(
-      `mission: close refused — the reviewed commit ${head} shares no history with ${landing.branch}; nothing of it can have landed`
-    );
-  }
-  const base = baseOutcome.stdout.trim();
-  const reviewedId = patchIdOf(repo, gitOut(repo, [...PATCH_ARGS, base, head], 'reviewed canonical patch'));
-  if (reviewedId === null) {
-    throw new Error(
-      `mission: close refused — the reviewed change is empty against its merge base; there is nothing whose landing could be proven`
-    );
-  }
-
-  const listed = gitOut(repo, ['rev-list', '--no-merges', `${base}..${landing.head}`], 'landed commits');
-  for (const commit of listed === '' ? [] : listed.split('\n')) {
-    // A parentless commit squashed nothing; skip rather than fail the walk.
-    if (git(repo, ['rev-parse', '--verify', '--quiet', `${commit}^^{commit}`]).status !== 0) continue;
-    const patch = gitOut(repo, [...PATCH_ARGS, `${commit}^`, commit], 'landed canonical patch');
-    if (patchIdOf(repo, patch) === reviewedId) {
-      return { method: 'squash-patch-identity', branch: landing.branch, landed_head: commit, repository };
-    }
-  }
-  throw new Error(
-    `mission: close refused — ${landing.branch} neither contains the reviewed commit ${head} nor carries any commit with its patch identity; the landed result is not proven to be the reviewed result`
-  );
+  const located = locateLanding(repo, identity, landing);
+  return { method: located.method, branch: landing.branch, landed_head: located.landed_head, repository };
 }
 
 function recordsAtSeq(records, seq) {

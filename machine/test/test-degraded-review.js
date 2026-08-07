@@ -638,7 +638,11 @@ const BRIEF = {
 
   const r = fx.runClose(missionRoot, 'mland-changed', repo, fx.closeInputOf(chain, gateSeq));
   assert.strictEqual(r.status, 1, 'landing a different commit than the one reviewed and gated must refuse close');
-  assert.match(r.stderr, /neither contains the reviewed commit .* nor carries any commit with its patch identity/);
+  // locateLanding names the specific commit the merge actually carried (the
+  // amended tip), not the reviewed one, rather than the generic "neither
+  // contains nor carries a matching patch" fallback — the merge's own second
+  // parent is available here, so the refusal says exactly what landed instead.
+  assert.match(r.stderr, /merges commit .*, not the reviewed commit .*; content beyond the reviewed identity rode along unreviewed/);
 }
 
 // =============================================================================
