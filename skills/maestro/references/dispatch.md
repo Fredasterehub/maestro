@@ -113,19 +113,30 @@ Seats pin `model` (alias) and `effort` in their agent frontmatter — dispatch
 routes by seat name and never overrides model inline. What varies is how the
 brief is worded:
 
-- **Sonnet 5 seats** (`scout`, `researcher`, the hosting executors, all
-  reviewers, `plan-counterpart`, `crystallizer`, `handoff-recorder`,
-  `fleet-medic`) follow scope
+- **Sonnet 5 seats** (`scout`, `researcher`, `executor-claude-mech`,
+  `executor-claude-standard`, `reviewer-claude`, `reviewer-degraded-sonnet`,
+  every hosted executor and reviewer — the gpt ladder (`executor-luna`,
+  `executor-terra`, `executor-sol-expert`, `executor-sol-apex`,
+  `reviewer-terra`, `reviewer-sol-expert-rev`, `reviewer-sol-apex-rev`) and
+  `executor-gemini`/`reviewer-gemini` — plus `plan-counterpart`,
+  `crystallizer`, `handoff-recorder`, `fleet-medic`) follow scope
   literally and will not generalize an instruction beyond what it says. State
   scope exhaustively: "every call site, not just the first", "all three
   config files", "the whole directory". A scope they were not told about is a
   scope they will not touch.
-- **Opus 5 seats** (`planner`, `executor-claude`, `context-keeper`) do their
+- **Opus 5 seats** (`executor-claude`, `context-keeper`, `reviewer-claude-expert`,
+  `reviewer-degraded-opus`, `reviewer-degraded-opus-apex`) do their
   best work given the complete specification up front and left to run. Do
   **not** add "double-check your work", "verify before returning", or a final
   self-review step — Opus 5 already self-verifies, and instructing it to
   causes over-verification: slower, no better. Acceptance criteria are fine;
   they are a gate, not a ritual.
+- **Fable 5 seats** (`planner`, `convergence`, `executor-fable-low`,
+  `executor-fable`, `reviewer-claude-apex`, `reviewer-degraded-fable-apex`)
+  have no wording guidance of their own yet — none of these placements has
+  run long enough for a revise-rate signal to say whether Opus 5's guidance
+  above transfers. Until it does, write for them as an Opus 5 seat: complete
+  specification up front, no added self-review ritual.
 - **Review seats** get report-everything language: ask for every finding
   including low-severity and uncertain ones, with confidence and severity per
   finding, and state that zero findings is a legitimate outcome. Never write
