@@ -2926,16 +2926,22 @@ function dispatchOutcomesOf(missionId) {
 
 // --- close: the envelope fence (F1) — no envelope ever produces "blocked",
 // or anything else, for a dispatch neither route nor review stream
-// classifies. Reproduces review-slice7b.md's P2/P3/P4 shape: a late/foreign/
-// bare-CLI envelope naming the stray dispatch's own seat must not turn its
-// refusal into a false "blocked".
+// classifies. Three fixtures, each reproducing one of review-slice7b.md's
+// named constructions directly, since the reviewer's re-check names all
+// three: a late envelope from a reused seat (P2), a successor registered
+// with no route_seq so no dispatch record ever bounds a window (P3), and a
+// bare CLI call naming a dispatch's seat with no worker at all (P4). The
+// fence removed the window entirely, so all three collapse to the same
+// thing: no code here ever reads kind "envelope", whatever wrote it.
+
+// P4 — bare CLI call, no worker involved at all.
 {
-  const missionId = 'mterm-envelope-fence';
+  const missionId = 'mterm-envelope-fence-p4';
   openM(missionId);
   const stray = authorLineage(missionId, {}); // no supersession, no review
 
-  // A bare CLI call naming the stray's seat — indistinguishable, by design,
-  // from a real worker's report, which is exactly why it must not be read.
+  // Indistinguishable, by design, from a real worker's report — which is
+  // exactly why it must not be read.
   const envelope = mission(['record-envelope', root, missionId, 'executor-claude'], {
     state: 'blocked',
     result: 'stuck',
@@ -2948,6 +2954,70 @@ function dispatchOutcomesOf(missionId) {
 
   const { r } = closeWinningChain(missionId);
   assert.strictEqual(r.status, 1, 'a blocked envelope must not manufacture a terminal outcome');
+  assert.match(r.stderr, new RegExp(`dispatch ${stray.dispatchSeq} `));
+  assert.doesNotMatch(r.stderr, /"blocked"|as blocked/);
+  assert.strictEqual(stateOf().missions[missionId].status, 'open');
+}
+
+// P2 — a late envelope, filed against a seat a LATER dispatch has already
+// reused. The stray dispatch is unclassifiable on its own; a report that
+// arrives after the seat moved on must not attach to it retroactively.
+{
+  const missionId = 'mterm-envelope-fence-p2';
+  openM(missionId);
+  const stray = authorLineage(missionId, {}); // no supersession, no review
+  // The same seat name registers again — the ordinary shape of one seat
+  // running a mission's next attempt.
+  const successor = authorLineage(missionId, {});
+
+  const envelope = mission(['record-envelope', root, missionId, 'executor-claude'], {
+    state: 'blocked',
+    result: 'stuck',
+    evidence: 'filed after the seat moved on to the next attempt',
+    risks: 'none',
+    artifact: '',
+    question: 'which direction should this take',
+  });
+  assert.strictEqual(envelope.status, 0, envelope.stderr);
+
+  const { r } = closeWinningChain(missionId);
+  assert.strictEqual(r.status, 1, 'a late envelope on a reused seat must not classify the earlier dispatch');
+  assert.match(r.stderr, new RegExp(`dispatch ${stray.dispatchSeq} `));
+  assert.doesNotMatch(r.stderr, /"blocked"|as blocked/);
+  assert.strictEqual(stateOf().missions[missionId].status, 'open');
+  // The successor is equally unclassifiable and equally unaffected — both
+  // attempts refuse, neither is laundered into "blocked".
+  void successor;
+}
+
+// P3 — a successor registered with no route_seq at all, so roster.js writes
+// no dispatch record for it (its own documented limit) and there is no
+// second dispatch to bound anything against even if a window still existed.
+{
+  const missionId = 'mterm-envelope-fence-p3';
+  openM(missionId);
+  const stray = authorLineage(missionId, {}); // no supersession, no review
+
+  // route.js F3 (review-slice7a.md): a registration naming no route_seq
+  // writes a roster entry but appends no "dispatch" ledger record at all —
+  // so even if a window still existed, this successor could never bound one.
+  const { register, mark } = require(path.join(__dirname, '..', 'src', 'roster.js'));
+  const successorTaskId = `p3-successor-${missionId}`;
+  register(root, { seat: 'executor-claude', task_id: successorTaskId, family: 'claude', mission_id: missionId });
+  mark(root, successorTaskId, 'finished');
+
+  const envelope = mission(['record-envelope', root, missionId, 'executor-claude'], {
+    state: 'blocked',
+    result: 'stuck',
+    evidence: 'a route-less successor filed this',
+    risks: 'none',
+    artifact: '',
+    question: 'which direction should this take',
+  });
+  assert.strictEqual(envelope.status, 0, envelope.stderr);
+
+  const { r } = closeWinningChain(missionId);
+  assert.strictEqual(r.status, 1, 'a route_seq-less successor leaves no dispatch to bound anything, and must not classify the stray');
   assert.match(r.stderr, new RegExp(`dispatch ${stray.dispatchSeq} `));
   assert.doesNotMatch(r.stderr, /"blocked"|as blocked/);
   assert.strictEqual(stateOf().missions[missionId].status, 'open');
