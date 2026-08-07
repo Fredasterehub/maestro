@@ -392,6 +392,75 @@ function reviewInput(authorRouteSeq, overrides) {
   );
 }
 
+// --- author route: the author's family is derived from the seat table too ----
+//
+// The other operand of the same comparison, and the identical move: an
+// executor-claude route asserting family "gpt" makes an honest claude reviewer
+// read as cross-family. Deriving only the reviewer would have left this door
+// beside the fence.
+{
+  assert.strictEqual(routingConfig.seats['executor-claude'].family, 'claude');
+  const m = openMission();
+  assert.throws(
+    () => reserve(root, authorInput({ mission_id: m, author_family: 'gpt' })),
+    /author_family "gpt" contradicts the routing config, which seats "executor-claude" in family "claude"/,
+    'an author family the config contradicts is refused'
+  );
+  assert.strictEqual(recordsOf(m, 'route').length, 0, 'nothing reached disk on the refusal');
+
+  // Underivable is refused, not defaulted — the same three ways as the reviewer.
+  assert.throws(
+    () => reserve(root, authorInput({ mission_id: m, requested_seat: 'executor-luna', resolved_seat: 'executor-luna' })),
+    /the family of author seat "executor-luna" cannot be derived — the routing config's seat table records no seat/
+  );
+  assert.throws(
+    () =>
+      reserve(
+        root,
+        authorInput({
+          mission_id: m,
+          requested_seat: 'executor-sol',
+          resolved_seat: 'executor-sol',
+          author_family: 'gpt',
+          worker_model: 'gpt-5.6-sol',
+          host_model: 'sonnet-5',
+          host_effort: 'high',
+        })
+      ),
+    /records "executor-sol" as an alias of "executor-sol-expert", and an alias seat is never routable/
+  );
+
+  // An honest author route is accepted and says so on the record.
+  const honest = reserve(root, authorInput({ mission_id: m }));
+  assert.strictEqual(honest.author_family, 'claude');
+  assert.strictEqual(honest.author_family_derived, true);
+
+  // A real gpt seat, honestly seated: the fence is about truth, not about
+  // keeping every author on one family.
+  const m2 = openMission();
+  const sol = reserve(
+    root,
+    authorInput({
+      mission_id: m2,
+      requested_seat: 'executor-sol-expert',
+      resolved_seat: 'executor-sol-expert',
+      author_family: 'gpt',
+      worker_model: 'gpt-5.6-sol',
+      worker_effort: 'medium',
+      host_model: 'sonnet-5',
+      host_effort: 'medium',
+    })
+  );
+  assert.strictEqual(sol.author_family, 'gpt');
+  assert.strictEqual(sol.author_family_derived, true);
+
+  // The marker is derived, never caller-supplied.
+  assert.throws(
+    () => reserve(root, authorInput({ mission_id: m, author_family_derived: true })),
+    /unexpected extra key "author_family_derived"/
+  );
+}
+
 // --- review route: no family laundering --------------------------------------
 {
   const m = openMission();
@@ -1141,6 +1210,61 @@ function reviewInput(authorRouteSeq, overrides) {
     /reviewer_family "claude" contradicts the routing config, which seats "reviewer-gemini" in family "gemini"/
   );
   assert.strictEqual(ledger().records.length, before, 'a refused supersession leaves no orphan replacement');
+}
+
+// --- supersede: an author replacement derives its family too ------------------
+// A same-class provider reroute is the transition that MOVES an author across
+// families, so it is the one place a false author family would be introduced
+// after the fact.
+{
+  const m = openMission();
+  const author = reserve(root, authorInput({ mission_id: m }));
+  const before = ledger().records.length;
+  assert.throws(
+    () =>
+      supersede(root, {
+        mission_id: m,
+        predecessor_route_seq: author.seq,
+        transition: 'same-class-provider-reroute',
+        reason: 'infrastructure',
+        evidence_seq: evidenceSeqOf(m),
+        replacement: authorInput({
+          mission_id: m,
+          attempt: 2,
+          author_family: 'gemini', // executor-claude is seated in claude
+          selection: { candidates_skipped: [], substituted: false, substitution_reason: null },
+        }),
+      }),
+    /author_family "gemini" contradicts the routing config, which seats "executor-claude" in family "claude"/
+  );
+  assert.strictEqual(ledger().records.length, before, 'a refused supersession leaves no orphan replacement');
+
+  // The honest reroute across families goes through, and is stamped derived.
+  const out = supersede(root, {
+    mission_id: m,
+    predecessor_route_seq: author.seq,
+    transition: 'same-class-provider-reroute',
+    reason: 'infrastructure',
+    evidence_seq: evidenceSeqOf(m),
+    replacement: authorInput({
+      mission_id: m,
+      attempt: 2,
+      requested_seat: 'executor-claude',
+      resolved_seat: 'executor-sol-expert',
+      author_family: 'gpt',
+      worker_model: 'gpt-5.6-sol',
+      worker_effort: 'medium',
+      host_model: 'sonnet-5',
+      host_effort: 'medium',
+      selection: {
+        candidates_skipped: [],
+        substituted: true,
+        substitution_reason: 'claude lane lost; rerouted in class to the gpt expert rung',
+      },
+    }),
+  });
+  assert.strictEqual(out.route.author_family, 'gpt');
+  assert.strictEqual(out.route.author_family_derived, true);
 }
 
 // --- §9 end to end: one mission walks the shipped Claude ladder --------------
