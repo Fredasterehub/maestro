@@ -17,6 +17,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-mission-'));
 process.on('exit', () => fs.rmSync(tmp, { recursive: true, force: true }));
 
 const root = path.join(tmp, '.maestro');
+fx.initRouting(root);
 
 function run(script, args, stdin, options) {
   return spawnSync(process.execPath, [script, ...args], {
@@ -418,10 +419,13 @@ const mxGateSeq = fx.runGreenGate(root, 'mx', 'tests', mxRepo);
   const author = fx.reserveChain(root, 'mlie', identity); // reserves the honest review route too
   const lying = appendRaw('route', 'mlie', {
     ...fx.reviewRouteInput('mlie', author.authorSeq, author.authorSeq, identity, {
-      reviewer_seat: 'reviewer-terra',
+      // A seat whose config family really is gpt, so the derivation this
+      // record passes leaves the unrecorded deviation as the only thing
+      // wrong with it — which is what this block is about.
+      reviewer_seat: 'reviewer-sol-expert-rev',
       reviewer_family: 'gpt',
-      reviewer_model: 'gpt-5.6',
-      reviewer_effort: 'high',
+      reviewer_model: 'gpt-5.6-sol',
+      reviewer_effort: 'medium',
       independence: 'cross-family',
     }),
     phase: 'review',
@@ -588,6 +592,7 @@ const mxGateSeq = fx.runGreenGate(root, 'mx', 'tests', mxRepo);
 // where no gate record has ever carried an identity.
 {
   const root2 = path.join(tmp, '.maestro-legacy');
+  fx.initRouting(root2);
   const r0 = mission(['open', root2], { mission_id: 'mleg', title: 'legacy tree', brief: VALID_BRIEF });
   assert.strictEqual(r0.status, 0, r0.stderr);
   const repo = fx.newWorkRepo(tmp);
@@ -778,11 +783,14 @@ const mxGateSeq = fx.runGreenGate(root, 'mx', 'tests', mxRepo);
   openM('mxf');
   const repo = fx.newWorkRepo(tmp);
   const identity = fx.artifactIdentity(repo);
+  // A real cross-family seat out of the config's own table: the reviewer's
+  // family is derived from that entry now, so a made-up seat would refuse here
+  // for a reason this block is not about.
   const reserved = {
-    seat: 'reviewer-terra',
+    seat: 'reviewer-sol-expert-rev',
     family: 'gpt',
     model: 'gpt-5.6-sol',
-    effort: 'high',
+    effort: 'medium',
     independence: 'cross-family',
   };
   const chain = fx.reserveChain(root, 'mxf', identity, {
@@ -797,6 +805,8 @@ const mxGateSeq = fx.runGreenGate(root, 'mx', 'tests', mxRepo);
       reviewer_family: reserved.family,
       reviewer_model: reserved.model,
       reviewer_effort: reserved.effort,
+      reviewer_host_model: 'sonnet-5',
+      reviewer_host_effort: 'medium',
       independence: 'cross-family',
     },
   });

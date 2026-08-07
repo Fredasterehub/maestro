@@ -29,6 +29,15 @@
 // The escalation budgets below therefore count *distinct predecessors*, so a
 // retry after such a crash is not charged twice for one escalation event.
 //
+// A REVIEWER'S FAMILY IS DERIVED, NOT ACCEPTED. `reviewer_family` names a fact
+// about the seat, and the routing config's seat table is where that fact lives,
+// so both writers of a review-phase record resolve it there and refuse a record
+// the config contradicts. It was never enough to cross-check the field against
+// the author route's reserved capacity: both are the caller's own words, so the
+// pair can agree and still be false — which is how a `reviewer-gemini` seat with
+// family `claude` entered the ledger through the sanctioned path, defeating §8's
+// cross-family law with one lawful call and no forgery.
+//
 // The §9 escalation state machine is validated here from day one, even though
 // its full consumer lands in a later slice: every route naming a predecessor
 // declares a transition and a reason, and this module decides whether that
@@ -41,7 +50,7 @@ const path = require('node:path');
 const { withLock, appendRecord, readRecords } = require('./jsonl.js');
 const { readJson } = require('./atomic-json.js');
 const { BRIEF_TIER_VALUES } = require('./validators.js');
-const { FAMILIES, DATED_CONFIG_RE } = require('./routing.js');
+const { FAMILIES, DATED_CONFIG_RE, loadRouting } = require('./routing.js');
 
 const LEDGER_BASENAME = 'ledger.jsonl';
 const STATE_BASENAME = 'state.json';
@@ -176,6 +185,46 @@ function checkHostPair(errors, model, effort, modelKey, effortKey, label) {
     checkToken(errors, model, `${label} field "${modelKey}"`);
     checkToken(errors, effort, `${label} field "${effortKey}"`);
   }
+}
+
+// --- the seat table: a family is derived, never asserted ---------------------
+
+// A family a record ASSERTS is worth nothing on its own: the assertion and the
+// reservation it is cross-checked against are both the caller's, so the pair
+// can be self-consistent and false. The routing config is the authority on
+// which family a seat belongs to — the same authority the parity sweep binds
+// agent frontmatter to — and this is the single shape both fences read: this
+// module at reservation time, mission.js again at close.
+//
+// Three ways the family fails to come out, and all three are the same answer:
+// no family. An alias seat is deliberately NOT resolved, matching routing.js's
+// own read rule (an alias exists only so an older config keeps validating, and
+// is never routable), so a record naming one is refused by absence. A seat the
+// table does not carry, and a seat entry that records no family, likewise
+// establish nothing. Callers refuse on `family === null` — a family that
+// cannot be established has not been established, and there is no default.
+function seatFamily(treeRoot, seatName) {
+  let config;
+  try {
+    ({ config } = loadRouting(treeRoot));
+  } catch (err) {
+    return { family: null, reason: `the routing config could not be read (${err.message})` };
+  }
+  const seats = isPlainObject(config.seats) ? config.seats : {};
+  const seat = Object.prototype.hasOwnProperty.call(seats, seatName) ? seats[seatName] : undefined;
+  if (!isPlainObject(seat)) {
+    return { family: null, reason: `the routing config's seat table records no seat "${seatName}"` };
+  }
+  if (Object.prototype.hasOwnProperty.call(seat, 'alias_of')) {
+    return {
+      family: null,
+      reason: `the routing config records "${seatName}" as an alias of "${seat.alias_of}", and an alias seat is never routable`,
+    };
+  }
+  if (!isNonEmptyString(seat.family)) {
+    return { family: null, reason: `the routing config's entry for seat "${seatName}" records no family` };
+  }
+  return { family: seat.family, reason: null };
 }
 
 // --- author-phase route shape ------------------------------------------------
@@ -761,7 +810,34 @@ function reviewPayload(input, predecessorBlock) {
   for (const key of IDENTITY_KEYS) payload.artifact_identity[key] = input.artifact_identity[key];
   payload.phase = 'review';
   payload.predecessor = predecessorBlock;
+  // Derived, never caller-supplied — REVIEW_KEYS excludes it, so a caller
+  // offering it is refused as an extra key. It says one thing: this record's
+  // reviewer_family was checked against the routing config's seat table when
+  // it was written. close reads its presence to tell a record written under
+  // that rule from one that predates it.
+  payload.reviewer_family_derived = true;
   return payload;
+}
+
+// §8's cross-family law rests entirely on a route record's reviewer family
+// being true, and every check downstream reads it as given. So it is derived
+// here from the seat the record names, and a record whose asserted family the
+// config contradicts is refused before it can become durable. Comparing the
+// assertion against the author route's reservation proves nothing — the same
+// caller wrote both — which is exactly how a gemini seat with a claude family
+// passed as lawful.
+function checkReviewerFamilyDerived(treeRoot, input) {
+  const { family, reason } = seatFamily(treeRoot, input.reviewer_seat);
+  if (family === null) {
+    throw new Error(
+      `route: the family of reviewer seat "${input.reviewer_seat}" cannot be derived — ${reason}; a family that cannot be established has not been established`
+    );
+  }
+  if (family !== input.reviewer_family) {
+    throw new Error(
+      `route: reviewer_family "${input.reviewer_family}" contradicts the routing config, which seats "${input.reviewer_seat}" in family "${family}" — a reviewer's family belongs to the seat and is derived from the config, never asserted alongside it`
+    );
+  }
 }
 
 // The author route's reserved review capacity is the promise the review route
@@ -854,6 +930,7 @@ function reserveReview(treeRoot, input) {
   if (!ok) {
     throw new TypeError(`route: invalid review route — ${errors.join('; ')}`);
   }
+  checkReviewerFamilyDerived(treeRoot, input);
   return withOpenMission(treeRoot, input.mission_id, () => {
     const records = readLedger(treeRoot);
     checkReviewAgainstAuthor(input, routeAtSeq(records, input.author_route_seq));
@@ -925,6 +1002,11 @@ function supersede(treeRoot, input) {
       if (!check.ok) {
         throw new TypeError(`route: invalid review route — ${check.errors.join('; ')}`);
       }
+      // The same derivation, because this site writes the same record kind: a
+      // replacement reviewer is exactly where a lost cross-family lane gets
+      // swapped, and a fence only reserveReview held would be one supersede
+      // call away from the hole it closed.
+      checkReviewerFamilyDerived(treeRoot, replacement);
       checkReviewTransition(predecessor, replacement, block);
       checkReviewAgainstAuthor(replacement, routeAtSeq(records, replacement.author_route_seq));
       payload = reviewPayload(replacement, block);
@@ -974,11 +1056,15 @@ commands:
                   dispatch. stdin keys: ${REVIEW_KEYS.join(', ')}.
                   artifact_identity is { source_head, source_tree,
                   patch_digest, dirty } — oids and digests never interchange,
-                  and a dirty worktree is refused. Binds the named author route:
-                  a reviewer differing from its reserved review capacity
-                  requires replacement_reason, an honoured one forbids it, and
-                  cross-family independence naming the author's own family is
-                  refused. Appends phase "review".
+                  and a dirty worktree is refused. reviewer_family is DERIVED
+                  from the routing config's entry for reviewer_seat: a family
+                  the config contradicts is refused, and so is a seat the seat
+                  table does not carry, an alias seat, or an entry recording no
+                  family — an unestablished family never passes as a default.
+                  Binds the named author route: a reviewer differing from its
+                  reserved review capacity requires replacement_reason, an
+                  honoured one forbids it, and cross-family independence naming
+                  the author's own family is refused. Appends phase "review".
   supersede       stdin { mission_id, predecessor_route_seq, transition, reason,
                   evidence_seq, replacement }. transition one of
                   ${TRANSITIONS.join(', ')};
@@ -991,8 +1077,9 @@ commands:
                   per mission, infrastructure/quota/runtime reroutes consume no
                   quality budget, a safety refusal reroutes the unchanged brief,
                   apex invents no higher effort, and an escalation-only profile
-                  is reachable only through an escalation transition. Prints
-                  { route, superseded }.
+                  is reachable only through an escalation transition. A review-
+                  phase replacement derives its reviewer family exactly as
+                  reserve-review does. Prints { route, superseded }.
 
 Every route record is immutable: a predecessor is never overwritten. Refusals
 go to stderr with exit 1; nothing reaches disk on a refusal.
@@ -1041,6 +1128,7 @@ module.exports = {
   reserve,
   reserveReview,
   supersede,
+  seatFamily,
   validateAuthorRoute,
   validateReviewRoute,
   validateArtifactIdentity,

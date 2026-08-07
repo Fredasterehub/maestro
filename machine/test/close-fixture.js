@@ -20,6 +20,7 @@ const GATE = path.join(SRC, 'gate.js');
 
 const { reserve, reserveReview } = require(path.join(SRC, 'route.js'));
 const { artifactIdentity } = require(GATE);
+const routing = require(path.join(SRC, 'routing.js'));
 
 const DIGEST_A = 'sha256:' + 'a'.repeat(64);
 const DIGEST_B = 'sha256:' + 'b'.repeat(64);
@@ -36,6 +37,16 @@ function git(repo, ...args) {
   const r = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8' });
   assert.strictEqual(r.status, 0, `git ${args.join(' ')}: ${r.stderr}`);
   return r.stdout.trim();
+}
+
+// A review route derives its reviewer's family from the routing config's seat
+// table, so a tree that carries this fixture's chain must carry a routing
+// table. Called once per test tree, here rather than copied into every file
+// that uses the fixture. The fixture's reviewer seat is a real config seat, so
+// the derivation agrees with what the chain asserts.
+function initRouting(root) {
+  fs.mkdirSync(root, { recursive: true });
+  return routing.init(root);
 }
 
 let repoCounter = 0;
@@ -201,6 +212,7 @@ function closeMissionFully(root, missionId, opts) {
 }
 
 module.exports = {
+  initRouting,
   newWorkRepo,
   land,
   authorRouteInput,
