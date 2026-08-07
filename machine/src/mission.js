@@ -13,22 +13,31 @@
 // decided against the same locked read (ledger-first: the evidence record
 // lands before the resume pointer moves).
 //
-// close refuses without a cross-family "approve" AND a ledger gate record
-// with exit_code 0 for this mission at the exact seq the caller cites,
-// still latest-by-seq for its gate_id (a superseded green gate is stale
-// evidence) — gate.js run-gate is the only producer of that evidence, so a
-// mission can never report done on prose alone.
+// close derives every fact it enforces from the ledger, never from caller
+// prose. Its input is nothing but sequence references into durable records:
+// the author family comes from the author-phase route record (a caller that
+// could assert its own family could launder one — the old author_family input
+// is gone), review independence and the reviewed artifact identity come from
+// the review-phase route record, pass evidence comes from the gate record at
+// the cited seq (gate.js run-gate is its only producer), and the landed
+// result is proven equivalent to what was reviewed in a real git repository —
+// commit containment for an ordinary merge, patch identity over the canonical
+// patch for a squash. Identity is compared field by field, like with like; a
+// patch digest is never compared with a commit sha. A degraded review's
+// legality is judged under the route snapshot that authorized it: close reads
+// no present-day provider or settings state, so a provider coming back online
+// after a legal degraded review has nothing here to retroactively invalidate.
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 
 const { withLock, appendRecord, readRecords } = require('./jsonl.js');
 const { readJson, writeJson, updateJson } = require('./atomic-json.js');
 const { validateBrief, validateEnvelope } = require('./validators.js');
 const { assertContained } = require('./contain.js');
+const { IDENTITY_FIELDS } = require('./gate.js');
 
-const FAMILIES = new Set(['claude', 'gpt', 'gemini']);
-const REVIEW_VERDICTS = new Set(['approve', 'revise']);
 const MISSION_STATUSES = { OPEN: 'open', DONE: 'done' };
 const DEFAULT_NEXT_ACTION = 'dispatch a worker against brief.json';
 
@@ -332,57 +341,462 @@ function recordConsult(treeRoot, missionId, input) {
   });
 }
 
+// --- close: ledger derivation ------------------------------------------------
+
+// The whole close input: sequence references and nothing else. Every enforced
+// fact is derived from the records these name; there is no key a caller could
+// use to assert a family, a verdict, or an identity.
+const CLOSE_KEYS = [
+  'author_route_seq',
+  'author_dispatch_seq',
+  'review_route_seq',
+  'review_dispatch_seq',
+  'gate_seq',
+  'winning_author_dispatch_seq',
+  'winning_review_dispatch_seq',
+];
+
+const INDEPENDENCE_VALUES = new Set(['cross-family', 'degraded-path']);
+
+// Where the landed result is proven. Same candidates, same order, as gate.js's
+// merge-base resolution, so every stage of the chain measures against the same
+// landing line.
+const LANDING_BRANCHES = ['main', 'master'];
+
+// The canonical patch, pinned knob for knob to gate.js's PATCH_ARGS (which is
+// not exported): the reviewed patch fed to `git patch-id` must be produced by
+// the same rules as the digest the review route recorded, or the squash proof
+// would compare two different notions of "the patch".
+const PATCH_ARGS = [
+  'diff',
+  '--no-color',
+  '--no-ext-diff',
+  '--no-textconv',
+  '--full-index',
+  '--binary',
+  '--no-renames',
+  '--diff-algorithm=myers',
+  '-U3',
+  '--src-prefix=a/',
+  '--dst-prefix=b/',
+];
+
+// An inherited GIT_DIR (or friends) would silently aim git at a different
+// repository than the path we were asked about.
+function gitEnv() {
+  const env = { ...process.env };
+  for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_COMMON_DIR']) {
+    delete env[key];
+  }
+  return env;
+}
+
+function git(repo, args, input) {
+  return spawnSync('git', ['--no-optional-locks', '-C', repo, ...args], {
+    encoding: 'utf8',
+    maxBuffer: 256 * 1024 * 1024,
+    input: input === undefined ? '' : input,
+    env: gitEnv(),
+  });
+}
+
+function gitOut(repo, args, what, input) {
+  const outcome = git(repo, args, input);
+  if (outcome.error) {
+    throw new Error(`mission: could not run git in "${repo}" (${what}): ${outcome.error.message}`);
+  }
+  if (outcome.status !== 0) {
+    const detail = (outcome.stderr || '').trim().split('\n')[0] || `exit ${outcome.status}`;
+    throw new Error(`mission: git ${args[0]} failed in "${repo}" (${what}): ${detail}`);
+  }
+  return outcome.stdout.trim();
+}
+
+// The landing can only be proven in a real git repository: a directory git
+// does not track can neither contain the reviewed commit nor carry its patch.
+function requireLandingRepo(repo) {
+  if (!isNonEmptyString(repo)) {
+    throw new TypeError('mission: the landing repository must be a non-empty path');
+  }
+  let stat;
+  try {
+    stat = fs.statSync(repo);
+  } catch (err) {
+    if (err.code === 'ENOENT') throw new Error(`mission: no such landing repository "${repo}"`);
+    throw err;
+  }
+  if (!stat.isDirectory()) {
+    throw new Error(`mission: landing repository "${repo}" is not a directory`);
+  }
+  if (git(repo, ['rev-parse', '--show-toplevel']).status !== 0) {
+    throw new Error(`mission: "${repo}" is not a git worktree — the landed result can only be proven in a real git context`);
+  }
+}
+
+function landingBranchOf(repo) {
+  for (const branch of LANDING_BRANCHES) {
+    const outcome = git(repo, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`]);
+    if (outcome.status === 0 && outcome.stdout.trim() !== '') {
+      return { branch, head: outcome.stdout.trim() };
+    }
+  }
+  throw new Error(
+    `mission: close refused — no landing branch (${LANDING_BRANCHES.join(' or ')}) exists in "${repo}", so nothing can have landed`
+  );
+}
+
+// `git patch-id --stable` over a canonical patch: whitespace and hunk offsets
+// are normalised away, which is exactly right for proving a squash landed an
+// equivalent change (and exactly why the identity digest does NOT use it).
+function patchIdOf(repo, patch) {
+  const out = gitOut(repo, ['patch-id', '--stable'], 'patch identity', patch);
+  return out === '' ? null : out.split(/\s+/)[0];
+}
+
+// Post-merge proof that the landed result is the reviewed result (§7 chain):
+// an ordinary merge is proven by commit containment — the exact reviewed
+// commit is an ancestor of the landing branch; a squash merge, whose landed
+// commit is a different object by construction, is proven by patch identity
+// over the canonical patch. Nothing weaker closes.
+function proveLanding(repo, identity) {
+  requireLandingRepo(repo);
+  const head = identity.source_head;
+
+  if (git(repo, ['rev-parse', '--verify', '--quiet', `${head}^{commit}`]).status !== 0) {
+    throw new Error(
+      `mission: close refused — the reviewed commit ${head} is unknown to "${repo}"; a landing cannot be proven where the artifact never existed`
+    );
+  }
+  // Like against like, at the landing stage too: the recorded tree must be
+  // the tree of the recorded commit, or the identity never described one
+  // artifact in the first place.
+  const tree = gitOut(repo, ['rev-parse', `${head}^{tree}`], 'reviewed tree');
+  if (tree !== identity.source_tree) {
+    throw new Error(
+      `mission: close refused — recorded source_tree ${identity.source_tree} is not the tree of source_head ${head} (${tree}); the reviewed identity does not describe one artifact`
+    );
+  }
+
+  const landing = landingBranchOf(repo);
+  const contained = git(repo, ['merge-base', '--is-ancestor', head, landing.head]);
+  if (contained.status === 0) {
+    return { method: 'commit-containment', branch: landing.branch, landed_head: landing.head };
+  }
+  if (contained.status !== 1) {
+    const detail = (contained.stderr || '').trim().split('\n')[0] || `exit ${contained.status}`;
+    throw new Error(`mission: git merge-base failed in "${repo}" (containment): ${detail}`);
+  }
+
+  const baseOutcome = git(repo, ['merge-base', head, landing.head]);
+  if (baseOutcome.status !== 0) {
+    throw new Error(
+      `mission: close refused — the reviewed commit ${head} shares no history with ${landing.branch}; nothing of it can have landed`
+    );
+  }
+  const base = baseOutcome.stdout.trim();
+  const reviewedId = patchIdOf(repo, gitOut(repo, [...PATCH_ARGS, base, head], 'reviewed canonical patch'));
+  if (reviewedId === null) {
+    throw new Error(
+      `mission: close refused — the reviewed change is empty against its merge base; there is nothing whose landing could be proven`
+    );
+  }
+
+  const listed = gitOut(repo, ['rev-list', '--no-merges', `${base}..${landing.head}`], 'landed commits');
+  for (const commit of listed === '' ? [] : listed.split('\n')) {
+    // A parentless commit squashed nothing; skip rather than fail the walk.
+    if (git(repo, ['rev-parse', '--verify', '--quiet', `${commit}^^{commit}`]).status !== 0) continue;
+    const patch = gitOut(repo, [...PATCH_ARGS, `${commit}^`, commit], 'landed canonical patch');
+    if (patchIdOf(repo, patch) === reviewedId) {
+      return { method: 'squash-patch-identity', branch: landing.branch, landed_head: commit };
+    }
+  }
+  throw new Error(
+    `mission: close refused — ${landing.branch} neither contains the reviewed commit ${head} nor carries any commit with its patch identity; the landed result is not proven to be the reviewed result`
+  );
+}
+
+function recordsAtSeq(records, seq) {
+  return records.filter((r) => isPlainObject(r) && r.seq === seq);
+}
+
+function routeOfMission(records, missionId, seq, phase, label) {
+  const matches = recordsAtSeq(records, seq);
+  if (matches.length === 0) {
+    throw new Error(`mission: close refused — no ledger record has seq ${seq} (${label})`);
+  }
+  if (matches.length > 1) {
+    throw new Error(`mission: close refused — seq ${seq} is ambiguous (${matches.length} records carry it)`);
+  }
+  const route = matches[0];
+  if (route.kind !== 'route') {
+    throw new Error(
+      `mission: close refused — ledger record at seq ${seq} has kind "${route.kind}", not "route" (${label})`
+    );
+  }
+  if (route.mission_id !== missionId) {
+    throw new Error(
+      `mission: close refused — ${label} at seq ${seq} belongs to mission ${JSON.stringify(route.mission_id)}, not "${missionId}"`
+    );
+  }
+  if (route.phase !== phase) {
+    throw new Error(
+      `mission: close refused — ${label} at seq ${seq} is a "${route.phase}"-phase route, not "${phase}"-phase`
+    );
+  }
+  return route;
+}
+
+// "The dispatch belongs to this mission." The dispatch ledger record's writer
+// (roster.js's post-registration append, §17) ships in a later step, so
+// existence cannot yet be required here — the review route binds the seq as a
+// shape for the same reason. What the disk can already decide is decided: a
+// seq that names another mission's record is a provable lie and refuses the
+// close; a seq no record carries yet claims nothing either way, and a legal
+// close is never invalidated by a writer arriving later.
+function checkDispatchMembership(records, missionId, seq, label) {
+  const matches = recordsAtSeq(records, seq);
+  if (matches.length > 1) {
+    throw new Error(`mission: close refused — seq ${seq} is ambiguous (${matches.length} records carry it)`);
+  }
+  if (matches.length === 0) return;
+  const record = matches[0];
+  const owner = isNonEmptyString(record.mission_id)
+    ? record.mission_id
+    : isNonEmptyString(record.correlation_id)
+      ? record.correlation_id
+      : null;
+  if (owner !== null && owner !== missionId) {
+    throw new Error(
+      `mission: close refused — ${label} ${seq} names a record belonging to mission "${owner}", not "${missionId}"`
+    );
+  }
+}
+
+function requireUnsuperseded(records, missionId, routeSeq, label) {
+  const superseded = records.find(
+    (r) =>
+      isPlainObject(r) &&
+      r.kind === 'route-superseded' &&
+      r.mission_id === missionId &&
+      r.predecessor_route_seq === routeSeq
+  );
+  if (superseded) {
+    throw new Error(
+      `mission: close refused — ${label} at seq ${routeSeq} was superseded by route ${superseded.replacement_route_seq} (seq ${superseded.seq}); only the winning route closes a mission`
+    );
+  }
+}
+
+// Independence and floor, judged against the records alone. A degraded-path
+// review is legal at every class, apex included (no class ceiling), under the
+// route snapshot that authorized it — deliberately, there is no code here
+// that consults preflight, settings, or any present-day lane state, which is
+// what makes a provider's recovery after a legal degraded review incapable of
+// retroactively invalidating it.
+function checkReviewLegality(authorRoute, reviewRoute) {
+  const family = authorRoute.author_family;
+  if (!INDEPENDENCE_VALUES.has(reviewRoute.independence)) {
+    throw new Error(
+      `mission: close refused — review route independence ${JSON.stringify(reviewRoute.independence)} is outside ${[...INDEPENDENCE_VALUES].join(' | ')}`
+    );
+  }
+  if (reviewRoute.independence === 'cross-family' && reviewRoute.reviewer_family === family) {
+    throw new Error(
+      `mission: close refused — review is labeled cross-family but reviewer family "${reviewRoute.reviewer_family}" is the author family: a degraded review reported as cross-family is a laundered label`
+    );
+  }
+  const reserved = authorRoute.reserved_review;
+  const honoured =
+    isPlainObject(reserved) &&
+    reserved.seat === reviewRoute.reviewer_seat &&
+    reserved.family === reviewRoute.reviewer_family &&
+    reserved.model === reviewRoute.reviewer_model &&
+    reserved.effort === reviewRoute.reviewer_effort &&
+    reserved.independence === reviewRoute.independence;
+  if (!honoured && !isNonEmptyString(reviewRoute.replacement_reason)) {
+    throw new Error(
+      `mission: close refused — the review profile differs from the capacity reserved at route time ${JSON.stringify(reserved)} with no recorded replacement_reason; the floor recorded at route time was not met`
+    );
+  }
+}
+
+function reviewedIdentityOf(reviewRoute, reviewRouteSeq) {
+  const identity = reviewRoute.artifact_identity;
+  if (!isPlainObject(identity)) {
+    throw new Error(
+      `mission: close refused — review route at seq ${reviewRouteSeq} carries no artifact identity; nothing binds what was reviewed`
+    );
+  }
+  if (identity.dirty !== false) {
+    throw new Error(
+      `mission: close refused — the reviewed artifact identity is dirty; a dirty worktree is never a reviewable artifact`
+    );
+  }
+  return identity;
+}
+
+// The gate's identity binding (§7 chain). A record from before identities were
+// carried has neither field and claims nothing either way — it still closes,
+// since a legal close is never invalidated by a field arriving later. A record
+// that does carry them must name the reviewed artifact, field by field, and
+// its identity_check must not report that the tree changed during the run —
+// the same rule check-honesty applies, so close and the audit agree on the
+// same record.
+function checkGateIdentity(gate, reviewedIdentity, gateSeq) {
+  const hasIdentity = Object.prototype.hasOwnProperty.call(gate, 'artifact_identity');
+  const hasCheck = Object.prototype.hasOwnProperty.call(gate, 'identity_check');
+  if (!hasIdentity && !hasCheck) return;
+
+  if (!isPlainObject(gate.artifact_identity)) {
+    throw new Error(
+      `mission: close refused — gate record at seq ${gateSeq} could not name the identity it tested; a gate that names no artifact is not evidence for this one`
+    );
+  }
+  const changed = IDENTITY_FIELDS.filter((field) => gate.artifact_identity[field] !== reviewedIdentity[field]);
+  if (changed.length > 0) {
+    throw new Error(
+      `mission: close refused — the gate at seq ${gateSeq} tested a different artifact than the review: field(s) ${changed.join(', ')} differ; the artifact changed between review and gate`
+    );
+  }
+  const check = gate.identity_check;
+  if (isPlainObject(check) && check.verified === false) {
+    const fields = Array.isArray(check.changed) ? check.changed.map((c) => c.field).join(', ') : 'unknown field(s)';
+    throw new Error(
+      `mission: close refused — gate record at seq ${gateSeq} mutated the tree it tested (${fields} changed across the run); such a pass is not evidence for the artifact it named`
+    );
+  }
+}
+
+// Everything the ledger can decide about this close, decided in one place.
+// Returns the resolved records; every check refuses by throwing.
+function deriveCloseFacts(records, missionId, input) {
+  const authorRoute = routeOfMission(records, missionId, input.author_route_seq, 'author', 'author route');
+  const reviewRoute = routeOfMission(records, missionId, input.review_route_seq, 'review', 'review route');
+
+  if (reviewRoute.author_route_seq !== input.author_route_seq) {
+    throw new Error(
+      `mission: close refused — review route at seq ${input.review_route_seq} binds author route ${reviewRoute.author_route_seq}, not ${input.author_route_seq}`
+    );
+  }
+  if (reviewRoute.author_dispatch_seq !== input.author_dispatch_seq) {
+    throw new Error(
+      `mission: close refused — review route at seq ${input.review_route_seq} binds author dispatch ${reviewRoute.author_dispatch_seq}, not ${input.author_dispatch_seq}`
+    );
+  }
+
+  checkDispatchMembership(records, missionId, input.author_dispatch_seq, 'author dispatch seq');
+  checkDispatchMembership(records, missionId, input.review_dispatch_seq, 'review dispatch seq');
+
+  // The cited route chain must be un-superseded (below), which makes it the
+  // winning topology — so the winning attribution must be the very dispatches
+  // that chain binds, not seqs of the caller's choosing.
+  if (input.winning_author_dispatch_seq !== reviewRoute.author_dispatch_seq) {
+    throw new Error(
+      `mission: close refused — winning_author_dispatch_seq ${input.winning_author_dispatch_seq} is not the author dispatch ${reviewRoute.author_dispatch_seq} the winning review route binds`
+    );
+  }
+  if (input.winning_review_dispatch_seq !== input.review_dispatch_seq) {
+    throw new Error(
+      `mission: close refused — winning_review_dispatch_seq ${input.winning_review_dispatch_seq} is not the cited review dispatch ${input.review_dispatch_seq}`
+    );
+  }
+
+  requireUnsuperseded(records, missionId, input.author_route_seq, 'author route');
+  requireUnsuperseded(records, missionId, input.review_route_seq, 'review route');
+
+  checkReviewLegality(authorRoute, reviewRoute);
+  const identity = reviewedIdentityOf(reviewRoute, input.review_route_seq);
+
+  // Gate evidence: kind, mission, real exit 0, latest-by-seq for its gate_id
+  // (check-honesty's law — a stale success can never paper over a later
+  // failure), and the §7 identity binding.
+  const gateSeq = input.gate_seq;
+  const gateMatches = recordsAtSeq(records, gateSeq);
+  if (gateMatches.length === 0) {
+    throw new Error(`mission: close refused — no ledger record has seq ${gateSeq}`);
+  }
+  if (gateMatches.length > 1) {
+    throw new Error(`mission: close refused — seq ${gateSeq} is ambiguous (${gateMatches.length} records carry it)`);
+  }
+  const gate = gateMatches[0];
+  if (gate.kind !== 'gate') {
+    throw new Error(
+      `mission: close refused — ledger record at seq ${gateSeq} has kind "${gate.kind}", not "gate"`
+    );
+  }
+  if (gate.mission_id !== missionId) {
+    throw new Error(
+      `mission: close refused — gate record at seq ${gateSeq} belongs to mission ${JSON.stringify(gate.mission_id)}, not "${missionId}"`
+    );
+  }
+  if (gate.exit_code !== 0) {
+    throw new Error(
+      `mission: close refused — gate record at seq ${gateSeq} has exit_code ${JSON.stringify(gate.exit_code)}, and only a real 0 closes a mission`
+    );
+  }
+  for (const record of records) {
+    if (!isPlainObject(record) || record.kind !== 'gate') continue;
+    if (record.mission_id !== missionId || record.gate_id !== gate.gate_id) continue;
+    if (Number.isSafeInteger(record.seq) && record.seq > gate.seq) {
+      throw new Error(
+        `mission: close refused — gate "${gate.gate_id}" at seq ${gateSeq} is superseded by a later run at seq ${record.seq} (latest-by-seq honesty)`
+      );
+    }
+  }
+  checkGateIdentity(gate, identity, gateSeq);
+
+  return { authorRoute, reviewRoute, gate, identity };
+}
+
+function closePayloadOf(missionId, input, facts, landing) {
+  const identity = {};
+  for (const field of IDENTITY_FIELDS) identity[field] = facts.identity[field];
+  return {
+    mission_id: missionId,
+    author_route_seq: input.author_route_seq,
+    author_dispatch_seq: input.author_dispatch_seq,
+    review_route_seq: input.review_route_seq,
+    review_dispatch_seq: input.review_dispatch_seq,
+    gate_seq: input.gate_seq,
+    winning_author_dispatch_seq: input.winning_author_dispatch_seq,
+    winning_review_dispatch_seq: input.winning_review_dispatch_seq,
+    author_family: facts.authorRoute.author_family,
+    author_seat: facts.authorRoute.resolved_seat,
+    task_class: facts.authorRoute.task_class,
+    review: {
+      seat: facts.reviewRoute.reviewer_seat,
+      family: facts.reviewRoute.reviewer_family,
+      model: facts.reviewRoute.reviewer_model,
+      effort: facts.reviewRoute.reviewer_effort,
+      independence: facts.reviewRoute.independence,
+      replacement_reason: facts.reviewRoute.replacement_reason === undefined ? null : facts.reviewRoute.replacement_reason,
+    },
+    artifact_identity: identity,
+    landing,
+  };
+}
+
 // --- close -------------------------------------------------------------------
 
-function closeMission(treeRoot, missionId, input) {
+function closeMission(treeRoot, missionId, input, options) {
   if (!isSafeSegment(missionId)) {
     throw new TypeError(`mission: missionId must match ${SEGMENT_RE}`);
   }
   if (!isPlainObject(input)) {
     throw new TypeError('mission: close requires a JSON object via stdin');
   }
-  assertExactKeys(input, ['author_family', 'review', 'gate_seq'], [], 'close input');
-  const { author_family: authorFamily, review, gate_seq: gateSeq } = input;
-  if (!FAMILIES.has(authorFamily)) {
-    throw new TypeError(
-      `mission: "author_family" must be one of ${[...FAMILIES].join(', ')} (got ${JSON.stringify(authorFamily)})`
-    );
+  assertExactKeys(input, CLOSE_KEYS, [], 'close input');
+  for (const key of CLOSE_KEYS) {
+    if (!Number.isSafeInteger(input[key]) || input[key] < 0) {
+      throw new TypeError(`mission: "${key}" must be a nonnegative integer naming a ledger seq`);
+    }
   }
-  if (!isPlainObject(review)) {
-    throw new TypeError('mission: "review" must be an object { verdict, family }');
-  }
-  assertExactKeys(review, ['verdict', 'family'], [], 'close review');
-  if (!REVIEW_VERDICTS.has(review.verdict)) {
-    throw new TypeError(
-      `mission: "review.verdict" must be one of ${[...REVIEW_VERDICTS].join(', ')} (got ${JSON.stringify(review.verdict)})`
-    );
-  }
-  if (!FAMILIES.has(review.family)) {
-    throw new TypeError(
-      `mission: "review.family" must be one of ${[...FAMILIES].join(', ')} (got ${JSON.stringify(review.family)})`
-    );
-  }
-  if (!Number.isSafeInteger(gateSeq) || gateSeq < 0) {
-    throw new TypeError('mission: "gate_seq" must be a nonnegative integer naming a ledger seq');
-  }
-
-  // The three refusals that make "done" mean something. Verdict and family
-  // are checked before any file is touched; the gate evidence is re-read
-  // under the state lock so a close can never race its own evidence.
-  if (review.verdict !== 'approve') {
-    throw new Error(
-      `mission: close refused — review verdict is "${review.verdict}", and only "approve" closes a mission`
-    );
-  }
-  if (review.family === authorFamily) {
-    throw new Error(
-      `mission: close refused — review.family ("${review.family}") equals author_family: cross-family review law`
-    );
-  }
+  const repo = isPlainObject(options) && isNonEmptyString(options.repo) ? options.repo : process.cwd();
 
   const statePath = statePathOf(treeRoot);
   const ledgerPath = ledgerPathOf(treeRoot);
   let closeSeq;
+  let payload;
 
   updateJson(
     statePath,
@@ -395,50 +809,14 @@ function closeMission(treeRoot, missionId, input) {
         const detail = errors.map((e) => `line ${e.line}: ${e.reason}`).join('; ');
         throw new Error(`mission: ${ledgerPath} has malformed record(s) — refusing to trust this stream: ${detail}`);
       }
-      const matches = records.filter((r) => isPlainObject(r) && r.seq === gateSeq);
-      if (matches.length === 0) {
-        throw new Error(`mission: close refused — no ledger record has seq ${gateSeq}`);
-      }
-      if (matches.length > 1) {
-        throw new Error(`mission: close refused — seq ${gateSeq} is ambiguous (${matches.length} records carry it)`);
-      }
-      const gate = matches[0];
-      if (gate.kind !== 'gate') {
-        throw new Error(
-          `mission: close refused — ledger record at seq ${gateSeq} has kind "${gate.kind}", not "gate"`
-        );
-      }
-      if (gate.mission_id !== missionId) {
-        throw new Error(
-          `mission: close refused — gate record at seq ${gateSeq} belongs to mission ${JSON.stringify(gate.mission_id)}, not "${missionId}"`
-        );
-      }
-      if (gate.exit_code !== 0) {
-        throw new Error(
-          `mission: close refused — gate record at seq ${gateSeq} has exit_code ${JSON.stringify(gate.exit_code)}, and only a real 0 closes a mission`
-        );
-      }
-      // Latest-by-seq honesty (check-honesty's law, enforced at close): the
-      // cited green gate must still be the newest record for its gate_id on
-      // this mission — a stale success can never paper over a later failure.
-      for (const record of records) {
-        if (!isPlainObject(record) || record.kind !== 'gate') continue;
-        if (record.mission_id !== missionId || record.gate_id !== gate.gate_id) continue;
-        if (Number.isSafeInteger(record.seq) && record.seq > gate.seq) {
-          throw new Error(
-            `mission: close refused — gate "${gate.gate_id}" at seq ${gateSeq} is superseded by a later run at seq ${record.seq} (latest-by-seq honesty)`
-          );
-        }
-      }
+
+      const facts = deriveCloseFacts(records, missionId, input);
+      const landing = proveLanding(repo, facts.identity);
+      payload = closePayloadOf(missionId, input, facts, landing);
 
       closeSeq = appendRecord(ledgerPath, {
         kind: 'mission-close',
-        payload: {
-          mission_id: missionId,
-          author_family: authorFamily,
-          review: { verdict: review.verdict, family: review.family },
-          gate_seq: gateSeq,
-        },
+        payload,
         correlation_id: missionId,
       }).seq;
 
@@ -459,14 +837,20 @@ function closeMission(treeRoot, missionId, input) {
     undefined
   );
 
-  return { mission_id: missionId, status: MISSION_STATUSES.DONE, ledger_seq: closeSeq, gate_seq: gateSeq };
+  return {
+    mission_id: missionId,
+    status: MISSION_STATUSES.DONE,
+    ledger_seq: closeSeq,
+    gate_seq: input.gate_seq,
+    landing: payload.landing,
+  };
 }
 
 // --- CLI ---------------------------------------------------------------------
 
 const HELP = `mission.js — maestro mission lifecycle (sole writer of mission records)
 
-usage: mission.js <command> <treeRoot> [args]   (input JSON piped via stdin)
+usage: mission.js <command> [flags] <treeRoot> [args]   (input JSON piped via stdin)
 
 commands:
   open <treeRoot>
@@ -486,18 +870,35 @@ commands:
       missions/<id>/envelopes/<ts>-<seat>.json, then ledger kind "envelope".
   record-consult <treeRoot> <missionId>
       stdin { consult_id, question, verdict, anchor } — ledger kind "consult".
-  close <treeRoot> <missionId>
-      stdin { author_family, review: { verdict, family }, gate_seq }.
-      REFUSES unless review.verdict is "approve", review.family differs from
-      author_family (cross-family review law), and the ledger record at seq
-      gate_seq is kind "gate" with exit_code 0 for this mission AND is the
-      latest gate record for its gate_id on this mission — a green gate that
-      a later run has superseded is stale evidence (gate.js run-gate is the
-      only producer of that evidence). On success sets status "done" and
-      appends ledger kind "mission-close".
+  close [--repo <path>] <treeRoot> <missionId>
+      stdin: sequence references and nothing else —
+      { ${CLOSE_KEYS.join(', ')} }
+      (the winning seqs equal the primary ones in the single-attempt case).
+      Every enforced fact is DERIVED from the records those seqs name, never
+      accepted from the caller: the author family comes from the author-phase
+      route record, the reviewer profile, independence and reviewed artifact
+      identity from the review-phase route record, pass evidence from the
+      gate record. REFUSES when: either route is missing, ambiguous, of the
+      wrong kind/phase/mission, or superseded by a replacement; the review
+      route binds a different author route or author dispatch; a dispatch seq
+      names another mission's record; the winning seqs are not the dispatches
+      the cited chain binds; a review labeled cross-family names a reviewer
+      of the author's own family; the review profile differs from the
+      capacity reserved at route time with no replacement_reason; the gate is
+      not exit 0, not this mission's, not the latest run of its gate_id, or
+      names a different artifact identity than the review (field by field —
+      a digest is never compared with a commit sha) or reports its tree
+      changed during the run; or the landed result is not proven equivalent
+      in --repo (default: current directory): commit containment for an
+      ordinary merge, patch identity over the canonical patch for a squash.
+      A degraded-path review is legal at every class under the route snapshot
+      that authorized it; close reads no present-day provider state, so a
+      provider recovering after a legal degraded review changes nothing. On
+      success sets status "done" and appends ledger kind "mission-close"
+      naming the derived facts and the landing proof.
 
-Families: ${[...FAMILIES].join(' | ')}. Prints a result JSON on success and
-exits 0; any refusal prints its reason to stderr and exits 1.
+Prints a result JSON on success and exits 0; any refusal prints its reason to
+stderr and exits 1.
 `;
 
 function readStdinJson() {
@@ -529,12 +930,25 @@ function main(argv) {
     process.stdout.write(HELP);
     process.exit(0);
   }
-  const [command, ...rest] = argv;
+  const [command, ...restRaw] = argv;
   if (!Object.prototype.hasOwnProperty.call(COMMAND_ARITY, command)) {
     process.stderr.write(
       `mission.js: ${command === undefined ? 'a command is required' : `unknown command "${command}"`}\n${HELP}`
     );
     process.exit(1);
+  }
+  // close takes an optional leading --repo <path> naming the repository the
+  // landing is proven in; it is a location, not an asserted fact — the proof
+  // itself is derived by git from the recorded identity.
+  let rest = restRaw;
+  let closeRepo;
+  if (command === 'close' && rest[0] === '--repo') {
+    if (rest.length < 2) {
+      process.stderr.write(`mission.js: --repo requires a path\n${HELP}`);
+      process.exit(1);
+    }
+    closeRepo = rest[1];
+    rest = rest.slice(2);
   }
   if (rest.length !== COMMAND_ARITY[command]) {
     process.stderr.write(
@@ -560,7 +974,7 @@ function main(argv) {
     } else if (command === 'record-consult') {
       result = recordConsult(treeRoot, rest[1], input);
     } else {
-      result = closeMission(treeRoot, rest[1], input);
+      result = closeMission(treeRoot, rest[1], input, { repo: closeRepo });
     }
     process.stdout.write(JSON.stringify(result, null, 2) + '\n');
     process.exit(0);
@@ -580,7 +994,7 @@ module.exports = {
   recordEnvelope,
   recordConsult,
   closeMission,
-  FAMILIES,
-  REVIEW_VERDICTS,
+  CLOSE_KEYS,
+  LANDING_BRANCHES,
   MISSION_STATUSES,
 };

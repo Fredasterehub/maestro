@@ -269,10 +269,18 @@ const VALID_BRIEF = {
   assert.strictEqual(ledgerOf().length, ledger.length, 'refused envelope appends nothing');
 }
 
-// --- 9. gate run-gate with a passing cmd --------------------------------------
+// --- 9. route chain + gate run-gate with a passing cmd ------------------------
+// close derives from records, so the lifecycle now runs the real chain: an
+// author route, a review route binding the artifact identity of a fixture
+// repo, and a gate run in that same worktree.
+const fx = require('./close-fixture.js');
 let passSeq;
+let m1Repo;
+let m1Chain;
 {
-  const r = ok(run('gate.js', ['run-gate', root, 'm1', 'tests', '--', 'true']), 'run-gate');
+  m1Repo = fx.newWorkRepo(tmp);
+  m1Chain = fx.reserveChain(root, 'm1', fx.artifactIdentity(m1Repo));
+  const r = ok(run('gate.js', ['run-gate', '--worktree', m1Repo, root, 'm1', 'tests', '--', 'true']), 'run-gate');
   const out = JSON.parse(r.stdout);
   assert.strictEqual(out.exit_code, 0);
   passSeq = out.ledger_seq;
@@ -287,36 +295,29 @@ let passSeq;
   assert.strictEqual(JSON.parse(honesty.stdout).ok, true);
 }
 
-// --- 10. close refused on same-family review ----------------------------------
+// --- 10. close refused while the reviewed result has not landed ----------------
 {
   refused(
-    run('mission.js', ['close', root, 'm1'], {
-      author_family: 'gpt',
-      review: { verdict: 'approve', family: 'gpt' },
-      gate_seq: passSeq,
-    }),
-    /cross-family/,
-    'same-family close'
+    fx.runClose(root, 'm1', m1Repo, fx.closeInputOf(m1Chain, passSeq)),
+    /neither contains the reviewed commit/,
+    'unlanded close'
   );
   assert.strictEqual(stateOf().missions.m1.status, 'open', 'refusal leaves the mission open');
 }
 
-// --- 11. close succeeds with cross-family approve + gate seq ------------------
+// --- 11. close succeeds once the reviewed commit is contained in the landing --
 {
-  const r = ok(
-    run('mission.js', ['close', root, 'm1'], {
-      author_family: 'gpt',
-      review: { verdict: 'approve', family: 'claude' },
-      gate_seq: passSeq,
-    }),
-    'cross-family close'
-  );
-  void r;
+  fx.land(m1Repo, 'merge');
+  const r = ok(fx.runClose(root, 'm1', m1Repo, fx.closeInputOf(m1Chain, passSeq)), 'derived close');
+  assert.strictEqual(JSON.parse(r.stdout).landing.method, 'commit-containment');
   const state = stateOf();
   assert.strictEqual(state.missions.m1.status, 'done');
   assert.strictEqual(state.missions.m1.next_action, null);
   const ledger = ledgerOf();
-  assert.strictEqual(ledger[ledger.length - 1].kind, 'mission-close');
+  const close = ledger[ledger.length - 1];
+  assert.strictEqual(close.kind, 'mission-close');
+  assert.strictEqual(close.author_family, 'claude', 'the author family is derived from the route record');
+  assert.strictEqual(close.review.independence, 'degraded-path');
 }
 
 // A second mission stays open so the handoff has a mission line to render.

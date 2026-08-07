@@ -8,18 +8,21 @@ const { spawnSync } = require('node:child_process');
 
 const MISSION = path.join(__dirname, '..', 'src', 'mission.js');
 const GATE = path.join(__dirname, '..', 'src', 'gate.js');
-const { readRecords } = require(path.join(__dirname, '..', 'src', 'jsonl.js'));
+const { readRecords, appendRecord } = require(path.join(__dirname, '..', 'src', 'jsonl.js'));
 const { readJson } = require(path.join(__dirname, '..', 'src', 'atomic-json.js'));
+const { supersede } = require(path.join(__dirname, '..', 'src', 'route.js'));
+const fx = require('./close-fixture.js');
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-mission-'));
 process.on('exit', () => fs.rmSync(tmp, { recursive: true, force: true }));
 
 const root = path.join(tmp, '.maestro');
 
-function run(script, args, stdin) {
+function run(script, args, stdin, options) {
   return spawnSync(process.execPath, [script, ...args], {
     input: stdin === undefined ? '' : JSON.stringify(stdin),
     encoding: 'utf8',
+    ...(options || {}),
   });
 }
 
@@ -44,6 +47,18 @@ function stateOf() {
 
 function ledgerOf() {
   return readRecords(path.join(root, 'ledger.jsonl'));
+}
+
+function openM(id, extra) {
+  const r = mission(['open', root], { mission_id: id, title: `mission ${id}`, brief: VALID_BRIEF, ...(extra || {}) });
+  assert.strictEqual(r.status, 0, r.stderr);
+  return JSON.parse(r.stdout).ledger_seq;
+}
+
+// Hand-appends a raw route/gate record, bypassing its sanctioned writer: close
+// is the last fence and must refuse a lying record no matter who wrote it.
+function appendRaw(kind, missionId, payload) {
+  return appendRecord(path.join(root, 'ledger.jsonl'), { kind, payload, correlation_id: missionId });
 }
 
 // --- help --------------------------------------------------------------------
@@ -206,105 +221,350 @@ function ledgerOf() {
   assert.match(bad.stderr, /anchor/);
 }
 
-// --- gates for the close tests ----------------------------------------------
-const passGate = run(GATE, ['run-gate', root, 'm1', 'tests', '--', 'true']);
-assert.strictEqual(passGate.status, 0, passGate.stderr);
-const passSeq = JSON.parse(passGate.stdout).ledger_seq;
+// --- close testbed: the m1 chain (reviewed, gated, not yet landed) -----------
+// A second mission "mx" provides genuinely foreign records for the
+// cross-mission refusals.
+const m1Repo = fx.newWorkRepo(tmp);
+const m1Identity = fx.artifactIdentity(m1Repo);
+const m1Chain = fx.reserveChain(root, 'm1', m1Identity);
+const m1GateSeq = fx.runGreenGate(root, 'm1', 'tests', m1Repo);
+const m1Input = fx.closeInputOf(m1Chain, m1GateSeq);
 
-const failGate = run(GATE, ['run-gate', root, 'm1', 'lint', '--', 'false']);
-assert.strictEqual(failGate.status, 0, failGate.stderr);
-const failSeq = JSON.parse(failGate.stdout).ledger_seq;
-assert.strictEqual(JSON.parse(failGate.stdout).exit_code, 1);
+const mxOpenSeq = openM('mx');
+const mxRepo = fx.newWorkRepo(tmp);
+const mxChain = fx.reserveChain(root, 'mx', fx.artifactIdentity(mxRepo));
+const mxGateSeq = fx.runGreenGate(root, 'mx', 'tests', mxRepo);
 
-const m2Gate = run(GATE, ['run-gate', root, 'm2', 'tests', '--', 'true']);
-assert.strictEqual(m2Gate.status, 0, m2Gate.stderr);
-const m2Seq = JSON.parse(m2Gate.stdout).ledger_seq;
-
-// --- close: refusals ---------------------------------------------------------
+// --- close: the caller-assertion channel is gone -----------------------------
 {
-  // same-family review
-  let r = mission(['close', root, 'm1'], {
-    author_family: 'gpt',
-    review: { verdict: 'approve', family: 'gpt' },
-    gate_seq: passSeq,
-  });
+  // author_family is not an input key any more — the ledger is the authority,
+  // and a caller that can assert its own family can launder one.
+  let r = fx.runClose(root, 'm1', m1Repo, { ...m1Input, author_family: 'gpt' });
   assert.strictEqual(r.status, 1);
-  assert.match(r.stderr, /cross-family/);
+  assert.match(r.stderr, /unexpected extra key "author_family"/);
 
-  // revise verdict
-  r = mission(['close', root, 'm1'], {
-    author_family: 'gpt',
-    review: { verdict: 'revise', family: 'claude' },
-    gate_seq: passSeq,
-  });
+  r = fx.runClose(root, 'm1', m1Repo, { ...m1Input, review: { verdict: 'approve', family: 'gpt' } });
   assert.strictEqual(r.status, 1);
-  assert.match(r.stderr, /"revise"/);
+  assert.match(r.stderr, /unexpected extra key "review"/);
 
-  // verdict outside the vocabulary
-  r = mission(['close', root, 'm1'], {
-    author_family: 'gpt',
-    review: { verdict: 'lgtm', family: 'claude' },
-    gate_seq: passSeq,
-  });
+  const missing = { ...m1Input };
+  delete missing.winning_review_dispatch_seq;
+  r = fx.runClose(root, 'm1', m1Repo, missing);
   assert.strictEqual(r.status, 1);
-  assert.match(r.stderr, /verdict/);
+  assert.match(r.stderr, /missing required key "winning_review_dispatch_seq"/);
 
-  // missing gate record
-  r = mission(['close', root, 'm1'], {
-    author_family: 'gpt',
-    review: { verdict: 'approve', family: 'claude' },
-    gate_seq: 9999,
-  });
+  r = fx.runClose(root, 'm1', m1Repo, { ...m1Input, gate_seq: '5' });
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /"gate_seq" must be a nonnegative integer/);
+}
+
+// --- close: route derivation refusals ----------------------------------------
+{
+  // no record at the cited seq
+  let r = fx.runClose(root, 'm1', m1Repo, { ...m1Input, author_route_seq: 9999 });
   assert.strictEqual(r.status, 1);
   assert.match(r.stderr, /no ledger record has seq 9999/);
 
-  // failed gate
-  r = mission(['close', root, 'm1'], {
-    author_family: 'gpt',
-    review: { verdict: 'approve', family: 'claude' },
-    gate_seq: failSeq,
-  });
+  // a record that is not a route (seq 0 is m1's mission-open)
+  r = fx.runClose(root, 'm1', m1Repo, { ...m1Input, author_route_seq: 0 });
   assert.strictEqual(r.status, 1);
-  assert.match(r.stderr, /exit_code 1/);
+  assert.match(r.stderr, /kind "mission-open", not "route"/);
 
-  // a ledger record that is not a gate (seq 0 is mission-open)
-  r = mission(['close', root, 'm1'], {
-    author_family: 'gpt',
-    review: { verdict: 'approve', family: 'claude' },
-    gate_seq: 0,
-  });
+  // a review-phase route cited as the author route
+  r = fx.runClose(root, 'm1', m1Repo, { ...m1Input, author_route_seq: m1Chain.reviewSeq });
   assert.strictEqual(r.status, 1);
-  assert.match(r.stderr, /kind "mission-open", not "gate"/);
+  assert.match(r.stderr, /"review"-phase route, not "author"-phase/);
 
-  // another mission's gate
-  r = mission(['close', root, 'm1'], {
-    author_family: 'gpt',
-    review: { verdict: 'approve', family: 'claude' },
-    gate_seq: m2Seq,
-  });
+  // another mission's author route
+  r = fx.runClose(root, 'm1', m1Repo, { ...m1Input, author_route_seq: mxChain.authorSeq });
   assert.strictEqual(r.status, 1);
-  assert.match(r.stderr, /belongs to mission "m2"/);
+  assert.match(r.stderr, /belongs to mission "mx"/);
 
-  // unknown family
-  r = mission(['close', root, 'm1'], {
-    author_family: 'grok',
-    review: { verdict: 'approve', family: 'claude' },
-    gate_seq: passSeq,
+  // the review route must bind the exact author route and author dispatch
+  r = fx.runClose(root, 'm1', m1Repo, {
+    ...m1Input,
+    author_route_seq: mxChain.authorSeq,
+    author_dispatch_seq: mxChain.authorSeq,
+    winning_author_dispatch_seq: mxChain.authorSeq,
   });
   assert.strictEqual(r.status, 1);
-  assert.match(r.stderr, /author_family/);
+  assert.match(r.stderr, /belongs to mission "mx"/);
+
+  r = fx.runClose(root, 'm1', m1Repo, {
+    ...m1Input,
+    author_dispatch_seq: m1GateSeq,
+    winning_author_dispatch_seq: m1GateSeq,
+  });
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /binds author dispatch/);
+
+  // winning attribution must be the dispatches the cited chain binds
+  r = fx.runClose(root, 'm1', m1Repo, { ...m1Input, winning_author_dispatch_seq: m1GateSeq });
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /winning_author_dispatch_seq/);
+
+  r = fx.runClose(root, 'm1', m1Repo, { ...m1Input, winning_review_dispatch_seq: m1GateSeq });
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /winning_review_dispatch_seq/);
+
+  // gate refusals: not a gate, foreign gate
+  r = fx.runClose(root, 'm1', m1Repo, { ...m1Input, gate_seq: m1Chain.authorSeq });
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /kind "route", not "gate"/);
+
+  r = fx.runClose(root, 'm1', m1Repo, { ...m1Input, gate_seq: mxGateSeq });
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /belongs to mission "mx"/);
 
   assert.strictEqual(stateOf().missions.m1.status, 'open', 'every refusal leaves the mission open');
 }
 
-// --- close: happy path -------------------------------------------------------
+// --- close: a dispatch seq naming another mission's record is a lie ----------
 {
-  const r = mission(['close', root, 'm1'], {
-    author_family: 'gpt',
-    review: { verdict: 'approve', family: 'claude' },
-    gate_seq: passSeq,
+  openM('mdm');
+  const repo = fx.newWorkRepo(tmp);
+  const chain = fx.reserveChain(root, 'mdm', fx.artifactIdentity(repo), {
+    review: { author_dispatch_seq: mxOpenSeq },
+  });
+  const gateSeq = fx.runGreenGate(root, 'mdm', 'tests', repo);
+  fx.land(repo, 'merge');
+  const r = fx.runClose(root, 'mdm', repo, {
+    ...fx.closeInputOf(chain, gateSeq),
+    author_dispatch_seq: mxOpenSeq,
+    winning_author_dispatch_seq: mxOpenSeq,
+  });
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /author dispatch seq \d+ names a record belonging to mission "mx"/);
+}
+
+// --- close: a dispatch seq no record carries yet claims nothing either way ---
+// The dispatch record's writer (roster.js) ships in a later step; a legal
+// close is never invalidated by a writer arriving later.
+{
+  openM('mabs');
+  const repo = fx.newWorkRepo(tmp);
+  const chain = fx.reserveChain(root, 'mabs', fx.artifactIdentity(repo), {
+    review: { author_dispatch_seq: 100000 },
+  });
+  const gateSeq = fx.runGreenGate(root, 'mabs', 'tests', repo);
+  fx.land(repo, 'merge');
+  const r = fx.runClose(root, 'mabs', repo, {
+    ...fx.closeInputOf(chain, gateSeq),
+    author_dispatch_seq: 100000,
+    review_dispatch_seq: 100001,
+    winning_author_dispatch_seq: 100000,
+    winning_review_dispatch_seq: 100001,
   });
   assert.strictEqual(r.status, 0, r.stderr);
+  assert.strictEqual(stateOf().missions.mabs.status, 'done');
+}
+
+// --- close: a superseded route never closes ----------------------------------
+{
+  const openSeq = openM('msup');
+  const repo = fx.newWorkRepo(tmp);
+  const chain = fx.reserveChain(root, 'msup', fx.artifactIdentity(repo));
+  const gateSeq = fx.runGreenGate(root, 'msup', 'tests', repo);
+  fx.land(repo, 'merge');
+
+  supersede(root, {
+    mission_id: 'msup',
+    predecessor_route_seq: chain.authorSeq,
+    transition: 'same-profile-resume',
+    reason: 'infrastructure',
+    evidence_seq: openSeq,
+    replacement: fx.authorRouteInput('msup', {
+      selection: { candidates_skipped: [], substituted: false, substitution_reason: null },
+    }),
+  });
+
+  const r = fx.runClose(root, 'msup', repo, fx.closeInputOf(chain, gateSeq));
+  assert.strictEqual(r.status, 1, 'a superseded route must not close');
+  assert.match(r.stderr, /author route at seq \d+ was superseded by route \d+/);
+  assert.strictEqual(stateOf().missions.msup.status, 'open');
+}
+
+// --- close: a family lie fails the floor recorded at route time --------------
+// The review route deviates from the reserved capacity (a "gpt cross-family"
+// reviewer the route never reserved) with no replacement_reason. route.js
+// would refuse to write this; close refuses it even hand-appended, because
+// close derives — it does not trust writer discipline.
+{
+  openM('mlie');
+  const repo = fx.newWorkRepo(tmp);
+  const identity = fx.artifactIdentity(repo);
+  const author = fx.reserveChain(root, 'mlie', identity); // reserves the honest review route too
+  const lying = appendRaw('route', 'mlie', {
+    ...fx.reviewRouteInput('mlie', author.authorSeq, author.authorSeq, identity, {
+      reviewer_seat: 'reviewer-terra',
+      reviewer_family: 'gpt',
+      reviewer_model: 'gpt-5.6',
+      reviewer_effort: 'high',
+      independence: 'cross-family',
+    }),
+    phase: 'review',
+    predecessor: null,
+  });
+  const gateSeq = fx.runGreenGate(root, 'mlie', 'tests', repo);
+  fx.land(repo, 'merge');
+  const r = fx.runClose(root, 'mlie', repo, {
+    ...fx.closeInputOf({ authorSeq: author.authorSeq, reviewSeq: lying.seq }, gateSeq),
+  });
+  assert.strictEqual(r.status, 1, 'a review profile the route never reserved must not close unexplained');
+  assert.match(r.stderr, /floor recorded at route time was not met/);
+}
+
+// --- close: mislabeled independence — degraded reported as cross-family ------
+{
+  openM('mind');
+  const repo = fx.newWorkRepo(tmp);
+  const identity = fx.artifactIdentity(repo);
+  // The reservation itself carries the laundered label, so the floor check
+  // passes and only the independence lie can refuse this close.
+  const reserved = {
+    seat: 'reviewer-degraded-sonnet',
+    family: 'claude',
+    model: 'sonnet-5',
+    effort: 'high',
+    independence: 'cross-family',
+  };
+  const author = appendRaw('route', 'mind', {
+    ...fx.authorRouteInput('mind', { reserved_review: reserved }),
+    phase: 'author',
+    predecessor: null,
+    resumed: false,
+  });
+  const review = appendRaw('route', 'mind', {
+    ...fx.reviewRouteInput('mind', author.seq, author.seq, identity, { independence: 'cross-family' }),
+    phase: 'review',
+    predecessor: null,
+  });
+  const gateSeq = fx.runGreenGate(root, 'mind', 'tests', repo);
+  fx.land(repo, 'merge');
+  const r = fx.runClose(root, 'mind', repo, fx.closeInputOf({ authorSeq: author.seq, reviewSeq: review.seq }, gateSeq));
+  assert.strictEqual(r.status, 1, 'a same-family review labeled cross-family must not close');
+  assert.match(r.stderr, /laundered label/);
+}
+
+// --- close: the artifact changed between review and gate ----------------------
+{
+  openM('mchg');
+  const repo = fx.newWorkRepo(tmp);
+  const chain = fx.reserveChain(root, 'mchg', fx.artifactIdentity(repo));
+  // a commit after the review: the gate tests something the review never saw
+  fs.writeFileSync(path.join(repo, 'drift.txt'), 'post-review drift\n');
+  const g = spawnSync('git', ['-C', repo, 'add', '-A'], { encoding: 'utf8' });
+  assert.strictEqual(g.status, 0);
+  const c = spawnSync('git', ['-C', repo, 'commit', '-q', '-m', 'drift'], { encoding: 'utf8' });
+  assert.strictEqual(c.status, 0);
+  const gateSeq = fx.runGreenGate(root, 'mchg', 'tests', repo);
+  fx.land(repo, 'merge');
+  const r = fx.runClose(root, 'mchg', repo, fx.closeInputOf(chain, gateSeq));
+  assert.strictEqual(r.status, 1, 'a changed artifact between review and gate must not close');
+  assert.match(r.stderr, /tested a different artifact than the review/);
+}
+
+// --- close: a gate that mutated the tree it tested is not pass evidence ------
+// The same record check-honesty refuses — close and the audit agree.
+{
+  openM('mmut');
+  const repo = fx.newWorkRepo(tmp);
+  const chain = fx.reserveChain(root, 'mmut', fx.artifactIdentity(repo));
+  const mutate = run(GATE, [
+    'run-gate', '--worktree', repo, root, 'mmut', 'tests', '--',
+    process.execPath, '-e', "require('fs').writeFileSync('mutated.txt','x')",
+  ]);
+  assert.strictEqual(mutate.status, 0, mutate.stderr);
+  const out = JSON.parse(mutate.stdout);
+  assert.strictEqual(out.exit_code, 0);
+  assert.strictEqual(out.identity_check.verified, false, 'the fixture gate must have mutated the tree');
+  fs.rmSync(path.join(repo, 'mutated.txt'));
+  fx.land(repo, 'merge');
+  const r = fx.runClose(root, 'mmut', repo, fx.closeInputOf(chain, out.ledger_seq));
+  assert.strictEqual(r.status, 1, 'a tree-mutating gate pass must not close');
+  assert.match(r.stderr, /mutated the tree it tested/);
+
+  const honesty = run(GATE, ['check-honesty', root, 'mmut', 'tests']);
+  assert.strictEqual(honesty.status, 1, 'check-honesty refuses the same record close refuses');
+}
+
+// --- close: a gate that named no identity is not evidence for this artifact --
+{
+  openM('mnul');
+  const repo = fx.newWorkRepo(tmp);
+  const chain = fx.reserveChain(root, 'mnul', fx.artifactIdentity(repo));
+  const plain = path.join(tmp, 'mnul-plain');
+  fs.mkdirSync(plain, { recursive: true });
+  // no --worktree, cwd outside any git context: identity records as null
+  const gate = run(GATE, ['run-gate', root, 'mnul', 'tests', '--', 'true'], undefined, { cwd: plain });
+  assert.strictEqual(gate.status, 0, gate.stderr);
+  const out = JSON.parse(gate.stdout);
+  assert.strictEqual(out.artifact_identity, null);
+  fx.land(repo, 'merge');
+  const r = fx.runClose(root, 'mnul', repo, fx.closeInputOf(chain, out.ledger_seq));
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /could not name the identity it tested/);
+}
+
+// --- close: a gate record from before identities were carried still closes ---
+// A legal close is never invalidated by a field arriving later.
+{
+  openM('mleg');
+  const repo = fx.newWorkRepo(tmp);
+  const chain = fx.reserveChain(root, 'mleg', fx.artifactIdentity(repo));
+  const legacy = appendRaw('gate', 'mleg', {
+    gate_id: 'legacy',
+    cmd: ['true'],
+    exit_code: 0,
+    mission_id: 'mleg',
+  });
+  fx.land(repo, 'merge');
+  const r = fx.runClose(root, 'mleg', repo, fx.closeInputOf(chain, legacy.seq));
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.strictEqual(stateOf().missions.mleg.status, 'done');
+}
+
+// --- close: landing refusals -------------------------------------------------
+{
+  openM('mnol');
+  const repo = fx.newWorkRepo(tmp);
+  const chain = fx.reserveChain(root, 'mnol', fx.artifactIdentity(repo));
+  const gateSeq = fx.runGreenGate(root, 'mnol', 'tests', repo);
+  const input = fx.closeInputOf(chain, gateSeq);
+
+  // nothing landed: not contained, no commit with the reviewed patch identity
+  let r = fx.runClose(root, 'mnol', repo, input);
+  assert.strictEqual(r.status, 1, 'an unlanded result must not close');
+  assert.match(r.stderr, /neither contains the reviewed commit .* nor carries any commit with its patch identity/);
+
+  // --repo that is not a git worktree
+  const plain = path.join(tmp, 'mnol-plain');
+  fs.mkdirSync(plain, { recursive: true });
+  r = fx.runClose(root, 'mnol', plain, input);
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /is not a git worktree/);
+
+  // a repository that never held the reviewed commit
+  const stranger = fx.newWorkRepo(tmp);
+  r = fx.runClose(root, 'mnol', stranger, input);
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /unknown to/);
+
+  assert.strictEqual(stateOf().missions.mnol.status, 'open');
+}
+
+// --- close: an ordinary merge is proven by commit containment ----------------
+// (the m1 finale: its chain was reviewed and gated above, refusals left it
+// open; landing it makes the same input close, and the close record carries
+// only derived facts)
+{
+  fx.land(m1Repo, 'merge');
+  const r = fx.runClose(root, 'm1', m1Repo, m1Input);
+  assert.strictEqual(r.status, 0, r.stderr);
+  const out = JSON.parse(r.stdout);
+  assert.strictEqual(out.status, 'done');
+  assert.strictEqual(out.landing.method, 'commit-containment');
+  assert.strictEqual(out.landing.branch, 'main');
 
   const state = stateOf();
   assert.strictEqual(state.missions.m1.status, 'done');
@@ -314,18 +574,70 @@ const m2Seq = JSON.parse(m2Gate.stdout).ledger_seq;
   const close = records[records.length - 1];
   assert.strictEqual(close.kind, 'mission-close');
   assert.strictEqual(close.mission_id, 'm1');
-  assert.strictEqual(close.author_family, 'gpt');
-  assert.deepStrictEqual(close.review, { verdict: 'approve', family: 'claude' });
-  assert.strictEqual(close.gate_seq, passSeq);
+  assert.strictEqual(close.author_family, 'claude', 'the author family is the ledger route record, not caller prose');
+  assert.strictEqual(close.author_seat, 'executor-claude');
+  assert.strictEqual(close.task_class, 'expert');
+  assert.deepStrictEqual(close.review, {
+    seat: 'reviewer-degraded-sonnet',
+    family: 'claude',
+    model: 'sonnet-5',
+    effort: 'high',
+    independence: 'degraded-path',
+    replacement_reason: null,
+  });
+  assert.deepStrictEqual(close.artifact_identity, m1Identity);
+  assert.strictEqual(close.gate_seq, m1GateSeq);
+  assert.strictEqual(close.author_route_seq, m1Chain.authorSeq);
+  assert.strictEqual(close.review_route_seq, m1Chain.reviewSeq);
+  assert.strictEqual(close.winning_author_dispatch_seq, m1Chain.authorSeq);
+  assert.strictEqual(close.winning_review_dispatch_seq, m1Chain.reviewSeq);
+  assert.strictEqual(close.landing.method, 'commit-containment');
+}
+
+// --- close: a squash landing is proven by patch identity ----------------------
+{
+  openM('msq');
+  const done = fx.closeMissionFully(root, 'msq', { dir: tmp, landing: 'squash' });
+  assert.strictEqual(done.result.landing.method, 'squash-patch-identity');
+  assert.notStrictEqual(
+    done.result.landing.landed_head,
+    done.identity.source_head,
+    'a squash lands a different commit object — only its patch identity proves it'
+  );
+  assert.strictEqual(stateOf().missions.msq.status, 'done');
+}
+
+// --- close: a legal degraded review survives the provider recovering ----------
+// Apex class, no ceiling: the degraded-path close is judged under the route
+// snapshot that authorized it. After the review, the gpt lane "comes back"
+// (a fresher preflight record and a settings file both say so) — close reads
+// neither, so the completed review stays legal.
+{
+  openM('mrec');
+  const repo = fx.newWorkRepo(tmp);
+  const chain = fx.reserveChain(root, 'mrec', fx.artifactIdentity(repo), {
+    author: { task_class: 'apex' },
+  });
+  const gateSeq = fx.runGreenGate(root, 'mrec', 'tests', repo);
+  fx.land(repo, 'merge');
+
+  appendRaw('preflight', 'mrec', { providers: { gpt: 'present', gemini: 'present' } });
+  fs.writeFileSync(
+    path.join(root, 'settings.json'),
+    JSON.stringify({ provider_lanes: { gpt: 'auto', gemini: 'auto' } }, null, 2) + '\n'
+  );
+
+  const r = fx.runClose(root, 'mrec', repo, fx.closeInputOf(chain, gateSeq));
+  assert.strictEqual(r.status, 0, 'provider recovery must never retroactively invalidate a legal degraded review');
+  const { records } = ledgerOf();
+  const close = records[records.length - 1];
+  assert.strictEqual(close.task_class, 'apex', 'no class ceiling — apex closes on the degraded path');
+  assert.strictEqual(close.review.independence, 'degraded-path');
 }
 
 // --- a done mission accepts no further writes --------------------------------
 {
-  const again = mission(['close', root, 'm1'], {
-    author_family: 'gpt',
-    review: { verdict: 'approve', family: 'claude' },
-    gate_seq: passSeq,
-  });
+  const again = fx.runClose(root, 'm1', m1Repo, m1Input);
   assert.strictEqual(again.status, 1);
   assert.match(again.stderr, /status "done"/);
 
@@ -356,30 +668,33 @@ const m2Seq = JSON.parse(m2Gate.stdout).ledger_seq;
 
 // --- close: a superseded green gate is stale evidence ------------------------
 {
-  // m2's "tests" gate passed at m2Seq; a later run of the same gate fails.
-  const laterFail = run(GATE, ['run-gate', root, 'm2', 'tests', '--', 'false']);
-  assert.strictEqual(laterFail.status, 0, laterFail.stderr);
+  openM('mstale');
+  const repo = fx.newWorkRepo(tmp);
+  const chain = fx.reserveChain(root, 'mstale', fx.artifactIdentity(repo));
+  const passSeq = fx.runGreenGate(root, 'mstale', 'tests', repo);
 
-  const stale = mission(['close', root, 'm2'], {
-    author_family: 'gpt',
-    review: { verdict: 'approve', family: 'claude' },
-    gate_seq: m2Seq,
-  });
+  // a later run of the same gate fails (pre-merge, like every §8 gate)
+  const laterFail = run(GATE, ['run-gate', '--worktree', repo, root, 'mstale', 'tests', '--', 'false']);
+  assert.strictEqual(laterFail.status, 0, laterFail.stderr);
+  const failSeq = JSON.parse(laterFail.stdout).ledger_seq;
+
+  const stale = fx.runClose(root, 'mstale', repo, fx.closeInputOf(chain, passSeq));
   assert.strictEqual(stale.status, 1, 'close must refuse a green gate a newer run has turned red');
   assert.match(stale.stderr, /superseded by a later run/);
-  assert.strictEqual(stateOf().missions.m2.status, 'open');
+
+  const failed = fx.runClose(root, 'mstale', repo, fx.closeInputOf(chain, failSeq));
+  assert.strictEqual(failed.status, 1);
+  assert.match(failed.stderr, /exit_code 1/);
+  assert.strictEqual(stateOf().missions.mstale.status, 'open');
 
   // A fresh green run of the same gate restores closeability at its own seq.
-  const rerun = run(GATE, ['run-gate', root, 'm2', 'tests', '--', 'true']);
+  const rerun = run(GATE, ['run-gate', '--worktree', repo, root, 'mstale', 'tests', '--', 'true']);
   assert.strictEqual(rerun.status, 0, rerun.stderr);
   const freshSeq = JSON.parse(rerun.stdout).ledger_seq;
-  const closed = mission(['close', root, 'm2'], {
-    author_family: 'gpt',
-    review: { verdict: 'approve', family: 'claude' },
-    gate_seq: freshSeq,
-  });
+  fx.land(repo, 'merge');
+  const closed = fx.runClose(root, 'mstale', repo, fx.closeInputOf(chain, freshSeq));
   assert.strictEqual(closed.status, 0, closed.stderr);
-  assert.strictEqual(stateOf().missions.m2.status, 'done');
+  assert.strictEqual(stateOf().missions.mstale.status, 'done');
 }
 
 // --- symlink containment -----------------------------------------------------
@@ -431,6 +746,16 @@ const m2Seq = JSON.parse(m2Gate.stdout).ledger_seq;
   r = run(MISSION, ['checkpoint', root, 'm2'], undefined); // empty stdin
   assert.strictEqual(r.status, 1);
   assert.match(r.stderr, /valid JSON/);
+
+  // --repo without a path
+  r = run(MISSION, ['close', '--repo'], undefined);
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /--repo requires a path/);
+
+  // --repo consumed, then arity still enforced
+  r = run(MISSION, ['close', '--repo', tmp, root], undefined);
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /exactly 2 argument/);
 }
 
 console.log('test-mission: OK');
