@@ -51,8 +51,20 @@
 // because nothing it could read says they exist. Nothing derivable inside this
 // machine reaches past that: there is no registry of trees, a tree is a
 // directory scaffold.js will create on request, and a record can only be
-// believed where it can be read. Whatever closes that gap is above this layer
-// — one tree per project, chosen and held by whoever runs it.
+// believed where it can be read.
+//
+// That is the boundary of the SCAN. It is not the cheapest way past the fence,
+// and a reader who stops here would over-trust it: two cheaper ways sit inside
+// a single tree, both already stated in this file. The ledger is plaintext
+// with no writer attestation (above), so deleting the revise line costs less
+// than standing up a tree. And the landing repository is caller-located via
+// --repo (see proveLanding's known limits), so a close proven against a
+// throwaway clone succeeds while the project's mainline never moves — which is
+// why the close record names the repository it was proven in. Each of the
+// three is a limit on a different thing: what this process can read, what it
+// is willing to believe, and where it looked. None of them is closed by code
+// in this module, and pretending otherwise in a comment would be the same
+// overclaim the fence itself exists to prevent.
 //
 // record-review is the sole producer of the verdict close depends on: a
 // review-outcome record binding the review route, the verdict, and the exact
@@ -1293,10 +1305,12 @@ function requireReviseAnswered(records, ownerMissionId, routeSeq, last, label, r
 // derivable at all. The next boundary out is not: a close run against a second
 // maestro tree reads a second ledger.jsonl and cannot see these findings, and
 // standing up a tree costs no more than minting a mission id did. That is
-// where this fence stops. It is stated in the module header rather than
-// patched here, because no scan of THIS ledger can reach a record that is not
-// in it — the answer is one tree per project, held by whoever runs the fleet,
-// and it is not a check this module can make.
+// where this SCAN stops, and no scan of THIS ledger can reach a record that is
+// not in it. It is not, however, where the fence is cheapest to get around:
+// the ledger is plaintext and --repo is caller-chosen, and both of those are
+// cheaper than a second tree. The module header states all three together,
+// because a reader who takes any one of them for the frontier will trust this
+// fence further than it earns.
 function requireNoStandingRevise(records, missionId, verdicts, identity, citedRouteSeq) {
   for (const [routeSeq, outcomes] of verdicts.own) {
     const last = outcomes[outcomes.length - 1];
