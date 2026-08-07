@@ -78,10 +78,10 @@ one answer, or bring you both positions verbatim.
 
 | Role | Agent | What it does |
 |---|---|---|
-| The default implementer | `executor-sol` | GPT-5.6-Sol via Codex CLI. Takes most of the implementation work. |
+| The default implementer | `executor-sol-expert` (`executor-sol` is now an alias of it and does not route) | GPT-5.6-Sol via Codex CLI, the expert rung of the gpt ladder — `executor-luna`/`executor-terra`/`executor-sol-apex` cover mechanical/standard/apex. |
 | The specialist | `executor-claude` | Opus 5. Called in for interface and creative work. |
 | The wide-context worker | `executor-gemini` | Gemini 3.1 Pro. Large context, and the rotation agent. |
-| The reviewers | `reviewer-claude` · `reviewer-sol` · `reviewer-gemini` | Never from the family that wrote the code. |
+| The reviewers | `reviewer-claude` · `reviewer-sol-expert-rev` · `reviewer-gemini` | Never from the family that wrote the code. (`reviewer-sol` is now an alias of `reviewer-sol-expert-rev` and does not route.) |
 | The planner | `planner` | Turns "fix everything" into numbered briefs with acceptance criteria. |
 | The convergence pair | `convergence` · `plan-counterpart` | Two uninvolved families, one closed room. Two passes. One answer. |
 | The context-keeper | `context-keeper` | Holds what you meant, not just what you said. |
