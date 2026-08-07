@@ -109,11 +109,38 @@ function setPreflight(root, perProvider) {
   // ends that monopoly (plan amendment, 2026-08-07).
   assert.deepStrictEqual(config.seats['executor-claude-mech'], { model: 'sonnet-5', family: 'claude', effort: 'low' });
   assert.deepStrictEqual(config.seats['executor-claude-standard'], { model: 'sonnet-5', family: 'claude', effort: 'high' });
-  assert.deepStrictEqual(config.seats['executor-fable-low'], { model: 'fable-5', family: 'claude', effort: 'low' });
-  assert.deepStrictEqual(config.seats['executor-fable'], { model: 'fable-5', family: 'claude', effort: 'high' });
+  // Every fable-model seat records the opus-5 high profile it drops to on
+  // unavailability or refusal — the config is where that profile lives, and a
+  // seat file mirrors it.
+  assert.deepStrictEqual(config.seats['executor-fable-low'], {
+    model: 'fable-5',
+    family: 'claude',
+    effort: 'low',
+    fallback: 'opus-5',
+    fallback_effort: 'high',
+  });
+  assert.deepStrictEqual(config.seats['executor-fable'], {
+    model: 'fable-5',
+    family: 'claude',
+    effort: 'high',
+    fallback: 'opus-5',
+    fallback_effort: 'high',
+  });
   assert.deepStrictEqual(config.seats['reviewer-claude-expert'], { model: 'opus-5', family: 'claude', effort: 'high' });
-  assert.deepStrictEqual(config.seats['reviewer-claude-apex'], { model: 'fable-5', family: 'claude', effort: 'low' });
-  assert.deepStrictEqual(config.seats.planner, { model: 'fable-5', family: 'claude', effort: 'low' });
+  assert.deepStrictEqual(config.seats['reviewer-claude-apex'], {
+    model: 'fable-5',
+    family: 'claude',
+    effort: 'low',
+    fallback: 'opus-5',
+    fallback_effort: 'high',
+  });
+  assert.deepStrictEqual(config.seats.planner, {
+    model: 'fable-5',
+    family: 'claude',
+    effort: 'low',
+    fallback: 'opus-5',
+    fallback_effort: 'high',
+  });
   assert.deepStrictEqual(config.review_qualification, {
     'reviewer-claude': 'standard',
     'reviewer-claude-expert': 'expert',
@@ -133,7 +160,16 @@ function setPreflight(root, perProvider) {
 
   // Convergence protocol seats: convergence (Fable, both moments) and its
   // Sol counterpart, plan-counterpart.
-  assert.deepStrictEqual(config.seats.convergence, { model: 'fable-5', fallback: 'opus-5', effort: 'low' });
+  // convergence carries the family its model determines: without it the seat
+  // sat outside the parity family check entirely (the standing hold from the
+  // parity-attribution correction).
+  assert.deepStrictEqual(config.seats.convergence, {
+    model: 'fable-5',
+    fallback: 'opus-5',
+    effort: 'low',
+    family: 'claude',
+    fallback_effort: 'high',
+  });
   assert.deepStrictEqual(config.seats['plan-counterpart'], { family: 'gpt', hosted: true, effort: 'high' });
   assert.ok(!('agreement-pass' in config.seats), 'agreement-pass is renamed away, not carried forward');
 

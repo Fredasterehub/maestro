@@ -387,26 +387,28 @@ function migrateClaudeLadder(config) {
     }
   }
 
+  // Every fable-model seat records the opus-5 high profile it drops to when
+  // Fable is unavailable or refuses (design §4.1, §6.1; §10 for the two
+  // planning seats). The config is the authority for that profile and the
+  // seat files mirror it, never the other way around — the frontmatter keys
+  // these entries require land in the step stacked on this one, so the parity
+  // guard reads red on exactly those rows until the two halves are together.
   Object.assign(out.seats, {
     'executor-claude-mech': { model: 'sonnet-5', family: 'claude', effort: 'low' },
     'executor-claude-standard': { model: 'sonnet-5', family: 'claude', effort: 'high' },
-    'executor-fable-low': { model: 'fable-5', family: 'claude', effort: 'low' },
-    'executor-fable': { model: 'fable-5', family: 'claude', effort: 'high' },
+    'executor-fable-low': { model: 'fable-5', family: 'claude', effort: 'low', fallback: 'opus-5', fallback_effort: 'high' },
+    'executor-fable': { model: 'fable-5', family: 'claude', effort: 'high', fallback: 'opus-5', fallback_effort: 'high' },
     'reviewer-claude-expert': { model: 'opus-5', family: 'claude', effort: 'high' },
-    'reviewer-claude-apex': { model: 'fable-5', family: 'claude', effort: 'low' },
+    'reviewer-claude-apex': { model: 'fable-5', family: 'claude', effort: 'low', fallback: 'opus-5', fallback_effort: 'high' },
   });
-  // The planning fallback is a real route (§10), and the config is where it
-  // belongs — but a seat's fallback profile is parity-bound to a
-  // machine-readable `fallback`/`fallback_effort` in its own agent file, and
-  // the seat files this slice's first half landed carry the fallback in
-  // description prose only. Declaring the profiles here would land the parity
-  // guard red on the branch that exists to turn it green, and correcting five
-  // seat files is outside this step's surface — so the four fable-model seats
-  // and planner carry model and effort only, convergence keeps the `fallback`
-  // its file already declares, and the fallback profiles wait for a
-  // seat-frontmatter correction of the shape step 1f already ran once.
-  out.seats.planner = { model: 'fable-5', family: 'claude', effort: 'low' };
-  out.seats.convergence = { ...out.seats.convergence, effort: 'low' };
+  // The planning fallback is a real route (§10): a Fable planner that ran on
+  // Opus is Opus execution, which only stays sayable if the profile it fell
+  // to is recorded rather than inferred. convergence also gains the family its
+  // model already determines — the standing hold from the parity-attribution
+  // correction, which left this seat outside the family check for want of a
+  // declared family.
+  out.seats.planner = { model: 'fable-5', family: 'claude', effort: 'low', fallback: 'opus-5', fallback_effort: 'high' };
+  out.seats.convergence = { ...out.seats.convergence, family: 'claude', effort: 'low', fallback_effort: 'high' };
 
   out.review_routing = {
     claude: {
