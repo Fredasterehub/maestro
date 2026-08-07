@@ -231,7 +231,7 @@ brief is worded:
 | `reviewer-sol-apex-rev` | Sonnet 5 high hosting GPT-5.6-Sol (gpt) — dormant until the gpt lane is effective | — | apex-class claude- and gemini-authored work |
 | `reviewer-sol` | — | Alias of `reviewer-sol-expert-rev` since the r1→r2 Sol split. No read path resolves an alias — it is never routable. | — |
 | `reviewer-degraded-opus` | Opus 5 medium (claude) | — | degraded path only: sonnet-authored recon/mechanical/standard work, when no cross-family reviewer is effectively available |
-| `reviewer-degraded-sonnet` | Sonnet 5 high (claude) | — | degraded path only: opus-authored expert work |
+| `reviewer-degraded-sonnet` | Sonnet 5 high (claude) | — | degraded path only: opus- or fable-authored expert work |
 | `reviewer-degraded-opus-apex` | Opus 5 high (claude) | — | degraded path only: fable-authored apex work (preferred heavy-model pairing) |
 | `reviewer-degraded-fable-apex` | Fable 5 low (claude) — no seat-level fallback; an unavailable pairing partner is resolved by `reviewFor` to a fresh instance of the author's own model (opus-5 high, since this seat only reviews opus-authored apex work) | — | degraded path only: opus-authored apex work (preferred heavy-model pairing) |
 | `convergence` | Fable 5 low (claude), fallback Opus 5 high; dispatches Sol or Gemini directly for the second family | Both convergence moments: ladder step 2 (two-seat consensus on a disputed judgment) and direction-setting plans | — |

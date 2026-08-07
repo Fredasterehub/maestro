@@ -743,7 +743,50 @@ function migrateGeminiEffort(config) {
   return out;
 }
 
-const MIGRATIONS = [migrateSolSplit, migrateDegradedReview, migrateClaudeLadder, migrateGptLadder, migrateTiersBlock, migrateGeminiEffort];
+// r7 -> r8: the two original hosted gpt seats gain their own worker effort.
+// r1 shipped `executor-sol`/`reviewer-sol` with a host profile only, so
+// reviewFor resolved their worker effort to null while every later hosted
+// seat (the r2 Sol split, the r7 gemini rung) carries one — review capacity
+// for those seats could not be constructed from the table alone.
+function migrateSolEffort(config) {
+  const out = JSON.parse(JSON.stringify(config));
+  if (!isPlainObject(out.seats)) {
+    throw new Error('r7->r8 migration: config has no seats table — not a revision-7 shape');
+  }
+  for (const required of ['executor-gemini', 'reviewer-gemini']) {
+    if (typeof (out.seats[required] || {}).effort !== 'string') {
+      throw new Error(
+        `r7->r8 migration: seats["${required}"] records no effort — not a revision-7 shape (the r6->r7 gemini effort migration has not been applied)`
+      );
+    }
+  }
+  out.seats['executor-sol'] = { ...out.seats['executor-sol'], effort: 'high' };
+  out.seats['reviewer-sol'] = { ...out.seats['reviewer-sol'], effort: 'medium' };
+  out.revision = 8;
+  return out;
+}
+
+// r8 -> r9: expert-class degraded review gains its fable-authored row.
+// fable-5 is a real expert-class author rung (agents/executor-fable-low.md),
+// but the expert row keyed only opus-5 — fable-authored expert work had no
+// degraded reviewer at all. reviewer-degraded-sonnet is cross-model against
+// a fable author exactly as it is against an opus one, so the row extends
+// that seat's scope rather than adding a seat.
+function migrateExpertFableRow(config) {
+  const out = JSON.parse(JSON.stringify(config));
+  const rows = isPlainObject(out.degraded_review) ? out.degraded_review.rows : null;
+  if (!isPlainObject(rows) || !isPlainObject(rows.expert)) {
+    throw new Error('r8->r9 migration: config has no degraded_review.rows.expert — not a revision-8 shape');
+  }
+  if (rows.expert['opus-5'] !== 'reviewer-degraded-sonnet') {
+    throw new Error('r8->r9 migration: degraded_review.rows.expert does not carry the r2->r3 opus-5 row — not a revision-8 shape');
+  }
+  rows.expert['fable-5'] = 'reviewer-degraded-sonnet';
+  out.revision = 9;
+  return out;
+}
+
+const MIGRATIONS = [migrateSolSplit, migrateDegradedReview, migrateClaudeLadder, migrateGptLadder, migrateTiersBlock, migrateGeminiEffort, migrateSolEffort, migrateExpertFableRow];
 
 // The revision of the highest migration actually shipped — each slice that
 // pushes a MIGRATIONS entry raises this in the same commit, by construction.

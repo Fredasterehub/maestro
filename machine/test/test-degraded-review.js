@@ -284,6 +284,10 @@ const BRIEF = {
     { klass: 'mechanical', authorModel: undefined, seat: 'reviewer-degraded-opus', model: 'opus-5', effort: 'medium' },
     { klass: 'standard', authorModel: undefined, seat: 'reviewer-degraded-opus', model: 'opus-5', effort: 'medium' },
     { klass: 'expert', authorModel: undefined, seat: 'reviewer-degraded-sonnet', model: 'sonnet-5', effort: 'high' },
+    { klass: 'expert', authorModel: 'opus-5', seat: 'reviewer-degraded-sonnet', model: 'sonnet-5', effort: 'high' },
+    // expert, fable-authored: fable-5 is a real expert-class author rung, and
+    // sonnet-5 is cross-model against it exactly as against an opus author.
+    { klass: 'expert', authorModel: 'fable-5', seat: 'reviewer-degraded-sonnet', model: 'sonnet-5', effort: 'high' },
     // apex, fable-authored (the canonical apex authorship, and the row's
     // first pairing — what an authorship-blind caller gets by default).
     { klass: 'apex', authorModel: undefined, seat: 'reviewer-degraded-opus-apex', model: 'opus-5', effort: 'high' },
