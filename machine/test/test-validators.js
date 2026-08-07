@@ -139,6 +139,13 @@ bad(validateBrief(brief({ anchors: ['src/a.js', 3] })), /only non-empty strings/
 bad(validateBrief(null), /plain object/, 'null brief');
 bad(validateBrief(brief({ toJSON: () => 1 })), /plain object/, 'toJSON brief');
 
+// --- brief: tier closed enum --------------------------------------------------
+for (const t of ['recon', 'mechanical', 'standard', 'expert', 'apex']) {
+  ok(validateBrief(brief({ tier: t })), `tier enum member "${t}"`);
+}
+bad(validateBrief(brief({ tier: 'xhigh' })), /must be one of/, 'tier non-member string');
+bad(validateBrief(brief({ tier: 'critical' })), /must be one of/, 'tier legacy label refused');
+
 // --- deviation ---------------------------------------------------------------
 function deviation(overrides) {
   return {
