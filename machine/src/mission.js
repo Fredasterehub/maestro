@@ -1770,6 +1770,7 @@ function terminalOutcomeOfDispatch(records, missionId, dispatch) {
 function terminalOutcomesOf(records, missionId, winningAuthorDispatchSeq, winningReviewDispatchSeq) {
   const dispatches = dispatchesOfMission(records, missionId);
   requireOneDispatchPerRoute(dispatches, missionId);
+  requireNoOutcomeRecordForWinner(records, missionId, winningAuthorDispatchSeq, winningReviewDispatchSeq);
   const winners = new Set([winningAuthorDispatchSeq, winningReviewDispatchSeq]);
   return dispatches
     .filter((d) => !winners.has(d.seq))
@@ -1781,6 +1782,34 @@ function terminalOutcomesOf(records, missionId, winningAuthorDispatchSeq, winnin
       outcome: terminalOutcomeOfDispatch(records, missionId, dispatch),
     }))
     .sort((a, b) => a.dispatch_seq - b.dispatch_seq);
+}
+
+// A winning dispatch has no terminal outcome — close names its fate itself,
+// and §16.3's whole premise is that the two are disjoint. The idempotent
+// write below (closeMission) only ever inspects dispatch_seqs it is ABOUT to
+// write, which by construction excludes both winners; nothing upstream of it
+// checks whether the ledger already holds a "dispatch-outcome" record naming
+// one anyway. That gap is real, not hypothetical: an earlier close attempt
+// that was interrupted before its own mission-close record landed, but not
+// before it durably wrote outcomes for the dispatches IT excluded, can have
+// them citing a DIFFERENT winning chain than THIS close does — the two calls
+// need not share an input, "retry" is not guaranteed to mean "identical
+// input" — and a later close naming one of those dispatches winning would
+// otherwise succeed over a record that flatly contradicts its own central
+// claim. The same check catches a hand-appended record naming the current
+// winner outright, which nothing else here reads at all. Refused here,
+// before either winner's outcome (or absence of one) is decided by anything
+// but this check.
+function requireNoOutcomeRecordForWinner(records, missionId, winningAuthorDispatchSeq, winningReviewDispatchSeq) {
+  const winners = new Set([winningAuthorDispatchSeq, winningReviewDispatchSeq]);
+  for (const record of records) {
+    if (!isPlainObject(record) || record.kind !== DISPATCH_OUTCOME_KIND || record.mission_id !== missionId) continue;
+    if (winners.has(record.dispatch_seq)) {
+      throw new Error(
+        `mission: close refused — dispatch ${record.dispatch_seq} is cited as a winning dispatch, but a dispatch-outcome record (seq ${record.seq}) already names it ${JSON.stringify(record.outcome)}; a winning dispatch has no terminal outcome, and a record claiming one — however it was written — is not closed over`
+      );
+    }
+  }
 }
 
 // Everything the ledger can decide about this close, decided in one place.
@@ -2067,17 +2096,24 @@ function closeMission(treeRoot, missionId, input, options) {
       // record that counts them (DISPATCH_OUTCOME_KIND): the same
       // durable-before-referenced order supersede uses for its replacement
       // route. A crash between these appends and the close record below
-      // leaves the mission open, and a retry re-derives deriveCloseFacts
-      // fresh — over the SAME immutable source records, since routes,
-      // supersessions and review-outcomes never change once written, so the
-      // retry computes the identical set. Written idempotently against what
-      // this mission's dispatch-outcome stream already holds: a dispatch_seq
-      // already carrying the same word from an earlier, interrupted attempt
-      // is skipped rather than re-appended, or the mission would close over
-      // two full sets of outcome records — a silent double-count corrupting
-      // any consumer (7c's rates) that joins on this stream by mission_id.
-      // One naming a DIFFERENT word for the same dispatch_seq is a
-      // contradiction the ledger cannot resolve on its own and refuses.
+      // leaves the mission open. What this write is actually safe against:
+      // being run again with the IDENTICAL input — routes, supersessions and
+      // review-outcomes never change once written, so deriveCloseFacts
+      // recomputes the same set, and each dispatch_seq already durable from
+      // the interrupted attempt is skipped rather than re-appended (or the
+      // mission would close over two full sets — a silent double-count
+      // corrupting any consumer, 7c's rates included, that joins on this
+      // stream by mission_id). What it does NOT assume: that a later close
+      // names the SAME winning chain. It need not — a genuine reconsideration
+      // is a different, equally legitimate input — so a dispatch this attempt
+      // excludes may already carry a fate this ledger wrote under a PRIOR
+      // close's different winning citation, or under a hand-append naming
+      // nothing legitimate at all. Either way, a dispatch_seq already
+      // recorded here with a DIFFERENT word than this close derives is a
+      // contradiction the ledger cannot resolve on its own and refuses. The
+      // one case this loop cannot itself catch — a pre-existing record naming
+      // one of THIS close's own winners — is what requireNoOutcomeRecordForWinner
+      // refuses earlier, in deriveCloseFacts, before this loop ever runs.
       const alreadyWritten = new Map();
       for (const record of records) {
         if (!isPlainObject(record) || record.kind !== DISPATCH_OUTCOME_KIND || record.mission_id !== missionId) continue;
