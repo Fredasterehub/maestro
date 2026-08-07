@@ -42,7 +42,7 @@ Each brief is a JSON file carrying the eight fields, held to this bar:
 - `anchors` — file paths (with line ranges where it helps), never pasted content. Paths keep the liaison's context clean and mean the executor reads current reality at dispatch time instead of a stale copy. Read or probe every anchor yourself before writing it down — an anchor you didn't confirm is a false premise waiting for a deviation record.
 - `acceptance` — criteria an executor and reviewer can check without interpreting you. Gate-shaped wherever possible: a command whose exit code 0 settles the matter, because "tests pass" only exists as a recorded gate. Where no command can exist (visual work), state the observable outcome concretely.
 - `freshness` — what the executor may trust from this brief versus what it should re-verify because it may have drifted by dispatch time.
-- `tier` — the size/effort class of the slice, so routing can seat it.
+- `tier` — the closed task class of the slice (`recon | mechanical | standard | expert | apex`), so routing can seat it.
 - `return_format` — the six-field envelope, plus any artifact the slice must produce and where it goes.
 - `stop_condition` — when to stop and report rather than push on: the done state, plus the give-up boundary (a wall worth a blocked envelope instead of an hour of thrashing).
 

@@ -115,7 +115,7 @@ function brief(overrides) {
     anchors: ['machine/src/jsonl.js', 'ARCHITECTURE.md'],
     acceptance: 'node test/test-jsonl.js exits 0',
     freshness: 'no external docs needed',
-    tier: 'sonnet-high',
+    tier: 'standard',
     return_format: 'six-field envelope',
     stop_condition: 'tests green or blocked',
     ...overrides,
@@ -138,6 +138,13 @@ bad(validateBrief(brief({ anchors: ['src/a.js', ''] })), /only non-empty strings
 bad(validateBrief(brief({ anchors: ['src/a.js', 3] })), /only non-empty strings/, 'non-string anchor entry');
 bad(validateBrief(null), /plain object/, 'null brief');
 bad(validateBrief(brief({ toJSON: () => 1 })), /plain object/, 'toJSON brief');
+
+// --- brief: tier closed enum --------------------------------------------------
+for (const t of ['recon', 'mechanical', 'standard', 'expert', 'apex']) {
+  ok(validateBrief(brief({ tier: t })), `tier enum member "${t}"`);
+}
+bad(validateBrief(brief({ tier: 'xhigh' })), /must be one of/, 'tier non-member string');
+bad(validateBrief(brief({ tier: 'critical' })), /must be one of/, 'tier legacy label refused');
 
 // --- deviation ---------------------------------------------------------------
 function deviation(overrides) {

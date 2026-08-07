@@ -141,6 +141,11 @@ const BRIEF_KEYS = [
   'stop_condition',
 ];
 const BRIEF_STRING_KEYS = BRIEF_KEYS.filter((key) => key !== 'anchors');
+// Closed task-class vocabulary (tiered-dispatch-final-design.md §3): the
+// five-value brief.tier enum this module enforces. routing.js and roster.js
+// do not yet consume it — that lands in a later slice. A legacy free-form
+// label is a validation failure, not a value to tolerate.
+const BRIEF_TIER_VALUES = new Set(['recon', 'mechanical', 'standard', 'expert', 'apex']);
 
 function validateBrief(brief) {
   try {
@@ -171,6 +176,19 @@ function validateBriefChecked(brief) {
     } else if (anchors.some((entry) => !isNonEmptyString(entry))) {
       errors.push('brief field "anchors" must contain only non-empty strings');
     }
+  }
+
+  // Guarded to isNonEmptyString first: a non-string/empty tier already earns
+  // its "must be a non-empty string" error from the BRIEF_STRING_KEYS loop
+  // above, and this membership check must not pile a second error onto it.
+  if (
+    Object.prototype.hasOwnProperty.call(brief, 'tier') &&
+    isNonEmptyString(brief.tier) &&
+    !BRIEF_TIER_VALUES.has(brief.tier)
+  ) {
+    errors.push(
+      `brief field "tier" must be one of ${[...BRIEF_TIER_VALUES].join(', ')} (got ${JSON.stringify(brief.tier)})`
+    );
   }
 
   return { ok: errors.length === 0, errors };
@@ -379,7 +397,8 @@ commands:
                        exactly when state is "blocked"
   validate-brief       eight-field dispatch brief: outcome/scope/anchors/
                        acceptance/freshness/tier/return_format/stop_condition;
-                       anchors a non-empty array of non-empty strings
+                       anchors a non-empty array of non-empty strings; tier
+                       one of ${[...BRIEF_TIER_VALUES].join(', ')}
   validate-deviation   { reported_by, expected, actual, summary } — all
                        non-empty; reported_by never "system" or "unknown"
   validate-friction    { kind, mission_id, seat?, detail } — kind one of
@@ -455,6 +474,7 @@ module.exports = {
   ENVELOPE_KEYS,
   ENVELOPE_WORD_CEILING,
   BRIEF_KEYS,
+  BRIEF_TIER_VALUES,
   DEVIATION_KEYS,
   FRICTION_KEYS,
   FRICTION_KINDS,

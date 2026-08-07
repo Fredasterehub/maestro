@@ -22,9 +22,19 @@ Every field earns its place by removing a specific failure mode:
 | `anchors` | File paths (and artifact paths) the worker starts from — never pasted content | Stale pasted snapshots; context bloat in the brief itself |
 | `acceptance` | Checkable criteria, ideally a command with an expected exit code | "Looks done" substituting for done |
 | `freshness` | What is current, what may be stale, what to re-verify firsthand | Workers trusting summaries over source |
-| `tier` | The size/effort class of the work — a free-form label routing reads (e.g. `standard`, `recon`) | Mis-sized dispatches; budget surprises |
+| `tier` | The closed task class routing reads to seat the work: `recon, mechanical, standard, expert, apex` | Mis-sized dispatches; budget surprises |
 | `return_format` | The six-field envelope plus where the artifact lives | Prose reports that cannot be acted on |
 | `stop_condition` | When to stop and return `blocked`/`partial` instead of pushing on | Workers grinding past a decision that is not theirs |
+
+`recon` is read-only, no mutation. `mechanical` is bounded scope, named
+files, command-verifiable acceptance, no delegated judgment (all must hold).
+`standard` is bounded features/fixes with known patterns and local blast
+radius. `expert` is open-ended shape, material ambiguity, system blast
+radius, a hard-to-reverse change, or weak verification with mutation. `apex`
+is foundational ambiguity, external-contract blast radius, destructive
+reversibility, or a hard fence (auth/authz/schema/public-api/concurrency/
+data-integrity). One moderate risk does not buy apex; two interacting risks
+do.
 
 Anchors carry paths, not content, because the worker reads files itself in its
 own context — pasting content into a brief freezes a snapshot that goes stale
