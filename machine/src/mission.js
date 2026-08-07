@@ -29,6 +29,16 @@
 // no present-day provider or settings state, so a provider coming back online
 // after a legal degraded review has nothing here to retroactively invalidate.
 //
+// Honest scope of "derived": the ledger is plaintext with no writer
+// attestation, and the route-record facts close derives (author family,
+// reserved capacity, reviewer family) entered the ledger as caller input to
+// route.js before the author was spawned. Derivation therefore means the
+// caller had to commit those facts in advance, immutably, timestamped, and
+// cross-checked between independent records — it does not mean the facts are
+// cryptographically proven. What IS proven against reality here: the gate's
+// exit code (gate.js ran the command), and the landing (git answers from the
+// repository's own objects).
+//
 // record-review is the sole producer of the verdict close depends on: a
 // review-outcome record binding the review route, the verdict, and the exact
 // identity that was reviewed. A revise is recorded the same way as an approve
@@ -353,6 +363,15 @@ function recordConsult(treeRoot, missionId, input) {
 
 const REVIEW_VERDICTS = ['approve', 'revise'];
 
+// A verdict is not self-proving the way a gate record is — gate.js really
+// re-ran the command; a verdict is a recorded assertion. So a verdict that
+// REPLACES an earlier verdict on the same review route must answer it the
+// way §8's symmetric rule demands: naming the record it supersedes, with a
+// reason and recorded evidence — never a bare later append (route.js
+// supersede is the model). The first verdict on a route carries none of that.
+const REVIEW_SUPERSEDE_KEYS = ['supersedes_seq', 'reason', 'evidence_seq'];
+const REASON_CEILING = 200;
+
 // The verdict, recorded at the moment it is given (§17) and bound to the
 // review route and the exact identity the reviewer judged. Both verdicts are
 // recorded the same way: an approve is what close later requires, and a
@@ -367,7 +386,7 @@ function recordReview(treeRoot, missionId, input) {
   assertExactKeys(
     input,
     ['review_route_seq', 'review_dispatch_seq', 'verdict', 'artifact_identity'],
-    [],
+    REVIEW_SUPERSEDE_KEYS,
     'review input'
   );
   for (const key of ['review_route_seq', 'review_dispatch_seq']) {
@@ -384,6 +403,24 @@ function recordReview(treeRoot, missionId, input) {
     throw new TypeError('mission: "artifact_identity" must be the reviewed identity object');
   }
   assertExactKeys(input.artifact_identity, IDENTITY_FIELDS, [], 'review artifact_identity');
+  const superseding = REVIEW_SUPERSEDE_KEYS.filter((key) => Object.prototype.hasOwnProperty.call(input, key));
+  if (superseding.length > 0 && superseding.length < REVIEW_SUPERSEDE_KEYS.length) {
+    throw new TypeError(
+      `mission: a superseding verdict carries all of ${REVIEW_SUPERSEDE_KEYS.join(', ')} — got only ${superseding.join(', ')}`
+    );
+  }
+  if (superseding.length > 0) {
+    for (const key of ['supersedes_seq', 'evidence_seq']) {
+      if (!Number.isSafeInteger(input[key]) || input[key] < 0) {
+        throw new TypeError(`mission: "${key}" must be a nonnegative integer naming a ledger seq`);
+      }
+    }
+    if (!isNonEmptyString(input.reason) || /[\r\n]/.test(input.reason) || input.reason.length > REASON_CEILING) {
+      throw new TypeError(
+        `mission: "reason" must be a non-empty single-line string of at most ${REASON_CEILING} characters`
+      );
+    }
+  }
 
   const statePath = statePathOf(treeRoot);
   const ledgerPath = ledgerPathOf(treeRoot);
@@ -424,6 +461,51 @@ function recordReview(treeRoot, missionId, input) {
     }
     checkDispatchMembership(records, missionId, input.review_dispatch_seq, 'review dispatch seq', 'record-review');
 
+    // §8 symmetric rule, at the writer: a verdict that replaces the standing
+    // verdict on this route must name it, with a reason and evidence; a first
+    // verdict must not pretend to supersede anything.
+    let standing = null;
+    for (const record of records) {
+      if (!isPlainObject(record) || record.kind !== 'review-outcome') continue;
+      if (record.review_route_seq !== input.review_route_seq) continue;
+      if (!Number.isSafeInteger(record.seq) || record.seq < 0) continue;
+      if (standing === null || record.seq > standing.seq) standing = record;
+    }
+    const supersedes = Object.prototype.hasOwnProperty.call(input, 'supersedes_seq');
+    if (standing === null && supersedes) {
+      throw new Error(
+        `mission: record-review refused — no verdict exists for review route ${input.review_route_seq}, so there is nothing to supersede`
+      );
+    }
+    if (standing !== null && !supersedes) {
+      throw new Error(
+        `mission: record-review refused — a verdict already stands for review route ${input.review_route_seq} (seq ${standing.seq}); a replacing verdict must name it in "supersedes_seq" with a reason and evidence_seq — a recorded verdict is answered, never silently replaced`
+      );
+    }
+    if (supersedes && input.supersedes_seq !== standing.seq) {
+      throw new Error(
+        `mission: record-review refused — "supersedes_seq" ${input.supersedes_seq} is not the standing verdict for review route ${input.review_route_seq} (seq ${standing.seq})`
+      );
+    }
+    if (supersedes) {
+      const evidence = recordsAtSeq(records, input.evidence_seq);
+      if (evidence.length !== 1) {
+        throw new Error(
+          `mission: record-review refused — "evidence_seq" ${input.evidence_seq} names ${evidence.length === 0 ? 'no' : 'an ambiguous'} ledger record`
+        );
+      }
+      const owner = isNonEmptyString(evidence[0].mission_id)
+        ? evidence[0].mission_id
+        : isNonEmptyString(evidence[0].correlation_id)
+          ? evidence[0].correlation_id
+          : null;
+      if (owner !== null && owner !== missionId) {
+        throw new Error(
+          `mission: record-review refused — "evidence_seq" ${input.evidence_seq} belongs to mission "${owner}", not "${missionId}"`
+        );
+      }
+    }
+
     const identity = {};
     for (const field of IDENTITY_FIELDS) identity[field] = input.artifact_identity[field];
     const seq = appendRecord(ledgerPath, {
@@ -434,6 +516,9 @@ function recordReview(treeRoot, missionId, input) {
         review_dispatch_seq: input.review_dispatch_seq,
         verdict: input.verdict,
         artifact_identity: identity,
+        supersedes_seq: supersedes ? input.supersedes_seq : null,
+        reason: supersedes ? input.reason : null,
+        evidence_seq: supersedes ? input.evidence_seq : null,
       },
       correlation_id: missionId,
     }).seq;
@@ -446,7 +531,13 @@ function recordReview(treeRoot, missionId, input) {
 
 // The whole close input: sequence references and nothing else. Every enforced
 // fact is derived from the records these name; there is no key a caller could
-// use to assert a family, a verdict, or an identity.
+// use to assert a family, a verdict, or an identity. The winning_* keys are
+// equality-enforced against the primary seqs today — with one attempt per
+// mission and no dispatch-record writer yet, they cannot legally differ. They
+// stay in the schema because §16.3's attribution contract names them: when
+// multi-attempt telemetry lands, the close payload must already carry the
+// winning references, and a fail-closed input schema is cheaper to keep than
+// to re-widen.
 const CLOSE_KEYS = [
   'author_route_seq',
   'author_dispatch_seq',
@@ -461,7 +552,11 @@ const INDEPENDENCE_VALUES = new Set(['cross-family', 'degraded-path']);
 
 // Where the landed result is proven. Same candidates, same order, as gate.js's
 // merge-base resolution, so every stage of the chain measures against the same
-// landing line.
+// landing line (gate.js resolves the bare name via merge-base; here the ref is
+// resolved explicitly as refs/heads/<name> — the stricter of the two rules).
+// The fixed set is a public-contract limit: a project whose mainline is named
+// anything else cannot close, and widening it is a change to make in both
+// modules at once, not here alone.
 const LANDING_BRANCHES = ['main', 'master'];
 
 // The canonical patch, pinned knob for knob to gate.js's PATCH_ARGS (which is
@@ -559,6 +654,16 @@ function patchIdOf(repo, patch) {
 // commit is an ancestor of the landing branch; a squash merge, whose landed
 // commit is a different object by construction, is proven by patch identity
 // over the canonical patch. Nothing weaker closes.
+//
+// Known limits, stated rather than implied: the repository itself is
+// caller-located (--repo) — no earlier record names a repository yet, so the
+// proof binds the recorded identity to A repository containing it, and the
+// close record therefore names which one (toplevel, root commits, origin) so
+// the proof is re-auditable; binding the repository to a record written
+// earlier in the chain belongs to the step that writes one. And patch_digest
+// is compared record-to-record only: after the merge the merge base has
+// moved, so the review-time digest genuinely cannot be recomputed here —
+// head and tree are re-derived against real git objects, the digest is not.
 function proveLanding(repo, identity) {
   requireLandingRepo(repo);
   const head = identity.source_head;
@@ -579,9 +684,20 @@ function proveLanding(repo, identity) {
   }
 
   const landing = landingBranchOf(repo);
+  // The repository the proof ran in, recorded into the close so the proof can
+  // be re-audited: the toplevel path, the landing line's root commit(s) (a
+  // repository fingerprint no clone can shed), and the origin URL when one is
+  // configured.
+  const originOutcome = git(repo, ['config', '--get', 'remote.origin.url']);
+  const repository = {
+    path: gitOut(repo, ['rev-parse', '--show-toplevel'], 'repository toplevel'),
+    roots: gitOut(repo, ['rev-list', '--max-parents=0', landing.head], 'repository roots').split('\n').sort(),
+    origin: originOutcome.status === 0 && originOutcome.stdout.trim() !== '' ? originOutcome.stdout.trim() : null,
+  };
+
   const contained = git(repo, ['merge-base', '--is-ancestor', head, landing.head]);
   if (contained.status === 0) {
-    return { method: 'commit-containment', branch: landing.branch, landed_head: landing.head };
+    return { method: 'commit-containment', branch: landing.branch, landed_head: landing.head, repository };
   }
   if (contained.status !== 1) {
     const detail = (contained.stderr || '').trim().split('\n')[0] || `exit ${contained.status}`;
@@ -608,7 +724,7 @@ function proveLanding(repo, identity) {
     if (git(repo, ['rev-parse', '--verify', '--quiet', `${commit}^^{commit}`]).status !== 0) continue;
     const patch = gitOut(repo, [...PATCH_ARGS, `${commit}^`, commit], 'landed canonical patch');
     if (patchIdOf(repo, patch) === reviewedId) {
-      return { method: 'squash-patch-identity', branch: landing.branch, landed_head: commit };
+      return { method: 'squash-patch-identity', branch: landing.branch, landed_head: commit, repository };
     }
   }
   throw new Error(
@@ -688,12 +804,20 @@ function requireUnsuperseded(records, missionId, routeSeq, label) {
   }
 }
 
-// Independence and floor, judged against the records alone. A degraded-path
+// Independence legality, judged against the records alone. A degraded-path
 // review is legal at every class, apex included (no class ceiling), under the
 // route snapshot that authorized it — deliberately, there is no code here
 // that consults preflight, settings, or any present-day lane state, which is
 // what makes a provider's recovery after a legal degraded review incapable of
-// retroactively invalidating it.
+// retroactively invalidating it. But "under its snapshot" cuts both ways: the
+// snapshot must have AUTHORIZED the degraded path, or the label authorizes
+// itself. The snapshot-derivable form at this base is that the author route
+// recorded degraded operation (non-empty degraded_modes) — the locked
+// cross_family_when_available floor means degraded review exists only where
+// cross-family review effectively did not. Which seat/model a given class
+// earns on the degraded path is routing knowledge and lands with author-aware
+// review resolution (3b); the fence here is that the degraded path cannot be
+// entered by labeling alone.
 function checkReviewLegality(authorRoute, reviewRoute) {
   const family = authorRoute.author_family;
   if (!INDEPENDENCE_VALUES.has(reviewRoute.independence)) {
@@ -706,6 +830,20 @@ function checkReviewLegality(authorRoute, reviewRoute) {
       `mission: close refused — review is labeled cross-family but reviewer family "${reviewRoute.reviewer_family}" is the author family: a degraded review reported as cross-family is a laundered label`
     );
   }
+  if (reviewRoute.independence === 'degraded-path') {
+    const modes = authorRoute.degraded_modes;
+    if (!Array.isArray(modes) || modes.length === 0) {
+      throw new Error(
+        `mission: close refused — review is labeled degraded-path but the author route's snapshot records no degraded mode; the degraded path is authorized by the recorded snapshot (cross_family_when_available is a locked floor), never by its own label`
+      );
+    }
+  }
+  // Deviation from the reserved capacity must be recorded. This is NOT a
+  // strength floor: no model/effort ordering exists at this base to rank the
+  // replacement against the reservation, so an arbitrarily weaker reviewer
+  // with a recorded replacement_reason passes here. The ranking arrives with
+  // class-aware review rows; until then this check makes the deviation
+  // auditable, not safe.
   const reserved = authorRoute.reserved_review;
   const honoured =
     isPlainObject(reserved) &&
@@ -716,7 +854,7 @@ function checkReviewLegality(authorRoute, reviewRoute) {
     reserved.independence === reviewRoute.independence;
   if (!honoured && !isNonEmptyString(reviewRoute.replacement_reason)) {
     throw new Error(
-      `mission: close refused — the review profile differs from the capacity reserved at route time ${JSON.stringify(reserved)} with no recorded replacement_reason; the floor recorded at route time was not met`
+      `mission: close refused — the review profile differs from the capacity reserved at route time ${JSON.stringify(reserved)} with no recorded replacement_reason; a deviation from the reservation must be recorded`
     );
   }
 }
@@ -738,15 +876,37 @@ function reviewedIdentityOf(reviewRoute, reviewRouteSeq) {
 
 // The gate's identity binding (§7 chain). A record from before identities were
 // carried has neither field and claims nothing either way — it still closes,
-// since a legal close is never invalidated by a field arriving later. A record
-// that does carry them must name the reviewed artifact, field by field, and
-// its identity_check must not report that the tree changed during the run —
-// the same rule check-honesty applies, so close and the audit agree on the
-// same record.
-function checkGateIdentity(gate, reviewedIdentity, gateSeq) {
+// since a legal close is never invalidated by a field arriving later. That
+// tolerance is BOUNDED: once any gate record in this stream carries the
+// fields, a later field-less gate record is an omission, not a legacy record,
+// and omission would otherwise be the cheapest way to skip the binding. A
+// record that does carry them must name the reviewed artifact, field by
+// field, and its identity_check must not report that the tree changed during
+// the run — the same rule check-honesty applies, so close and the audit agree
+// on the same record.
+function checkGateIdentity(gate, reviewedIdentity, gateSeq, records) {
   const hasIdentity = Object.prototype.hasOwnProperty.call(gate, 'artifact_identity');
   const hasCheck = Object.prototype.hasOwnProperty.call(gate, 'identity_check');
-  if (!hasIdentity && !hasCheck) return;
+  if (!hasIdentity && !hasCheck) {
+    let firstCarrying = null;
+    for (const record of records) {
+      if (!isPlainObject(record) || record.kind !== 'gate') continue;
+      if (!Number.isSafeInteger(record.seq) || record.seq < 0) continue;
+      if (
+        !Object.prototype.hasOwnProperty.call(record, 'artifact_identity') &&
+        !Object.prototype.hasOwnProperty.call(record, 'identity_check')
+      ) {
+        continue;
+      }
+      if (firstCarrying === null || record.seq < firstCarrying) firstCarrying = record.seq;
+    }
+    if (firstCarrying !== null && gate.seq > firstCarrying) {
+      throw new Error(
+        `mission: close refused — gate record at seq ${gateSeq} carries no artifact identity although this stream's gate records have carried one since seq ${firstCarrying}; an omission is not a legacy record`
+      );
+    }
+    return;
+  }
 
   if (!isPlainObject(gate.artifact_identity)) {
     throw new Error(
@@ -808,23 +968,44 @@ function deriveCloseFacts(records, missionId, input) {
   checkReviewLegality(authorRoute, reviewRoute);
   const identity = reviewedIdentityOf(reviewRoute, input.review_route_seq);
 
-  // The recorded verdict (§17): the latest review-outcome record naming this
-  // review route must be an approve, for the very dispatch being credited,
-  // against the same identity every other stage names. Latest-by-seq for the
-  // same reason a superseding red gate refuses — a revise that a later record
-  // has not answered is a rejection, not a formality.
-  let outcome = null;
+  // The recorded verdict (§17): the standing verdict for this review route
+  // must be an approve, for the very dispatch being credited, against the
+  // same identity every other stage names. A verdict record is not
+  // self-proving the way a gate record is (gate.js re-ran the command; a
+  // verdict is an assertion), so a later verdict stands only when it answered
+  // the one before it — supersedes_seq + reason + evidence_seq, checked here
+  // against the records rather than trusted to the writer, because a bare
+  // later append is exactly how a revise would be silently overturned (§8:
+  // approve and revise are held to the same standard).
+  const outcomes = [];
   for (const record of records) {
     if (!isPlainObject(record) || record.kind !== 'review-outcome') continue;
-    if (record.mission_id !== missionId || record.review_route_seq !== input.review_route_seq) continue;
+    if (record.review_route_seq !== input.review_route_seq) continue;
     if (!Number.isSafeInteger(record.seq) || record.seq < 0) continue;
-    if (outcome === null || record.seq > outcome.seq) outcome = record;
+    if (record.mission_id !== missionId) {
+      throw new Error(
+        `mission: close refused — review-outcome at seq ${record.seq} names this mission's review route ${input.review_route_seq} but claims mission ${JSON.stringify(record.mission_id)}; a verdict that misattributes its mission is not evidence`
+      );
+    }
+    outcomes.push(record);
   }
-  if (outcome === null) {
+  outcomes.sort((a, b) => a.seq - b.seq);
+  if (outcomes.length === 0) {
     throw new Error(
       `mission: close refused — no review-outcome record names review route ${input.review_route_seq}; a close needs a recorded verdict, not a narrated one`
     );
   }
+  for (let i = 1; i < outcomes.length; i++) {
+    const replacer = outcomes[i];
+    const replaced = outcomes[i - 1];
+    const evidence = Number.isSafeInteger(replacer.evidence_seq) ? recordsAtSeq(records, replacer.evidence_seq) : [];
+    if (replacer.supersedes_seq !== replaced.seq || !isNonEmptyString(replacer.reason) || evidence.length !== 1) {
+      throw new Error(
+        `mission: close refused — the verdict at seq ${replacer.seq} replaces the verdict at seq ${replaced.seq} without naming it with a reason and recorded evidence; a recorded verdict is answered, never silently replaced`
+      );
+    }
+  }
+  const outcome = outcomes[outcomes.length - 1];
   if (outcome.review_dispatch_seq !== input.review_dispatch_seq) {
     throw new Error(
       `mission: close refused — the recorded verdict (seq ${outcome.seq}) names review dispatch ${outcome.review_dispatch_seq}, not the ${input.review_dispatch_seq} being credited`
@@ -832,7 +1013,7 @@ function deriveCloseFacts(records, missionId, input) {
   }
   if (outcome.verdict !== 'approve') {
     throw new Error(
-      `mission: close refused — the latest recorded review verdict (seq ${outcome.seq}) is ${JSON.stringify(outcome.verdict)}, and only a recorded approve closes a mission`
+      `mission: close refused — the standing recorded review verdict (seq ${outcome.seq}) is ${JSON.stringify(outcome.verdict)}, and only a recorded approve closes a mission`
     );
   }
   const verdictDrift = IDENTITY_FIELDS.filter(
@@ -880,7 +1061,36 @@ function deriveCloseFacts(records, missionId, input) {
       );
     }
   }
-  checkGateIdentity(gate, identity, gateSeq);
+  // §8: one gate, one name — the final gate. No record yet names WHICH
+  // gate_id is the final one, so the derivable form of that law is: no other
+  // gate_id's latest record for this mission may stand red. A failure someone
+  // recorded and nobody answered is not closed over just because a greener
+  // gate ran under a different name.
+  const latestPerGate = new Map();
+  for (const record of records) {
+    if (!isPlainObject(record) || record.kind !== 'gate') continue;
+    if (record.mission_id !== missionId) continue;
+    if (!Number.isSafeInteger(record.seq) || record.seq < 0) continue;
+    const held = latestPerGate.get(record.gate_id);
+    if (held === undefined || record.seq > held.seq) latestPerGate.set(record.gate_id, record);
+  }
+  for (const [gateId, record] of latestPerGate) {
+    if (gateId === gate.gate_id) continue;
+    if (record.exit_code !== 0) {
+      throw new Error(
+        `mission: close refused — the latest record of gate "${gateId}" (seq ${record.seq}) has exit_code ${JSON.stringify(record.exit_code)}; an unanswered red gate on this mission's record is not closed over`
+      );
+    }
+  }
+  checkGateIdentity(gate, identity, gateSeq, records);
+  // §8 order: the final gate runs on the APPROVED artifact — a gate that ran
+  // before the standing approve existed proved a pre-verdict state of the
+  // world, whatever its identity says.
+  if (gate.seq < outcome.seq) {
+    throw new Error(
+      `mission: close refused — the cited gate (seq ${gate.seq}) ran before the standing approve was recorded (seq ${outcome.seq}); the final gate runs on the approved artifact (review-then-gate order)`
+    );
+  }
 
   return { authorRoute, reviewRoute, outcome, gate, identity };
 }
@@ -936,6 +1146,25 @@ function closeMission(treeRoot, missionId, input, options) {
   let closeSeq;
   let payload;
 
+  // The git proof runs BEFORE the state lock is taken: jsonl's lock is
+  // reclaimed as stale after 30s, and the squash proof walks the landing
+  // branch with a git spawn per commit — an unbounded hold inside the lock
+  // would let another writer steal it mid-close. The identity the proof binds
+  // comes from an immutable ledger record, so proving it against the
+  // repository early loses nothing; every ledger-derived refusal is re-run
+  // inside the lock against the locked read, which is the read the decision
+  // is made on.
+  let preFacts;
+  {
+    const { records, errors } = readRecords(ledgerPath);
+    if (errors.length > 0) {
+      const detail = errors.map((e) => `line ${e.line}: ${e.reason}`).join('; ');
+      throw new Error(`mission: ${ledgerPath} has malformed record(s) — refusing to trust this stream: ${detail}`);
+    }
+    preFacts = deriveCloseFacts(records, missionId, input);
+  }
+  const landing = proveLanding(repo, preFacts.identity);
+
   updateJson(
     statePath,
     (current) => {
@@ -949,7 +1178,6 @@ function closeMission(treeRoot, missionId, input, options) {
       }
 
       const facts = deriveCloseFacts(records, missionId, input);
-      const landing = proveLanding(repo, facts.identity);
       payload = closePayloadOf(missionId, input, facts, landing);
 
       closeSeq = appendRecord(ledgerPath, {
@@ -1010,13 +1238,20 @@ commands:
       stdin { consult_id, question, verdict, anchor } — ledger kind "consult".
   record-review <treeRoot> <missionId>
       stdin { review_route_seq, review_dispatch_seq, verdict,
-      artifact_identity } — verdict "approve" or "revise", both recorded the
-      same way (ledger kind "review-outcome"): the approve is what close
-      later requires, the revise on record is what stops a rejected review
-      from quietly closing. REFUSES a verdict whose artifact_identity differs
-      field by field from the identity the named review route bound, a seq
-      that is not this mission's review-phase route, or a review dispatch seq
-      naming another mission's record.
+      artifact_identity, supersedes_seq?, reason?, evidence_seq? } — verdict
+      "approve" or "revise", both recorded the same way (ledger kind
+      "review-outcome"): the approve is what close later requires, the revise
+      on record is what stops a rejected review from quietly closing. A
+      verdict that REPLACES the standing verdict on the same review route
+      must carry all three supersession keys — the standing record's seq, a
+      single-line reason, and an evidence_seq naming a recorded ledger fact —
+      because a verdict is an assertion, not a re-executed command, and a
+      recorded verdict is answered, never silently replaced (a first verdict
+      must carry none of them). REFUSES a verdict whose artifact_identity
+      differs field by field from the identity the named review route bound,
+      a seq that is not this mission's review-phase route, a review dispatch
+      seq naming another mission's record, or a supersession naming anything
+      but the standing verdict.
   close [--repo <path>] <treeRoot> <missionId>
       stdin: sequence references and nothing else —
       { ${CLOSE_KEYS.join(', ')} }
@@ -1030,17 +1265,27 @@ commands:
       route binds a different author route or author dispatch; a dispatch seq
       names another mission's record; the winning seqs are not the dispatches
       the cited chain binds; a review labeled cross-family names a reviewer
-      of the author's own family; the review profile differs from the
-      capacity reserved at route time with no replacement_reason; no
-      review-outcome record names the review route, or the latest one is a
-      revise, is for a different review dispatch, or approves a different
+      of the author's own family; a degraded-path label on a route snapshot
+      that recorded no degraded mode (the label never authorizes itself); the
+      review profile differs from the capacity reserved at route time with no
+      replacement_reason (a recorded deviation, not a strength floor — no
+      model/effort ordering exists yet to rank the replacement); no
+      review-outcome record names the review route, the standing one is a
+      revise, a replacing verdict failed to answer the one before it, the
+      verdict is for a different review dispatch, or it approves a different
       identity than the review route bound; the gate is
-      not exit 0, not this mission's, not the latest run of its gate_id, or
-      names a different artifact identity than the review (field by field —
-      a digest is never compared with a commit sha) or reports its tree
-      changed during the run; or the landed result is not proven equivalent
-      in --repo (default: current directory): commit containment for an
-      ordinary merge, patch identity over the canonical patch for a squash.
+      not exit 0, not this mission's, not the latest run of its gate_id,
+      older than the standing approve (the final gate runs on the approved
+      artifact), omits its identity fields in a stream whose gate records
+      already carry them, or names a different artifact identity than the
+      review (field by field — a digest is never compared with a commit sha)
+      or reports its tree changed during the run; any OTHER gate_id's latest
+      record for this mission stands red (one gate, one name — an unanswered
+      failure is not closed over); or the landed result is not proven
+      equivalent in --repo (default: current directory): commit containment
+      for an ordinary merge, patch identity over the canonical patch for a
+      squash — the proof's repository (toplevel, roots, origin) is recorded
+      into the close so it can be re-audited.
       A degraded-path review is legal at every class under the route snapshot
       that authorized it; close reads no present-day provider state, so a
       provider recovering after a legal degraded review changes nothing. On

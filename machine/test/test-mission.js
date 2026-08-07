@@ -366,7 +366,9 @@ const mxGateSeq = fx.runGreenGate(root, 'mx', 'tests', mxRepo);
 {
   const openSeq = openM('msup');
   const repo = fx.newWorkRepo(tmp);
-  const chain = fx.reserveChain(root, 'msup', fx.artifactIdentity(repo));
+  const identity = fx.artifactIdentity(repo);
+  const chain = fx.reserveChain(root, 'msup', identity);
+  fx.recordApprove(root, 'msup', chain, identity);
   const gateSeq = fx.runGreenGate(root, 'msup', 'tests', repo);
   fx.land(repo, 'merge');
 
@@ -387,7 +389,7 @@ const mxGateSeq = fx.runGreenGate(root, 'mx', 'tests', mxRepo);
   assert.strictEqual(stateOf().missions.msup.status, 'open');
 }
 
-// --- close: a family lie fails the floor recorded at route time --------------
+// --- close: a family lie is an unrecorded deviation from the reservation -----
 // The review route deviates from the reserved capacity (a "gpt cross-family"
 // reviewer the route never reserved) with no replacement_reason. route.js
 // would refuse to write this; close refuses it even hand-appended, because
@@ -408,13 +410,14 @@ const mxGateSeq = fx.runGreenGate(root, 'mx', 'tests', mxRepo);
     phase: 'review',
     predecessor: null,
   });
+  fx.recordApprove(root, 'mlie', { reviewSeq: lying.seq }, identity, lying.seq);
   const gateSeq = fx.runGreenGate(root, 'mlie', 'tests', repo);
   fx.land(repo, 'merge');
   const r = fx.runClose(root, 'mlie', repo, {
     ...fx.closeInputOf({ authorSeq: author.authorSeq, reviewSeq: lying.seq }, gateSeq),
   });
   assert.strictEqual(r.status, 1, 'a review profile the route never reserved must not close unexplained');
-  assert.match(r.stderr, /floor recorded at route time was not met/);
+  assert.match(r.stderr, /a deviation from the reservation must be recorded/);
 }
 
 // --- close: mislabeled independence — degraded reported as cross-family ------
@@ -422,7 +425,7 @@ const mxGateSeq = fx.runGreenGate(root, 'mx', 'tests', mxRepo);
   openM('mind');
   const repo = fx.newWorkRepo(tmp);
   const identity = fx.artifactIdentity(repo);
-  // The reservation itself carries the laundered label, so the floor check
+  // The reservation itself carries the laundered label, so the deviation check
   // passes and only the independence lie can refuse this close.
   const reserved = {
     seat: 'reviewer-degraded-sonnet',
@@ -442,6 +445,7 @@ const mxGateSeq = fx.runGreenGate(root, 'mx', 'tests', mxRepo);
     phase: 'review',
     predecessor: null,
   });
+  fx.recordApprove(root, 'mind', { reviewSeq: review.seq }, identity, review.seq);
   const gateSeq = fx.runGreenGate(root, 'mind', 'tests', repo);
   fx.land(repo, 'merge');
   const r = fx.runClose(root, 'mind', repo, fx.closeInputOf({ authorSeq: author.seq, reviewSeq: review.seq }, gateSeq));
@@ -516,23 +520,47 @@ const mxGateSeq = fx.runGreenGate(root, 'mx', 'tests', mxRepo);
 }
 
 // --- close: a gate record from before identities were carried still closes ---
-// A legal close is never invalidated by a field arriving later.
+// A legal close is never invalidated by a field arriving later — but only in
+// a stream that genuinely predates the fields, so this runs in its own tree,
+// where no gate record has ever carried an identity.
 {
-  openM('mleg');
+  const root2 = path.join(tmp, '.maestro-legacy');
+  const r0 = mission(['open', root2], { mission_id: 'mleg', title: 'legacy tree', brief: VALID_BRIEF });
+  assert.strictEqual(r0.status, 0, r0.stderr);
   const repo = fx.newWorkRepo(tmp);
   const identity = fx.artifactIdentity(repo);
-  const chain = fx.reserveChain(root, 'mleg', identity);
-  fx.recordApprove(root, 'mleg', chain, identity);
-  const legacy = appendRaw('gate', 'mleg', {
-    gate_id: 'legacy',
-    cmd: ['true'],
-    exit_code: 0,
-    mission_id: 'mleg',
+  const chain = fx.reserveChain(root2, 'mleg', identity);
+  fx.recordApprove(root2, 'mleg', chain, identity);
+  const legacy = appendRecord(path.join(root2, 'ledger.jsonl'), {
+    kind: 'gate',
+    payload: { gate_id: 'legacy', cmd: ['true'], exit_code: 0, mission_id: 'mleg' },
+    correlation_id: 'mleg',
   });
   fx.land(repo, 'merge');
-  const r = fx.runClose(root, 'mleg', repo, fx.closeInputOf(chain, legacy.seq));
+  const r = fx.runClose(root2, 'mleg', repo, fx.closeInputOf(chain, legacy.seq));
   assert.strictEqual(r.status, 0, r.stderr);
-  assert.strictEqual(stateOf().missions.mleg.status, 'done');
+  assert.strictEqual(readJson(path.join(root2, 'state.json'), undefined).missions.mleg.status, 'done');
+}
+
+// --- close: omitting the identity fields is not the legacy tolerance ---------
+// In a stream whose gate records already carry identities, a field-less gate
+// record is an omission — the cheapest forgery — and refuses.
+{
+  openM('momit');
+  const repo = fx.newWorkRepo(tmp);
+  const identity = fx.artifactIdentity(repo);
+  const chain = fx.reserveChain(root, 'momit', identity);
+  fx.recordApprove(root, 'momit', chain, identity);
+  const fieldless = appendRaw('gate', 'momit', {
+    gate_id: 'forged',
+    cmd: ['false'],
+    exit_code: 0,
+    mission_id: 'momit',
+  });
+  fx.land(repo, 'merge');
+  const r = fx.runClose(root, 'momit', repo, fx.closeInputOf(chain, fieldless.seq));
+  assert.strictEqual(r.status, 1, 'a field-less gate in an identity-carrying stream must not close');
+  assert.match(r.stderr, /an omission is not a legacy record/);
 }
 
 // --- close: landing refusals -------------------------------------------------
@@ -578,6 +606,10 @@ const mxGateSeq = fx.runGreenGate(root, 'mx', 'tests', mxRepo);
   assert.strictEqual(out.status, 'done');
   assert.strictEqual(out.landing.method, 'commit-containment');
   assert.strictEqual(out.landing.branch, 'main');
+  // the proof's repository is recorded so the close can be re-audited
+  assert.strictEqual(out.landing.repository.path, fs.realpathSync(m1Repo));
+  assert.ok(Array.isArray(out.landing.repository.roots) && out.landing.repository.roots.length > 0);
+  assert.strictEqual(out.landing.repository.origin, null, 'no origin configured in the fixture repo');
 
   const state = stateOf();
   assert.strictEqual(state.missions.m1.status, 'done');
@@ -651,6 +683,165 @@ const mxGateSeq = fx.runGreenGate(root, 'mx', 'tests', mxRepo);
   assert.strictEqual(close.review.independence, 'degraded-path');
 }
 
+// --- close: the degraded path is never self-authorizing ----------------------
+// A route whose snapshot recorded every lane healthy and no degraded mode
+// cannot close on a degraded-path label: the label is authorized by the
+// recorded snapshot, never by itself.
+{
+  openM('mdeg');
+  const repo = fx.newWorkRepo(tmp);
+  const identity = fx.artifactIdentity(repo);
+  const chain = fx.reserveChain(root, 'mdeg', identity, {
+    author: {
+      lane_state: { claude: 'auto', gpt: 'auto', gemini: 'auto' },
+      degraded_modes: [],
+      notices: [],
+    },
+  });
+  fx.recordApprove(root, 'mdeg', chain, identity);
+  const gateSeq = fx.runGreenGate(root, 'mdeg', 'tests', repo);
+  fx.land(repo, 'merge');
+  const r = fx.runClose(root, 'mdeg', repo, fx.closeInputOf(chain, gateSeq));
+  assert.strictEqual(r.status, 1, 'a degraded-path label on a healthy snapshot must not close');
+  assert.match(r.stderr, /records no degraded mode/);
+  assert.strictEqual(stateOf().missions.mdeg.status, 'open');
+}
+
+// --- close: a cross-family review closes — the mission's stated floor --------
+{
+  openM('mxf');
+  const repo = fx.newWorkRepo(tmp);
+  const identity = fx.artifactIdentity(repo);
+  const reserved = {
+    seat: 'reviewer-terra',
+    family: 'gpt',
+    model: 'gpt-5.6-sol',
+    effort: 'high',
+    independence: 'cross-family',
+  };
+  const chain = fx.reserveChain(root, 'mxf', identity, {
+    author: {
+      lane_state: { claude: 'auto', gpt: 'auto', gemini: 'auto' },
+      degraded_modes: [],
+      notices: [],
+      reserved_review: reserved,
+    },
+    review: {
+      reviewer_seat: reserved.seat,
+      reviewer_family: reserved.family,
+      reviewer_model: reserved.model,
+      reviewer_effort: reserved.effort,
+      independence: 'cross-family',
+    },
+  });
+  fx.recordApprove(root, 'mxf', chain, identity);
+  const gateSeq = fx.runGreenGate(root, 'mxf', 'tests', repo);
+  fx.land(repo, 'merge');
+  const r = fx.runClose(root, 'mxf', repo, fx.closeInputOf(chain, gateSeq));
+  assert.strictEqual(r.status, 0, r.stderr);
+  const { records } = ledgerOf();
+  const close = records[records.length - 1];
+  assert.strictEqual(close.review.family, 'gpt');
+  assert.strictEqual(close.review.independence, 'cross-family');
+  assert.strictEqual(close.author_family, 'claude');
+}
+
+// --- close: an unanswered red gate under any name blocks the close -----------
+// §8: one gate, one name. Until a record names which gate_id is final, no
+// other gate_id's latest record may stand red.
+{
+  openM('mred');
+  const repo = fx.newWorkRepo(tmp);
+  const identity = fx.artifactIdentity(repo);
+  const chain = fx.reserveChain(root, 'mred', identity);
+  fx.recordApprove(root, 'mred', chain, identity);
+  const gateSeq = fx.runGreenGate(root, 'mred', 'tests', repo);
+  const redLint = run(GATE, ['run-gate', '--worktree', repo, root, 'mred', 'lint', '--', 'false']);
+  assert.strictEqual(redLint.status, 0, redLint.stderr);
+  fx.land(repo, 'merge');
+  const input = fx.closeInputOf(chain, gateSeq);
+
+  let r = fx.runClose(root, 'mred', repo, input);
+  assert.strictEqual(r.status, 1, 'a red gate under another name must block the close');
+  assert.match(r.stderr, /latest record of gate "lint".*unanswered red gate/);
+
+  // answering the red gate with a green run of the same gate_id restores it
+  const back = spawnSync('git', ['-C', repo, 'checkout', '-q', 'work'], { encoding: 'utf8' });
+  assert.strictEqual(back.status, 0, back.stderr);
+  const greenLint = run(GATE, ['run-gate', '--worktree', repo, root, 'mred', 'lint', '--', 'true']);
+  assert.strictEqual(greenLint.status, 0, greenLint.stderr);
+  r = fx.runClose(root, 'mred', repo, input);
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.strictEqual(stateOf().missions.mred.status, 'done');
+}
+
+// --- close: a dirty reviewed identity never closes ----------------------------
+// route.js refuses to write one, so the route and its gate are hand-crafted;
+// close derives and refuses on its own.
+{
+  openM('mdirty');
+  const repo = fx.newWorkRepo(tmp);
+  const identity = { ...fx.artifactIdentity(repo), dirty: true };
+  const author = fx.reserveChain(root, 'mdirty', fx.artifactIdentity(repo)).author;
+  const review = appendRaw('route', 'mdirty', {
+    ...fx.reviewRouteInput('mdirty', author.seq, author.seq, identity),
+    phase: 'review',
+    predecessor: null,
+  });
+  fx.recordApprove(root, 'mdirty', { reviewSeq: review.seq }, identity, review.seq);
+  const gate = appendRaw('gate', 'mdirty', {
+    gate_id: 'tests',
+    cmd: ['true'],
+    exit_code: 0,
+    mission_id: 'mdirty',
+    artifact_identity: identity,
+    identity_check: { verified: true, changed: [], error: null },
+  });
+  fx.land(repo, 'merge');
+  const r = fx.runClose(
+    root,
+    'mdirty',
+    repo,
+    fx.closeInputOf({ authorSeq: author.seq, reviewSeq: review.seq }, gate.seq)
+  );
+  assert.strictEqual(r.status, 1, 'a dirty reviewed identity must not close');
+  assert.match(r.stderr, /dirty worktree is never a reviewable artifact/);
+}
+
+// --- close: a source_tree that is not the tree of source_head never closes ---
+{
+  openM('mtree');
+  const repo = fx.newWorkRepo(tmp);
+  const real = fx.artifactIdentity(repo);
+  const baseTree = spawnSync('git', ['-C', repo, 'rev-parse', 'main^{tree}'], { encoding: 'utf8' });
+  assert.strictEqual(baseTree.status, 0, baseTree.stderr);
+  const lie = { ...real, source_tree: baseTree.stdout.trim() };
+  const author = fx.reserveChain(root, 'mtree', real).author;
+  const review = appendRaw('route', 'mtree', {
+    ...fx.reviewRouteInput('mtree', author.seq, author.seq, lie),
+    phase: 'review',
+    predecessor: null,
+  });
+  fx.recordApprove(root, 'mtree', { reviewSeq: review.seq }, lie, review.seq);
+  const gate = appendRaw('gate', 'mtree', {
+    gate_id: 'tests',
+    cmd: ['true'],
+    exit_code: 0,
+    mission_id: 'mtree',
+    artifact_identity: lie,
+    identity_check: { verified: true, changed: [], error: null },
+  });
+  fx.land(repo, 'merge');
+  const r = fx.runClose(
+    root,
+    'mtree',
+    repo,
+    fx.closeInputOf({ authorSeq: author.seq, reviewSeq: review.seq }, gate.seq)
+  );
+  assert.strictEqual(r.status, 1, 'an identity binding a head to a foreign tree must not close');
+  assert.match(r.stderr, /is not the tree of source_head/);
+}
+
 // --- record-review: the sole producer of the verdict close depends on --------
 {
   openM('mver');
@@ -700,6 +891,19 @@ const mxGateSeq = fx.runGreenGate(root, 'mx', 'tests', mxRepo);
   assert.strictEqual(r.status, 1);
   assert.match(r.stderr, /names a different artifact than the review route bound/);
 
+  // a first verdict has nothing to supersede
+  r = fx.recordReview(root, 'mver', {
+    review_route_seq: chain.reviewSeq,
+    review_dispatch_seq: chain.reviewSeq,
+    verdict: 'revise',
+    artifact_identity: identity,
+    supersedes_seq: 0,
+    reason: 'x',
+    evidence_seq: 0,
+  });
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /nothing to supersede/);
+
   assert.strictEqual(ledgerOf().records.length, before, 'a refused verdict reaches no disk');
 
   // both verdicts record the same way
@@ -717,20 +921,56 @@ const mxGateSeq = fx.runGreenGate(root, 'mx', 'tests', mxRepo);
   assert.strictEqual(rec.verdict, 'revise');
   assert.strictEqual(rec.review_route_seq, chain.reviewSeq);
   assert.deepStrictEqual(rec.artifact_identity, identity);
+  assert.strictEqual(rec.supersedes_seq, null, 'a first verdict supersedes nothing');
+
+  // a verdict is an assertion, not a re-executed command: replacing the
+  // standing verdict takes the full answer — the standing seq, a reason, and
+  // recorded evidence — never a bare later append
+  const bare = fx.recordReview(root, 'mver', {
+    review_route_seq: chain.reviewSeq,
+    review_dispatch_seq: chain.reviewSeq,
+    verdict: 'approve',
+    artifact_identity: identity,
+  });
+  assert.strictEqual(bare.status, 1, 'a bare second verdict must be refused');
+  assert.match(bare.stderr, /answered, never silently replaced/);
+
+  const partial = fx.recordReview(root, 'mver', {
+    review_route_seq: chain.reviewSeq,
+    review_dispatch_seq: chain.reviewSeq,
+    verdict: 'approve',
+    artifact_identity: identity,
+    supersedes_seq: rec.seq,
+    reason: 'repair verified',
+  });
+  assert.strictEqual(partial.status, 1);
+  assert.match(partial.stderr, /carries all of supersedes_seq, reason, evidence_seq/);
+
+  const wrongSeq = fx.recordReview(root, 'mver', {
+    review_route_seq: chain.reviewSeq,
+    review_dispatch_seq: chain.reviewSeq,
+    verdict: 'approve',
+    artifact_identity: identity,
+    supersedes_seq: rec.seq + 1,
+    reason: 'repair verified',
+    evidence_seq: rec.seq,
+  });
+  assert.strictEqual(wrongSeq.status, 1);
+  assert.match(wrongSeq.stderr, /is not the standing verdict/);
 }
 
-// --- close: no recorded verdict, and a revise on record, both refuse ----------
+// --- close: no verdict, a standing revise, and a bare overturn all refuse ----
 {
-  openM('mnov');
+  const openSeq = openM('mnov');
   const repo = fx.newWorkRepo(tmp);
   const identity = fx.artifactIdentity(repo);
   const chain = fx.reserveChain(root, 'mnov', identity);
-  const gateSeq = fx.runGreenGate(root, 'mnov', 'tests', repo);
-  fx.land(repo, 'merge');
-  const input = fx.closeInputOf(chain, gateSeq);
+  // gate_seq 0 is m1's mission-open record; the verdict refusals fire before
+  // gate resolution, so the placeholder is never reached
+  const input0 = fx.closeInputOf(chain, 0);
 
   // no review-outcome record at all
-  let r = fx.runClose(root, 'mnov', repo, input);
+  let r = fx.runClose(root, 'mnov', repo, input0);
   assert.strictEqual(r.status, 1, 'a close with no recorded verdict must refuse');
   assert.match(r.stderr, /a close needs a recorded verdict, not a narrated one/);
 
@@ -742,25 +982,76 @@ const mxGateSeq = fx.runGreenGate(root, 'mx', 'tests', mxRepo);
     artifact_identity: identity,
   });
   assert.strictEqual(revise.status, 0, revise.stderr);
-  r = fx.runClose(root, 'mnov', repo, input);
+  const reviseSeq = JSON.parse(revise.stdout).ledger_seq;
+  r = fx.runClose(root, 'mnov', repo, input0);
   assert.strictEqual(r.status, 1, 'a revise verdict must not close');
   assert.match(r.stderr, /is "revise", and only a recorded approve closes a mission/);
   assert.strictEqual(stateOf().missions.mnov.status, 'open');
 
-  // a later approve is the latest verdict and restores closeability
-  fx.recordApprove(root, 'mnov', chain, identity);
-  r = fx.runClose(root, 'mnov', repo, input);
+  // an approve that answers the revise — naming it, with a reason and
+  // recorded evidence — restores closeability
+  const answer = fx.recordReview(root, 'mnov', {
+    review_route_seq: chain.reviewSeq,
+    review_dispatch_seq: chain.reviewSeq,
+    verdict: 'approve',
+    artifact_identity: identity,
+    supersedes_seq: reviseSeq,
+    reason: 'revise finding contradicted by recorded repository evidence',
+    evidence_seq: openSeq,
+  });
+  assert.strictEqual(answer.status, 0, answer.stderr);
+  const gateSeq = fx.runGreenGate(root, 'mnov', 'tests', repo);
+  fx.land(repo, 'merge');
+  r = fx.runClose(root, 'mnov', repo, fx.closeInputOf(chain, gateSeq));
   assert.strictEqual(r.status, 0, r.stderr);
   assert.strictEqual(stateOf().missions.mnov.status, 'done');
+  const { records } = ledgerOf();
+  const close = records[records.length - 1];
+  assert.strictEqual(close.review_outcome_seq, JSON.parse(answer.stdout).ledger_seq);
+}
+
+// --- close: a bare later approve never silently overturns a recorded revise --
+// The p7 shape, hand-appended past the writer's own refusal: close derives
+// the answer chain itself. A verdict stream carrying an unanswered
+// replacement stays unclosable — the recovery path is a fresh review route,
+// never a quieter append.
+{
+  openM('mbare');
+  const repo = fx.newWorkRepo(tmp);
+  const identity = fx.artifactIdentity(repo);
+  const chain = fx.reserveChain(root, 'mbare', identity);
+  const revise = fx.recordReview(root, 'mbare', {
+    review_route_seq: chain.reviewSeq,
+    review_dispatch_seq: chain.reviewSeq,
+    verdict: 'revise',
+    artifact_identity: identity,
+  });
+  assert.strictEqual(revise.status, 0, revise.stderr);
+  appendRaw('review-outcome', 'mbare', {
+    mission_id: 'mbare',
+    review_route_seq: chain.reviewSeq,
+    review_dispatch_seq: chain.reviewSeq,
+    verdict: 'approve',
+    artifact_identity: identity,
+    supersedes_seq: null,
+    reason: null,
+    evidence_seq: null,
+  });
+  const gateSeq = fx.runGreenGate(root, 'mbare', 'tests', repo);
+  fx.land(repo, 'merge');
+  const r = fx.runClose(root, 'mbare', repo, fx.closeInputOf(chain, gateSeq));
+  assert.strictEqual(r.status, 1, 'a bare overturning approve must not close');
+  assert.match(r.stderr, /answered, never silently replaced/);
+  assert.strictEqual(stateOf().missions.mbare.status, 'open');
 }
 
 // --- close: the approve must credit this dispatch and this exact artifact ----
 {
-  openM('mfid');
+  const openSeq = openM('mfid');
   const repo = fx.newWorkRepo(tmp);
   const identity = fx.artifactIdentity(repo);
   const chain = fx.reserveChain(root, 'mfid', identity);
-  fx.recordApprove(root, 'mfid', chain, identity);
+  const approveSeq = fx.recordApprove(root, 'mfid', chain, identity);
   const gateSeq = fx.runGreenGate(root, 'mfid', 'tests', repo);
   fx.land(repo, 'merge');
   const input = fx.closeInputOf(chain, gateSeq);
@@ -775,18 +1066,46 @@ const mxGateSeq = fx.runGreenGate(root, 'mx', 'tests', mxRepo);
   assert.match(r.stderr, /names review dispatch \d+, not the \d+ being credited/);
 
   // an approve for a different identity, hand-appended past the writer's own
-  // refusal: close derives, so the lie refuses here too
+  // refusal (with a well-formed answer chain, so only the identity lies):
+  // close derives, so the lie refuses here too
   appendRaw('review-outcome', 'mfid', {
     mission_id: 'mfid',
     review_route_seq: chain.reviewSeq,
     review_dispatch_seq: chain.reviewSeq,
     verdict: 'approve',
     artifact_identity: { ...identity, source_head: 'f'.repeat(40) },
+    supersedes_seq: approveSeq,
+    reason: 'forged',
+    evidence_seq: openSeq,
   });
   r = fx.runClose(root, 'mfid', repo, input);
   assert.strictEqual(r.status, 1, 'an approve for a different artifact must not close');
   assert.match(r.stderr, /recorded approve \(seq \d+\) names a different artifact/);
   assert.strictEqual(stateOf().missions.mfid.status, 'open');
+}
+
+// --- close: a verdict record misattributing its mission is not evidence ------
+{
+  openM('mout');
+  const repo = fx.newWorkRepo(tmp);
+  const identity = fx.artifactIdentity(repo);
+  const chain = fx.reserveChain(root, 'mout', identity);
+  // a perfect approve in every field except the mission it claims
+  appendRaw('review-outcome', 'mout', {
+    mission_id: 'mx',
+    review_route_seq: chain.reviewSeq,
+    review_dispatch_seq: chain.reviewSeq,
+    verdict: 'approve',
+    artifact_identity: identity,
+    supersedes_seq: null,
+    reason: null,
+    evidence_seq: null,
+  });
+  const gateSeq = fx.runGreenGate(root, 'mout', 'tests', repo);
+  fx.land(repo, 'merge');
+  const r = fx.runClose(root, 'mout', repo, fx.closeInputOf(chain, gateSeq));
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /misattributes its mission/);
 }
 
 // --- a done mission accepts no further writes --------------------------------
