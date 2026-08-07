@@ -67,18 +67,19 @@ function revision1Tree(name, dateStr) {
 
 // --- determinism and boundary idempotence of the real, shipped migration ----
 {
-  assert.strictEqual(MIGRATIONS.length, 1, 'this suite assumes one shipped migration — update it alongside the next one');
-  const migrate = MIGRATIONS[0];
-  const input = buildRevision1Config('2026-08-01');
+  assert.strictEqual(MIGRATIONS.length, 2, 'this suite assumes two shipped migrations — update it alongside the next one');
+  let input = buildRevision1Config('2026-08-01');
+  for (const [index, migrate] of MIGRATIONS.entries()) {
+    const out1 = migrate(JSON.parse(JSON.stringify(input)));
+    const out2 = migrate(JSON.parse(JSON.stringify(input)));
+    assert.deepStrictEqual(out1, out2, `MIGRATIONS[${index}] must be deterministic: identical input must yield identical output across repeated runs`);
 
-  const out1 = migrate(JSON.parse(JSON.stringify(input)));
-  const out2 = migrate(JSON.parse(JSON.stringify(input)));
-  assert.deepStrictEqual(out1, out2, 'migration must be deterministic: identical input must yield identical output across repeated runs');
-
-  // Idempotent at its own boundary: running the migration again on its own
-  // output must change nothing further.
-  const reapplied = migrate(JSON.parse(JSON.stringify(out1)));
-  assert.deepStrictEqual(reapplied, out1, 'migration must be idempotent at its own boundary — reapplying to its own output must be a no-op');
+    // Idempotent at its own boundary: running the migration again on its own
+    // output must change nothing further.
+    const reapplied = migrate(JSON.parse(JSON.stringify(out1)));
+    assert.deepStrictEqual(reapplied, out1, `MIGRATIONS[${index}] must be idempotent at its own boundary — reapplying to its own output must be a no-op`);
+    input = out1;
+  }
 }
 
 // --- init writes the current revision directly, never revision 1 -----------
@@ -160,7 +161,9 @@ function revision1Tree(name, dateStr) {
   if (writtenDate !== today) {
     console.log(`test-migrations: SKIP collision-suffix strict filename assertion (UTC date rolled over mid-test: fixture built for ${today}, revise wrote under ${writtenDate})`);
   } else {
-    assert.strictEqual(result.active_config, `routing-${today}-3.json`, 'a collision at N must increment to the next free N, never overwrite it');
+    // Two shipped migrations: the r1->r2 write skips the occupied N=2 to
+    // claim N=3, and the r2->r3 write lands on N=4.
+    assert.strictEqual(result.active_config, `routing-${today}-4.json`, 'a collision at N must increment to the next free N, never overwrite it');
   }
   // Independent of the date race: whatever name revise picked, it must not
   // be N=2 (already occupied), and the occupant must survive untouched.
@@ -201,24 +204,34 @@ function revision1Tree(name, dateStr) {
 }
 
 // Byte-patches a copy of routing.js's own MIGRATIONS declaration (never the
-// real file under machine/src/) so a test can exercise more than the one
-// migration that ships today. `migrationsSource` is the literal
-// replacement for `const MIGRATIONS = [migrateSolSplit];` — free to define
-// its own extra migration functions above that assignment, since it is
-// spliced in at the exact point the real declaration lives. Every caller
-// must read CURRENT_ROUTING_REVISION back off the returned module rather
-// than assume a value: the constant is computed once at require time as
-// `1 + MIGRATIONS.length`, so it moves with whatever migration count the
-// patch introduces, and nothing here hardcodes it independently.
+// real file under machine/src/) so a test can exercise a migration set the
+// shipped module does not carry. `migrationsSource` is the literal
+// replacement for `const MIGRATIONS = [migrateSolSplit, migrateDegradedReview];`
+// — free to define its own extra migration functions above that assignment,
+// since it is spliced in at the exact point the real declaration lives.
+// Every caller must read CURRENT_ROUTING_REVISION back off the returned
+// module rather than assume a value: the constant is computed once at
+// require time as `1 + MIGRATIONS.length`, so it moves with whatever
+// migration count the patch introduces, and nothing here hardcodes it
+// independently.
 function buildPatchedRoutingModule(migrationsSource, fixtureName) {
-  const marker = 'const MIGRATIONS = [migrateSolSplit];';
-  const requireMarker = "const { readJson, writeJson } = require('./atomic-json.js');";
+  const marker = 'const MIGRATIONS = [migrateSolSplit, migrateDegradedReview];';
+  // The copy lives outside machine/src/, so every sibling require must be
+  // rewritten absolute — a relative one would resolve against the temp dir.
+  const requireMarkers = ['atomic-json.js', 'settings.js', 'validators.js'].map((f) => [
+    `require('./${f}')`,
+    `require(${JSON.stringify(path.join(SRC_DIR, f))})`,
+  ]);
   const realSrc = fs.readFileSync(ROUTING_SRC, 'utf8');
-  assert.ok(realSrc.includes(marker) && realSrc.includes(requireMarker), 'test-migrations: routing.js shape moved — update the synthetic-module fixture');
+  assert.ok(
+    realSrc.includes(marker) && requireMarkers.every(([from]) => realSrc.includes(from)),
+    'test-migrations: routing.js shape moved — update the synthetic-module fixture'
+  );
 
-  const patched = realSrc
-    .replace(requireMarker, `const { readJson, writeJson } = require(${JSON.stringify(path.join(SRC_DIR, 'atomic-json.js'))});`)
-    .replace(marker, migrationsSource);
+  let patched = realSrc.replace(marker, migrationsSource);
+  for (const [from, to] of requireMarkers) {
+    patched = patched.replace(from, to);
+  }
   const syntheticSrc = path.join(tmp, fixtureName);
   fs.writeFileSync(syntheticSrc, patched);
   return { path: syntheticSrc, module: require(syntheticSrc) };

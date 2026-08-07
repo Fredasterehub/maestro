@@ -48,11 +48,11 @@ function setPreflight(root, perProvider) {
 
   const config = JSON.parse(fs.readFileSync(path.join(root, 'routing', init.active_config), 'utf8'));
   // Literals, not the module's own constant, so this can actually fail:
-  // the highest shipped migration is r1->r2, so the current revision is 2
+  // the highest shipped migration is r2->r3, so the current revision is 3
   // and init stamps exactly that — never a label above or below the
   // content. Each slice that ships a migration raises both literals.
-  assert.strictEqual(CURRENT_ROUTING_REVISION, 2);
-  assert.strictEqual(config.revision, 2);
+  assert.strictEqual(CURRENT_ROUTING_REVISION, 3);
+  assert.strictEqual(config.revision, 3);
   assert.deepStrictEqual(config.review_routing, {
     claude: ['reviewer-sol-expert-rev', 'reviewer-gemini'],
     gpt: ['reviewer-claude', 'reviewer-gemini'],
@@ -236,9 +236,20 @@ function setPreflight(root, perProvider) {
   assert.deepStrictEqual(active.review_routing.claude, [], 'no cross-family reviewer remains for claude work');
   assert.deepStrictEqual(active.review_routing.gpt, ['reviewer-claude']);
 
+  // With every cross-family lane out, claude-authored work no longer waits:
+  // it falls to the explicit degraded path (class defaults to standard →
+  // sonnet-authored pairing), labeled by the decorrelation notice — never
+  // relabeled cross-family.
   const claude = run(['review-for', root, 'claude']);
-  assert.strictEqual(claude.status, 1, 'claude-authored review must refuse rather than scale the floor down');
-  assert.match(claude.stderr, /review_floor_scale_down is banned/);
+  assert.strictEqual(claude.status, 0, claude.stderr);
+  assert.strictEqual(claude.stdout.trim(), 'reviewer-degraded-opus');
+  assert.match(claude.stderr, /NOT cross-family review/, 'the degraded transition carries the decorrelation notice');
+
+  const apex = run(['review-for', root, 'claude', 'apex', '--json']);
+  assert.strictEqual(apex.status, 0, apex.stderr);
+  const apexBundle = JSON.parse(apex.stdout);
+  assert.strictEqual(apexBundle.seat, 'reviewer-degraded-opus-apex', 'apex tier-scales to the heavy-model pairing, no ceiling');
+  assert.strictEqual(apexBundle.independence, 'degraded-path');
 
   assert.strictEqual(run(['review-for', root, 'gpt']).stdout.trim(), 'reviewer-claude');
 

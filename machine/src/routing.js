@@ -10,16 +10,22 @@
 // used stays readable. Reads verify the digest, refuse symlinked targets,
 // and refuse malformed basenames before trusting a byte of the config.
 //
-// Degraded modes key off state.json.preflight: a provider whose recorded
-// routing token is anything but "present" is down (unknown routes as
-// absent, and is never rounded up). No recorded preflight at all means no
-// degradation is applied — the output says so via preflight_recorded.
+// Degraded modes key off two data sources, composed through one mechanism:
+// state.json.preflight (a provider whose recorded routing token is anything
+// but "present" is down — unknown routes as absent, and is never rounded
+// up; no recorded preflight applies no probe-driven degradation, and the
+// output says so via preflight_recorded) and settings provider_lanes (a
+// lane the operator set to "operator-down" is out regardless of probe
+// health). Either cause activates the same degraded table; each contributes
+// its own notice, so a reader can always tell why a lane is out.
 
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 
 const { readJson, writeJson } = require('./atomic-json.js');
+const { read: readSettings } = require('./settings.js');
+const { BRIEF_TIER_VALUES } = require('./validators.js');
 
 const ROUTING_DIRNAME = 'routing';
 const ACTIVE_BASENAME = 'active.json';
@@ -33,10 +39,12 @@ const FAMILIES = ['claude', 'gpt', 'gemini'];
 const DATED_CONFIG_RE = /^routing-\d{4}-\d{2}-\d{2}-\d+\.json$/;
 const DIGEST_RE = /^sha256:[0-9a-f]{64}$/;
 
-// preflight provider key → degraded sub-table name in the dated config.
+// preflight provider key → degraded sub-table name in the dated config →
+// the settings provider_lanes key (which doubles as the worker family the
+// lane carries, so capability records key off it too).
 const PROVIDER_MODES = [
-  ['codex', 'codex_down'],
-  ['gemini', 'gemini_down'],
+  ['codex', 'codex_down', 'gpt'],
+  ['gemini', 'gemini_down', 'gemini'],
 ];
 
 function isPlainObject(value) {
@@ -234,7 +242,67 @@ function migrateSolSplit(config) {
   return out;
 }
 
-const MIGRATIONS = [migrateSolSplit];
+// Both notices are verbatim from the final design's degraded-review section
+// (§8) — the design, not any other copy of this text, is its authority.
+const DEGRADED_REVIEW_NOTICE =
+  'No cross-family reviewer is available, so this work was reviewed on the ' +
+  "degraded path: a fresh-context Claude reviewer with no access to the author's " +
+  'transcript, on a different Claude model than the author. This is NOT ' +
+  'cross-family review — author and reviewer share one model family and may share ' +
+  'blind spots. The verdict is recorded as review.independence "degraded-path" ' +
+  'and is never counted as independent cross-family approval.';
+
+const DEGRADED_REVIEW_FALLBACK_NOTICE =
+  'No cross-family reviewer is available, and the preferred cross-model ' +
+  'degraded reviewer was also unavailable, so this work was reviewed by a ' +
+  'second fresh-context instance of the same model as the author, with no ' +
+  "access to the author's transcript or session. This is NOT cross-family " +
+  'review and NOT cross-model review — author and reviewer share one model and ' +
+  'family and may share more blind spots than the preferred pairing would have. ' +
+  'The verdict is recorded as review.independence "degraded-path" with ' +
+  '`fallback_used: true`, and is never counted as independent cross-family or ' +
+  'cross-model approval.';
+
+// r2 -> r3: the degraded-review contract becomes data. Four degraded
+// reviewer seats join the seats map — real entries, not just names in a
+// row, so the frontmatter parity guard reaches their files — carrying only
+// the fields those files declare (model, effort, family; no fallback: the
+// preference ladder that sends an unavailable degraded reviewer to a
+// same-model fresh instance is resolution behaviour in reviewFor, never a
+// seat-level fallback profile). The degraded_review block pairs every class,
+// apex included, with its tier-scaled preferred reviewer by author model —
+// no ceiling field exists and no class holds by default. Row order within
+// apex is preference order: the fable-authored pairing is the canonical
+// apex authorship and is what an authorship-blind caller gets.
+function migrateDegradedReview(config) {
+  const out = JSON.parse(JSON.stringify(config));
+  for (const table of ['seats', 'review_routing', 'degraded']) {
+    if (!isPlainObject(out[table])) {
+      throw new Error(`r2->r3 migration: config has no ${table} table — not a revision-2 shape`);
+    }
+  }
+  Object.assign(out.seats, {
+    'reviewer-degraded-opus': { model: 'opus-5', family: 'claude', effort: 'medium' },
+    'reviewer-degraded-sonnet': { model: 'sonnet-5', family: 'claude', effort: 'high' },
+    'reviewer-degraded-opus-apex': { model: 'opus-5', family: 'claude', effort: 'high' },
+    'reviewer-degraded-fable-apex': { model: 'fable-5', family: 'claude', effort: 'low' },
+  });
+  out.degraded_review = {
+    notice: DEGRADED_REVIEW_NOTICE,
+    fallback_notice: DEGRADED_REVIEW_FALLBACK_NOTICE,
+    rows: {
+      recon: { 'sonnet-5': 'reviewer-degraded-opus' },
+      mechanical: { 'sonnet-5': 'reviewer-degraded-opus' },
+      standard: { 'sonnet-5': 'reviewer-degraded-opus' },
+      expert: { 'opus-5': 'reviewer-degraded-sonnet' },
+      apex: { 'fable-5': 'reviewer-degraded-opus-apex', 'opus-5': 'reviewer-degraded-fable-apex' },
+    },
+  };
+  out.revision = 3;
+  return out;
+}
+
+const MIGRATIONS = [migrateSolSplit, migrateDegradedReview];
 
 // The revision of the highest migration actually shipped — each slice that
 // pushes a MIGRATIONS entry raises this in the same commit, by construction.
@@ -257,7 +325,7 @@ function buildDefaultConfig(dateStr) {
 
 // --- read boundary -----------------------------------------------------------
 
-function checkReviewRouting(table, label, seats, errors) {
+function checkReviewRouting(table, label, seats, degradedRowSeats, errors) {
   if (!isPlainObject(table)) {
     errors.push(`${label} must be an object`);
     return;
@@ -271,10 +339,74 @@ function checkReviewRouting(table, label, seats, errors) {
     for (const seatName of list) {
       if (!Object.prototype.hasOwnProperty.call(seats, seatName)) {
         errors.push(`${label}.${family} names unknown seat "${seatName}"`);
-      } else if (isPlainObject(seats[seatName]) && 'alias_of' in seats[seatName]) {
+        continue;
+      }
+      const seat = seats[seatName];
+      if (isPlainObject(seat) && 'alias_of' in seat) {
         // Alias seats exist only so old names keep resolving across a
         // migration — routing a review to one would dodge the profile split.
         errors.push(`${label}.${family} names alias seat "${seatName}", which is never routable`);
+        continue;
+      }
+      // Cross-family rows carry the laundering invariant in their shape:
+      // no row ever names the author family's own seat, and no row ever
+      // names a degraded seat — the degraded path is only ever reached as
+      // an explicit, relabeled transition, never as a table entry.
+      if (isPlainObject(seat) && seat.family === family) {
+        errors.push(`${label}.${family} names seat "${seatName}" of the author's own family "${family}"`);
+      }
+      if (degradedRowSeats.has(seatName)) {
+        errors.push(`${label}.${family} names degraded reviewer seat "${seatName}", which never appears in a cross-family row`);
+      }
+    }
+  }
+}
+
+// The degraded_review block (revision 3+) is a closed shape: two verbatim
+// notices and the tier-scaled author-model→seat rows, one row per class in
+// the closed vocabulary, apex included. There is deliberately no ceiling
+// field to validate — a config that carries one is refused as an unknown
+// field, so "no class ever holds by default" is enforced structurally.
+function checkDegradedReviewBlock(block, seats, errors) {
+  if (!isPlainObject(block)) {
+    errors.push('degraded_review must be an object');
+    return;
+  }
+  for (const key of Object.keys(block)) {
+    if (key !== 'notice' && key !== 'fallback_notice' && key !== 'rows') {
+      errors.push(`degraded_review.${key} is not a permitted field — the block carries notice, fallback_notice, and rows only (no ceiling field exists)`);
+    }
+  }
+  for (const field of ['notice', 'fallback_notice']) {
+    if (typeof block[field] !== 'string' || block[field].trim() === '') {
+      errors.push(`degraded_review.${field} must be a non-empty string`);
+    }
+  }
+  if (!isPlainObject(block.rows)) {
+    errors.push('degraded_review.rows must be an object');
+    return;
+  }
+  for (const klass of BRIEF_TIER_VALUES) {
+    if (!isPlainObject(block.rows[klass]) || Object.keys(block.rows[klass]).length === 0) {
+      errors.push(`degraded_review.rows.${klass} must map at least one author model to a degraded reviewer seat — the degraded path is tier-scaled through every class, with no ceiling`);
+    }
+  }
+  for (const [klass, row] of Object.entries(block.rows)) {
+    if (!BRIEF_TIER_VALUES.has(klass)) {
+      errors.push(`degraded_review.rows.${klass} is not a known task class (${[...BRIEF_TIER_VALUES].join(', ')})`);
+      continue;
+    }
+    if (!isPlainObject(row)) continue; // already reported above
+    for (const [authorModel, seatName] of Object.entries(row)) {
+      if (typeof seatName !== 'string' || !Object.prototype.hasOwnProperty.call(seats, seatName)) {
+        errors.push(`degraded_review.rows.${klass} maps "${authorModel}" to unknown seat "${seatName}"`);
+        continue;
+      }
+      const seat = seats[seatName];
+      if (isPlainObject(seat) && 'alias_of' in seat) {
+        errors.push(`degraded_review.rows.${klass} maps "${authorModel}" to alias seat "${seatName}", which is never routable`);
+      } else if (isPlainObject(seat) && seat.family !== 'claude') {
+        errors.push(`degraded_review.rows.${klass} maps "${authorModel}" to "${seatName}" of family "${seat.family}" — the degraded path is a fresh-context Claude reviewer by definition`);
       }
     }
   }
@@ -308,7 +440,23 @@ function validateRoutingConfig(config) {
       errors.push(`seats.${seatName}.alias_of names "${target}", which is itself an alias`);
     }
   }
-  checkReviewRouting(config.review_routing, 'review_routing', seats, errors);
+  // Collected before any row check runs, so every review row — base or
+  // degraded-mode override — is held to "never names a degraded seat".
+  const degradedRowSeats = new Set();
+  if (isPlainObject(config.degraded_review) && isPlainObject(config.degraded_review.rows)) {
+    for (const row of Object.values(config.degraded_review.rows)) {
+      if (!isPlainObject(row)) continue;
+      for (const seatName of Object.values(row)) {
+        if (typeof seatName === 'string') degradedRowSeats.add(seatName);
+      }
+    }
+  }
+  checkReviewRouting(config.review_routing, 'review_routing', seats, degradedRowSeats, errors);
+  // The block arrives with the r2->r3 migration; configs at earlier
+  // revisions (including rolled-back ones) carry none and stay valid.
+  if (Object.prototype.hasOwnProperty.call(config, 'degraded_review')) {
+    checkDegradedReviewBlock(config.degraded_review, seats, errors);
+  }
   // A tiers block arrives at a later revision; where one is present, its
   // candidates are routable seats by definition — an alias there is the
   // same defect as an alias in a review row.
@@ -359,7 +507,7 @@ function validateRoutingConfig(config) {
       // degraded table is a read-boundary risk like any other.
       const preflightDriven = PROVIDER_MODES.some(([, name]) => name === modeName);
       if (preflightDriven || Object.prototype.hasOwnProperty.call(table, 'review_routing')) {
-        checkReviewRouting(table.review_routing, `degraded.${modeName}.review_routing`, seats, errors);
+        checkReviewRouting(table.review_routing, `degraded.${modeName}.review_routing`, seats, degradedRowSeats, errors);
       }
     }
   }
@@ -435,19 +583,20 @@ function loadRouting(treeRoot) {
   if (!ok) {
     throw new Error(`routing: dated config "${activeFile}" failed shape validation: ${errors.join('; ')}`);
   }
-  return { config, activeFile };
+  return { config, activeFile, digest: actualDigest };
 }
 
 // --- degraded-mode composition -----------------------------------------------
 
 function readPreflight(treeRoot) {
+  const capability = { gpt: null, gemini: null };
   const state = readJson(path.join(treeRoot, STATE_BASENAME), null);
   if (!isPlainObject(state) || !isPlainObject(state.preflight)) {
-    return { recorded: false, modes: [] };
+    return { recorded: false, modes: [], capability };
   }
   const perProvider = isPlainObject(state.preflight.per_provider) ? state.preflight.per_provider : {};
   const modes = [];
-  for (const [provider, modeName] of PROVIDER_MODES) {
+  for (const [provider, modeName, lane] of PROVIDER_MODES) {
     const entry = perProvider[provider];
     // Routing token discipline: only an explicit "present" keeps the
     // provider up; absent, unknown, or an unrecorded provider all route as
@@ -456,8 +605,34 @@ function readPreflight(treeRoot) {
     if (routingToken !== 'present') {
       modes.push(modeName);
     }
+    // Exact model × effort capability, where preflight recorded one. Absence
+    // of a models map is not a claim in either direction — only a recorded
+    // entry ever excludes a candidate.
+    if (isPlainObject(entry) && isPlainObject(entry.models)) {
+      capability[lane] = entry.models;
+    }
   }
-  return { recorded: true, modes };
+  return { recorded: true, modes, capability };
+}
+
+// The operator lane state, read through settings' own clamped read boundary
+// (never a hand parse of settings.json). Until the provider_lanes knob
+// lands in settings' SCHEMA, the read returns no such key and every lane is
+// effectively "auto" — the guard below makes that the same non-degrading
+// answer a fresh tree gives.
+function readProviderLanes(treeRoot) {
+  const { settings } = readSettings(treeRoot);
+  return isPlainObject(settings.provider_lanes) ? settings.provider_lanes : {};
+}
+
+// Named for what it is: an operator toggle, not a probe failure — the
+// reason a reader of this notice can tell why the lane is out.
+function operatorDownNotice(lane) {
+  return (
+    `The ${lane} lane is operator-down (settings provider_lanes.${lane} = "operator-down") — an operator ` +
+    'toggle, not a probe failure: its seats are excluded from routing and run on their recorded degraded ' +
+    'substitutes until the operator re-enables the lane.'
+  );
 }
 
 // Effective review routing under the active degraded modes: each family's
@@ -478,13 +653,26 @@ function composeReviewRouting(config, modes) {
 }
 
 function effectiveRouting(treeRoot) {
-  const { config, activeFile } = loadRouting(treeRoot);
-  const { recorded, modes } = readPreflight(treeRoot);
-  const substitutions = {};
+  const { config, activeFile, digest } = loadRouting(treeRoot);
+  const { recorded, modes: preflightModes, capability } = readPreflight(treeRoot);
+  const lanes = readProviderLanes(treeRoot);
+  // Effective = preflight present AND NOT operator-down: either cause
+  // activates the same degraded table through the same composition — an
+  // operator-down lane is never a parallel path. Each cause contributes its
+  // own notice, so with both holding at once neither fact is hidden.
+  const modes = [];
   const notices = [];
+  for (const [, modeName, lane] of PROVIDER_MODES) {
+    const probeDown = preflightModes.includes(modeName);
+    const operatorDown = lanes[lane] === 'operator-down';
+    if (!probeDown && !operatorDown) continue;
+    modes.push(modeName);
+    if (probeDown) notices.push(config.degraded[modeName].notice);
+    if (operatorDown) notices.push(operatorDownNotice(lane));
+  }
+  const substitutions = {};
   for (const modeName of modes) {
     Object.assign(substitutions, config.degraded[modeName].seats);
-    notices.push(config.degraded[modeName].notice);
   }
   // Chain-resolve: with several providers down, a substitute can itself be
   // substituted (plan-counterpart -> reviewer-gemini -> reviewer-claude).
@@ -501,15 +689,22 @@ function effectiveRouting(treeRoot) {
   return {
     schema_version: SCHEMA_VERSION,
     active_config: activeFile,
+    active_digest: digest,
     revision: config.revision,
     calibrated: config.calibrated,
     preflight_recorded: recorded,
+    provider_lanes: {
+      gpt: lanes.gpt === 'operator-down' ? 'operator-down' : 'auto',
+      gemini: lanes.gemini === 'operator-down' ? 'operator-down' : 'auto',
+    },
     degraded_modes: modes,
     notices,
     seats: config.seats,
     seat_substitutions: substitutions,
     review_routing: composeReviewRouting(config, modes),
     bans: config.bans,
+    degraded_review: isPlainObject(config.degraded_review) ? config.degraded_review : null,
+    capability,
     base_review_routing: config.review_routing,
   };
 }
@@ -711,21 +906,167 @@ function revise(treeRoot) {
   };
 }
 
-function reviewFor(treeRoot, authorFamily) {
+// The no-laundering invariant, checked after every substitution and every
+// fallback re-check — never once at the end: a resolution claiming
+// cross-family independence with a reviewer of the author's own family is
+// refused outright. A same-family reviewer is lawful only under the
+// explicit degraded-path label.
+function refuseLaundering(independence, reviewerFamily, authorFamily) {
+  if (independence === 'cross-family' && reviewerFamily === authorFamily) {
+    throw new Error(
+      `routing: resolved reviewer family "${reviewerFamily}" equals the author family while claiming ` +
+        'cross-family independence — family laundering is refused; a same-family reviewer is lawful only ' +
+        'as an explicit degraded-path transition, relabeled accordingly'
+    );
+  }
+}
+
+// A candidate is capability-unavailable only on a recorded claim: preflight
+// wrote a models map for its provider, that map tracks the seat's exact
+// model, and the entry is not "present" (unknown routes as unavailable and
+// is never rounded up) or lacks the seat's exact effort. No record is not a
+// claim in either direction. Claude seats never enter here — Claude is the
+// runtime; no probe represents it.
+function capabilityUnavailable(seat, capability) {
+  if (typeof seat.model !== 'string') return false;
+  const models = capability[seat.family];
+  if (!isPlainObject(models) || !isPlainObject(models[seat.model])) return false;
+  const entry = models[seat.model];
+  if (entry.status !== 'present') return true;
+  return typeof seat.effort === 'string' && Array.isArray(entry.efforts) && !entry.efforts.includes(seat.effort);
+}
+
+// The hold posture is operator-selectable and never the default: anything
+// but an explicit "hold" — including a settings schema that does not carry
+// the knob yet — resolves the degraded path.
+function readDegradedReviewPosture(treeRoot) {
+  const { settings } = readSettings(treeRoot);
+  return settings.degraded_review === 'hold' ? 'hold' : 'degraded-path';
+}
+
+// Author-aware, class-aware reviewer resolution (execution-plan.md §8): read
+// the author family, enumerate the class candidates, drop the
+// lane-or-capability-unavailable, drop the author's own effective family,
+// take the first remaining cross-family candidate, and otherwise fall to
+// the explicit degraded path, tier-scaled through every class including
+// apex — or throw for an operator-requested hold. Returns a bundle carrying
+// independence "cross-family" or "degraded-path"; nothing in between.
+//
+// authorModel is optional and only consulted on the degraded path, where
+// the class row pairs reviewers by author model (the apex row carries the
+// full heavy-model pairing). Omitted, the row's first pairing — the class's
+// canonical authorship — is used, and the bundle's author_model names the
+// key actually applied so the selection is never silent.
+function reviewFor(treeRoot, authorFamily, taskClass, authorModel) {
   if (!FAMILIES.includes(authorFamily)) {
     throw new Error(`routing: author family must be one of ${FAMILIES.join(', ')} (got "${authorFamily}")`);
   }
-  const effective = effectiveRouting(treeRoot);
-  const list = effective.review_routing[authorFamily];
-  if (list.length === 0) {
+  if (!BRIEF_TIER_VALUES.has(taskClass)) {
     throw new Error(
-      `routing: no cross-family reviewer is available for ${authorFamily}-authored work under degraded modes ` +
-        `[${effective.degraded_modes.join(', ')}] — review_floor_scale_down is banned, so this work waits`
+      `routing: task class must be one of ${[...BRIEF_TIER_VALUES].join(', ')} (got ${JSON.stringify(taskClass)})`
     );
   }
-  const rerouted =
-    JSON.stringify(list) !== JSON.stringify(effective.base_review_routing[authorFamily]);
-  return { seat: list[0], rerouted, notices: effective.notices };
+  if (authorModel !== undefined && (typeof authorModel !== 'string' || authorModel === '')) {
+    throw new Error('routing: author model, when given, must be a non-empty model-name string');
+  }
+
+  const effective = effectiveRouting(treeRoot);
+  const seats = effective.seats;
+  const subs = effective.seat_substitutions;
+  const base = effective.base_review_routing[authorFamily];
+  const shared = {
+    class: taskClass,
+    routing_config: effective.active_config,
+    routing_digest: effective.active_digest,
+  };
+
+  for (const candidate of effective.review_routing[authorFamily]) {
+    const resolved = Object.prototype.hasOwnProperty.call(subs, candidate) ? subs[candidate] : candidate;
+    const seat = seats[resolved];
+    if (!isPlainObject(seat) || 'alias_of' in seat) continue; // never routable; validation refuses configs that ship this
+    if (capabilityUnavailable(seat, effective.capability)) continue;
+    // Post-substitution family re-check: a candidate whose resolved seat
+    // lands in the author's own family can never serve the cross-family
+    // path. It is dropped here; the explicit degraded transition below is
+    // the only door through which this work meets a same-family reviewer.
+    if (seat.family === authorFamily) continue;
+    const bundle = {
+      seat: resolved,
+      requested_seat: candidate,
+      substituted: resolved !== candidate,
+      family: seat.family,
+      model: seat.model,
+      effort: typeof seat.effort === 'string' ? seat.effort : null,
+      independence: 'cross-family',
+      ...shared,
+      rerouted: resolved !== base[0],
+      notices: effective.notices,
+    };
+    refuseLaundering(bundle.independence, bundle.family, authorFamily);
+    return bundle;
+  }
+
+  // No cross-family candidate survives: the explicit degraded transition —
+  // relabeled, never a quiet mapping onto a same-family seat.
+  if (readDegradedReviewPosture(treeRoot) === 'hold') {
+    throw new Error(
+      `routing: no cross-family reviewer is effectively available for ${authorFamily}-authored ${taskClass} ` +
+        'work and settings degraded_review is "hold" — the operator-selected hold posture refuses the degraded ' +
+        'path; re-enable a lane or set degraded_review to "degraded-path"'
+    );
+  }
+  const block = effective.degraded_review;
+  if (!isPlainObject(block) || !isPlainObject(block.rows)) {
+    throw new Error(
+      `routing: no cross-family reviewer is effectively available for ${authorFamily}-authored ${taskClass} ` +
+        `work and the active config (revision ${effective.revision}) carries no degraded_review block — ` +
+        'run routing.js revise before routing degraded review'
+    );
+  }
+  const row = block.rows[taskClass];
+  const pairedModels = isPlainObject(row) ? Object.keys(row) : [];
+  if (pairedModels.length === 0) {
+    throw new Error(`routing: degraded_review.rows.${taskClass} pairs no author model — the active config is incomplete`);
+  }
+  let modelKey;
+  if (authorModel === undefined) {
+    modelKey = pairedModels[0];
+  } else if (Object.prototype.hasOwnProperty.call(row, authorModel)) {
+    modelKey = authorModel;
+  } else {
+    throw new Error(
+      `routing: degraded_review.rows.${taskClass} pairs author model(s) ${pairedModels.join(', ')} and has no ` +
+        `pairing for author model "${authorModel}"`
+    );
+  }
+  const seatName = row[modelKey];
+  const seat = seats[seatName];
+  const bundle = {
+    seat: seatName,
+    family: seat.family,
+    model: seat.model,
+    effort: typeof seat.effort === 'string' ? seat.effort : null,
+    independence: 'degraded-path',
+    author_model: modelKey,
+    // Preference ladder, not a hard requirement: when this preferred seat's
+    // model is unavailable at spawn time, a second fresh-context instance of
+    // the author's own model reviews instead at high effort, recorded with
+    // fallback_used/fallback_reason by the caller. Resolution behaviour of
+    // this module — deliberately not a seat-level fallback profile.
+    fallback: {
+      model: modelKey,
+      effort: 'high',
+      fresh_instance: true,
+      notice: block.fallback_notice,
+    },
+    ...shared,
+    rerouted: true,
+    notices: effective.notices.concat([block.notice]),
+  };
+  // Fallback re-check: composed after the fallback profile, same invariant,
+  // same refusal — degraded-path labeling is what makes this bundle lawful.
+  refuseLaundering(bundle.independence, bundle.family, authorFamily);
+  return bundle;
 }
 
 // --- CLI --------------------------------------------------------------------
@@ -736,7 +1077,7 @@ usage:
   routing.js init <treeRoot>
   routing.js revise <treeRoot>
   routing.js active <treeRoot>
-  routing.js review-for <treeRoot> <author_family>
+  routing.js review-for <treeRoot> <author_family> [class] [--json]
 
 commands:
   init        writes the dated immutable default config
@@ -758,47 +1099,61 @@ commands:
   active      loads the dated config through the digest-verified pointer
               (refusing digest mismatch, symlinked target, or malformed
               basename), applies the degraded sub-tables keyed off
-              state.json.preflight provider modes (a provider routes as up
-              only when its routing token is exactly "present"; no recorded
-              preflight applies no degradation), and prints the effective
-              routing JSON: seats, seat_substitutions, review_routing, bans,
-              degraded_modes, notices.
-  review-for  prints the routed reviewer seat for work authored by
-              <author_family> (claude | gpt | gemini), honoring degraded
-              modes. When degradation rerouted the choice, each mode's
-              decorrelation-cost notice prints to stderr so the caller can
-              carry it into the affected envelope's risks. An empty reviewer
-              row (both providers down, claude-authored work) is refused:
-              the review floor never scales down.
+              state.json.preflight provider modes AND settings
+              provider_lanes (a provider routes as up only when its routing
+              token is exactly "present" and its lane is not operator-down;
+              no recorded preflight applies no probe-driven degradation),
+              and prints the effective routing JSON: seats,
+              seat_substitutions, review_routing, bans, degraded_modes,
+              notices, provider_lanes, capability, degraded_review.
+  review-for  resolves the reviewer for work authored by <author_family>
+              (claude | gpt | gemini) at [class] (recon | mechanical |
+              standard | expert | apex; defaults to standard), author-aware:
+              lane-or-capability-unavailable candidates and candidates of
+              the author's own effective family are dropped, the first
+              remaining cross-family candidate wins, and otherwise the
+              resolution falls to the explicit degraded path — tier-scaled
+              through every class, apex included, labeled independence
+              "degraded-path" and never "cross-family" — unless settings
+              degraded_review is "hold" (operator-selected, never the
+              default), which refuses instead. Default output prints the
+              seat name, with each applicable notice on stderr when the
+              choice was rerouted; --json prints the full resolution bundle
+              (seat, family, model, effort, independence, class,
+              routing_config, routing_digest, notices, and on the degraded
+              path the author_model pairing key and same-model fallback).
 
 Exits 0 on success; every refusal prints to stderr and exits 1.
 `;
 
-const COMMAND_ARITY = { init: 0, revise: 0, active: 0, 'review-for': 1 };
+const COMMAND_ARITY = { init: [0, 0], revise: [0, 0], active: [0, 0], 'review-for': [1, 2] };
 
 function parseArgv(argv) {
   if (argv.includes('--help') || argv.includes('-h')) {
     return { help: true };
   }
-  const [command, treeRoot, ...rest] = argv;
+  const json = argv.includes('--json');
+  const [command, treeRoot, ...rest] = argv.filter((arg) => arg !== '--json');
   if (command === undefined) {
     return { error: 'a command is required' };
   }
   if (!Object.prototype.hasOwnProperty.call(COMMAND_ARITY, command)) {
     return { error: `unknown command "${command}"` };
   }
+  if (json && command !== 'review-for') {
+    return { error: `--json is only accepted by review-for` };
+  }
   if (typeof treeRoot !== 'string' || treeRoot === '') {
     return { error: `${command} requires a <treeRoot> argument` };
   }
-  if (rest.length !== COMMAND_ARITY[command]) {
-    return {
-      error:
-        rest.length > COMMAND_ARITY[command]
-          ? `unexpected extra argument(s): ${rest.slice(COMMAND_ARITY[command]).join(' ')}`
-          : `${command} is missing required argument(s)`,
-    };
+  const [min, max] = COMMAND_ARITY[command];
+  if (rest.length < min) {
+    return { error: `${command} is missing required argument(s)` };
   }
-  return { command, treeRoot, args: rest };
+  if (rest.length > max) {
+    return { error: `unexpected extra argument(s): ${rest.slice(max).join(' ')}` };
+  }
+  return { command, treeRoot, args: rest, json };
 }
 
 function main(argv) {
@@ -828,13 +1183,19 @@ function main(argv) {
       delete effective.base_review_routing; // internal comparison surface, not part of the printed contract
       process.stdout.write(JSON.stringify(effective, null, 2) + '\n');
     } else if (command === 'review-for') {
-      const { seat, rerouted, notices } = reviewFor(treeRoot, args[0]);
-      if (rerouted) {
-        for (const notice of notices) {
-          process.stderr.write(`routing.js: ${notice}\n`);
+      // Class defaults to standard for the back-compat one-line form; the
+      // bundle's own class field always names what was actually resolved.
+      const bundle = reviewFor(treeRoot, args[0], args[1] === undefined ? 'standard' : args[1]);
+      if (parsed.json) {
+        process.stdout.write(JSON.stringify(bundle, null, 2) + '\n');
+      } else {
+        if (bundle.rerouted) {
+          for (const notice of bundle.notices) {
+            process.stderr.write(`routing.js: ${notice}\n`);
+          }
         }
+        process.stdout.write(bundle.seat + '\n');
       }
-      process.stdout.write(seat + '\n');
     }
     process.exit(0);
   } catch (err) {
