@@ -3184,6 +3184,83 @@ function dispatchOutcomesOf(missionId) {
   assert.strictEqual(stateOf().missions[missionId].status, 'open');
 }
 
+// --- close: a dispatch-outcome record already naming a WINNER refuses
+// (round-3 finding) — the idempotency above only ever inspects seqs it is
+// about to write, which excludes both winners by construction, so it cannot
+// by itself catch a ledger that already holds a fate for one. Reproduces the
+// reviewer's exact shape: two independently approved chains, a first close
+// attempt that durably wrote the chain it did NOT cite as winning (then
+// crashed before its own mission-close record), and a second close citing
+// the OTHER chain as winning — "retry" does not mean "same input", so this
+// must refuse rather than close over a record contradicting its own claim
+// about who won.
+{
+  const missionId = 'mterm-winner-has-outcome';
+  openM(missionId);
+
+  const authorA = authorLineage(missionId, {});
+  const repoA = fx.newWorkRepo(tmp);
+  const identityA = fx.artifactIdentity(repoA);
+  const reviewA = reviewLineage(missionId, authorA.route.seq, authorA.dispatchSeq, identityA, {});
+  fx.recordApprove(
+    root,
+    missionId,
+    { authorSeq: authorA.route.seq, reviewSeq: reviewA.route.seq },
+    identityA,
+    reviewA.dispatchSeq
+  );
+
+  const authorB = authorLineage(missionId, {});
+  const repoB = fx.newWorkRepo(tmp);
+  const identityB = fx.artifactIdentity(repoB);
+  const reviewB = reviewLineage(missionId, authorB.route.seq, authorB.dispatchSeq, identityB, {});
+  fx.recordApprove(
+    root,
+    missionId,
+    { authorSeq: authorB.route.seq, reviewSeq: reviewB.route.seq },
+    identityB,
+    reviewB.dispatchSeq
+  );
+
+  // Simulates the interrupted first attempt: it cited chain A as winner, so
+  // it durably wrote chain B's outcome — both approved, but not the one it
+  // named — before crashing ahead of its own mission-close record.
+  appendRaw('dispatch-outcome', missionId, {
+    mission_id: missionId,
+    dispatch_seq: authorB.dispatchSeq,
+    route_seq: authorB.route.seq,
+    phase: 'author',
+    seat: 'executor-claude',
+    outcome: 'superseded',
+  });
+  appendRaw('dispatch-outcome', missionId, {
+    mission_id: missionId,
+    dispatch_seq: reviewB.dispatchSeq,
+    route_seq: reviewB.route.seq,
+    phase: 'review',
+    seat: 'reviewer-degraded-sonnet',
+    outcome: 'superseded',
+  });
+
+  // The second attempt cites chain B as winning instead.
+  const gateSeq = fx.runGreenGate(root, missionId, 'tests', repoB);
+  fx.land(repoB, 'merge');
+  const input = fx.closeInputOf({ authorSeq: authorB.route.seq, reviewSeq: reviewB.route.seq }, gateSeq, {
+    author_dispatch_seq: authorB.dispatchSeq,
+    review_dispatch_seq: reviewB.dispatchSeq,
+    winning_author_dispatch_seq: authorB.dispatchSeq,
+    winning_review_dispatch_seq: reviewB.dispatchSeq,
+  });
+  const r = fx.runClose(root, missionId, repoB, input);
+  assert.strictEqual(
+    r.status,
+    1,
+    'a close must refuse when a dispatch-outcome record already names one of its own winners'
+  );
+  assert.match(r.stderr, new RegExp(`dispatch ${authorB.dispatchSeq}`));
+  assert.strictEqual(stateOf().missions[missionId].status, 'open');
+}
+
 // --- argv fail-closed --------------------------------------------------------
 {
   let r = mission(['open', root, 'surplus'], { mission_id: 'x', title: 'x', brief: VALID_BRIEF });
