@@ -12,8 +12,12 @@ When an executor's envelope reports `done`:
 
 1. **Route review cross-family.** Dispatch the reviewer seat whose model
    family differs from the author's (`reviewer-claude` for gpt/gemini work,
-   `reviewer-sol` for claude/gemini work, `reviewer-gemini` for claude/gpt
-   work). Same-family review inherits the author's blind spots — route it
+   the gpt ladder's class-scoped reviewer — `reviewer-terra` for
+   recon/mechanical/standard, `reviewer-sol-expert-rev` for expert,
+   `reviewer-sol-apex-rev` for apex — for claude/gemini work, `reviewer-gemini`
+   for claude/gpt work; `reviewer-sol` is now an alias of
+   `reviewer-sol-expert-rev` and does not route). Same-family review inherits
+   the author's blind spots — route it
    cross-family here. Close does not refuse a same-family review
    structurally; it refuses one dishonestly *labeled* `cross-family`, and
    accepts the same reviewer honestly labeled `degraded-path` only when the
@@ -123,7 +127,7 @@ GOOD  The receipt endpoint is in and merged — it was rejecting valid dates
       still running; nothing needs you.
 
 BAD   **Mission `add-receipt` — COMPLETE**
-      1. Executor: executor-sol (isolated worktree)
+      1. Executor: executor-sol-expert (isolated worktree)
       2. Cross-family review: approve after 1 revise round
       3. Gate: exit 0 (9/9)
       4. Merged to mainline, mission closed
