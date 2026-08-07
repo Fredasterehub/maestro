@@ -69,11 +69,11 @@ function setPreflight(root, perProvider) {
 
   const config = JSON.parse(fs.readFileSync(path.join(root, 'routing', init.active_config), 'utf8'));
   // Literals, not the module's own constant, so this can actually fail:
-  // the highest shipped migration is r4->r5, so the current revision is 5
+  // the highest shipped migration is r5->r6, so the current revision is 6
   // and init stamps exactly that — never a label above or below the
   // content. Each slice that ships a migration raises both literals.
-  assert.strictEqual(CURRENT_ROUTING_REVISION, 5);
-  assert.strictEqual(config.revision, 5);
+  assert.strictEqual(CURRENT_ROUTING_REVISION, 6);
+  assert.strictEqual(config.revision, 6);
   // Class-keyed ladders (design §6.1/§6.2), now carrying the gpt standard rung
   // r5 seats: claude-authored recon/mechanical/standard leads with
   // reviewer-terra and falls to gemini behind it, and gemini-authored work of
@@ -905,6 +905,56 @@ function setPreflight(root, perProvider) {
   const r3 = validateRoutingConfig(stripped);
   assert.strictEqual(r3.ok, false, 'the two r3 blocks are one contract — neither fence can be stripped alone');
   assert.ok(r3.errors.some((e) => /arrive together in the r2->r3 migration/.test(e)), r3.errors.join('; '));
+}
+
+// --- the tiers block is a closed shape, and what it may not carry ------------
+//
+// The block's absences are load-bearing: no plan_seat anywhere (design §9 keeps
+// planning topology out of the implementation ladder), no candidate naming a
+// seat the table does not carry or an alias that is never routable, and no
+// placement without a stated confidence.
+{
+  const shipped = buildDefaultConfig('2026-08-07');
+  assert.ok(shipped.tiers, 'r6 ships the tiers block');
+  assert.deepStrictEqual(Object.keys(shipped.tiers).sort(), ['calibrated', 'classes', 'policy', 'status']);
+  assert.deepStrictEqual(Object.keys(shipped.tiers.classes).sort(), ['apex', 'expert', 'mechanical', 'recon', 'standard']);
+  for (const [className, klass] of Object.entries(shipped.tiers.classes)) {
+    for (const candidate of klass.candidates) {
+      const seat = shipped.seats[candidate.seat];
+      assert.ok(seat, `tiers.classes.${className} names "${candidate.seat}", which the seat table must carry`);
+      assert.ok(!('alias_of' in seat), `tiers.classes.${className} names alias seat "${candidate.seat}"`);
+      assert.strictEqual(candidate.status, 'estimated', 'every placement in this revision is estimated');
+    }
+  }
+  // Design §12's escalation rule, as data: exactly the expert escalation rung
+  // is marked, and no class marks its leading candidate as one.
+  const marked = Object.entries(shipped.tiers.classes).flatMap(([className, klass]) =>
+    klass.candidates.filter((c) => c.escalation === true).map((c) => `${className}:${c.seat}`)
+  );
+  assert.deepStrictEqual(marked, ['expert:executor-fable-low']);
+  for (const [className, klass] of Object.entries(shipped.tiers.classes)) {
+    assert.notStrictEqual(klass.candidates[0].escalation, true, `${className}'s leading rung must not be an escalation-only profile`);
+  }
+
+  const refuses = (mutate, pattern, why) => {
+    const config = buildDefaultConfig('2026-08-07');
+    mutate(config);
+    const { ok, errors } = validateRoutingConfig(config);
+    assert.strictEqual(ok, false, why);
+    assert.ok(errors.some((e) => pattern.test(e)), errors.join('; '));
+  };
+
+  refuses((c) => { c.tiers.plan_seat = 'planner'; }, /tiers\.plan_seat is refused/, 'a planning seat inside the implementation ladder must be refused by name');
+  refuses((c) => { c.tiers.classes.expert.plan_seat = 'planner'; }, /tiers\.classes\.expert\.plan_seat is refused/, 'the same rule one level down');
+  refuses((c) => { c.tiers.classes.expert.candidates[0].seat = 'executor-sol'; }, /names alias seat "executor-sol", which is never routable/, 'an alias in a candidate array is the same defect as an alias in a review row');
+  refuses((c) => { c.tiers.classes.apex.candidates[0].seat = 'executor-phantom'; }, /names unknown seat "executor-phantom"/, 'a ladder may not offer a seat nothing can dispatch');
+  refuses((c) => { delete c.tiers.classes.recon.candidates[0].status; }, /status must be a non-empty string/, 'every placement states its confidence');
+  refuses((c) => { c.tiers.classes.recon.candidates[0].escalation = 'yes'; }, /escalation must be a boolean when present/, 'the escalation marker is a boolean, never a token');
+  refuses((c) => { c.tiers.classes.recon.candidates[0].ceiling = 'apex'; }, /is not a permitted field/, 'an unknown candidate field is refused, so no second vocabulary grows here');
+  refuses((c) => { c.tiers.classes.mechanical.candidates = []; }, /candidates must be a non-empty array/, 'a class with no rungs can route nothing');
+  refuses((c) => { delete c.tiers.classes.apex; }, /tiers\.classes\.apex must be an object/, 'every class in the closed vocabulary carries a ladder');
+  refuses((c) => { c.tiers.classes.trivial = { candidates: [{ seat: 'scout', status: 'estimated' }] }; }, /tiers\.classes\.trivial is not a known task class/, 'the class vocabulary stays closed');
+  refuses((c) => { c.tiers.classes.apex.candidates.push({ seat: 'executor-fable', status: 'estimated' }); }, /names seat "executor-fable" twice/, 'a ladder rung is reached once or not at all');
 }
 
 // --- revise: a failed dated-config write consumes no immutable name ----------

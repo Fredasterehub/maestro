@@ -1319,7 +1319,7 @@ function reviewInput(authorRouteSeq, overrides) {
       ...over,
     });
 
-  assert.strictEqual(config.revision, 5, 'this walk is over the r5 ladder');
+  assert.strictEqual(config.revision, 6, 'this walk is over the r6 ladder');
   assert.strictEqual(reviewer('expert').seat, 'reviewer-sol-expert-rev', 'expert claude work is reviewed on the expert rung');
 
   // 1. The expert default is reserved and its review capacity is honoured.
