@@ -557,6 +557,19 @@ function checkOverturnEvidence(records, missionId, evidenceSeq, answered, who, w
     }
   }
   if (isPlainObject(evidence.artifact_identity) && isPlainObject(answered.artifact_identity)) {
+    // The predicate reads recorded values, so an identity object carrying none
+    // would answer "not the same work" about a record that in truth says
+    // nothing. `{}` means the same thing everywhere the predicate is used —
+    // unreadable, refused — rather than a different thing at each call site.
+    const unreadable = [
+      carriesFullIdentity(evidence.artifact_identity) ? null : `gate record ${evidenceSeq}`,
+      carriesFullIdentity(answered.artifact_identity) ? null : `the verdict at seq ${answeredSeq}`,
+    ].filter((named) => named !== null);
+    if (unreadable.length > 0) {
+      throw new Error(
+        `mission: ${who} refused — ${what} rests on an identity that names no artifact: ${unreadable.join(' and ')} carries an artifact_identity without its ${IDENTITY_FIELDS.join(', ')} fields`
+      );
+    }
     if (!namesSameArtifact(evidence.artifact_identity, answered.artifact_identity)) {
       throw new Error(
         `mission: ${who} refused — ${what} cites gate record ${evidenceSeq}, which tested a different artifact than the verdict it answers: neither ${CONTENT_IDENTITY_FIELDS.join(' nor ')} matches the identity that verdict judged; a gate on other work contradicts nothing here`
@@ -1352,21 +1365,24 @@ function requireNoStandingRevise(records, missionId, verdicts, identity, citedRo
   // a foreign chain ABOUT THIS WORK refuses the close rather than passing
   // quietly — and a foreign mess about other work never reaches this close.
   //
-  // The unreadable-identity refusal above is deliberately not repeated here: a
-  // foreign record naming nothing could be about anything, and refusing on it
-  // would let one junk line in another mission freeze every close in the tree.
-  // Foreign records are read where they name this work, and nowhere else.
+  // A foreign record naming nothing is skipped rather than refused: it could
+  // be about anything, and refusing on it would let one junk line in another
+  // mission freeze every close in the tree. Skipped, though, means it never
+  // reaches the predicate — `carriesFullIdentity` gates both reads below, so
+  // `{}` is unreadable here exactly as it is everywhere else, and the only
+  // difference between the two sides is what unreadable costs: a refusal on
+  // this mission's own route, nothing at all on a stranger's.
   for (const [foreignId, byRoute] of verdicts.byMission) {
     if (foreignId === missionId) continue;
     for (const [routeSeq, outcomes] of byRoute) {
       const aboutThisWork = outcomes.some(
-        (o) => isPlainObject(o.artifact_identity) && namesSameArtifact(o.artifact_identity, identity)
+        (o) => carriesFullIdentity(o.artifact_identity) && namesSameArtifact(o.artifact_identity, identity)
       );
       if (!aboutThisWork) continue;
       requireAnsweredChain(records, foreignId, outcomes);
       const last = outcomes[outcomes.length - 1];
       if (last.verdict !== 'revise') continue;
-      if (!isPlainObject(last.artifact_identity) || !namesSameArtifact(last.artifact_identity, identity)) continue;
+      if (!carriesFullIdentity(last.artifact_identity) || !namesSameArtifact(last.artifact_identity, identity)) continue;
       requireReviseAnswered(
         records,
         foreignId,

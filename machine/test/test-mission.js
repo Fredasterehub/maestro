@@ -1986,6 +1986,44 @@ const mxGateSeq = fx.runGreenGate(root, 'mx', 'tests', mxRepo);
   assert.strictEqual(stateOf().missions.mevo.status, 'open');
 }
 
+// --- record-review: an identity naming nothing is unreadable at the evidence
+// check too, not merely a non-match. `{}` has one meaning across the module:
+// the predicate never sees it, and every site that could pass it one says so.
+{
+  openM('mevempty');
+  const repo = fx.newWorkRepo(tmp);
+  const identity = fx.artifactIdentity(repo);
+  const chain = fx.reserveChain(root, 'mevempty', identity);
+  const revise = fx.recordReview(root, 'mevempty', {
+    review_route_seq: chain.reviewSeq,
+    review_dispatch_seq: chain.reviewSeq,
+    verdict: 'revise',
+    artifact_identity: identity,
+  });
+  assert.strictEqual(revise.status, 0, revise.stderr);
+  const reviseSeq = JSON.parse(revise.stdout).ledger_seq;
+  // a green gate that carries an identity object with no fields in it: past
+  // the omission bound (it does carry artifact_identity), and still nothing
+  const blindSeq = appendRaw('gate', 'mevempty', {
+    gate_id: 'tests',
+    cmd: ['true'],
+    exit_code: 0,
+    mission_id: 'mevempty',
+    artifact_identity: {},
+  }).seq;
+  const refused = fx.recordReview(root, 'mevempty', {
+    review_route_seq: chain.reviewSeq,
+    review_dispatch_seq: chain.reviewSeq,
+    verdict: 'approve',
+    artifact_identity: identity,
+    supersedes_seq: reviseSeq,
+    reason: 'answered by a gate whose identity says nothing',
+    evidence_seq: blindSeq,
+  });
+  assert.strictEqual(refused.status, 1, 'an identity naming nothing is not evidence about this work');
+  assert.match(refused.stderr, new RegExp(`rests on an identity that names no artifact: gate record ${blindSeq}`));
+}
+
 // --- close: a dishonest green under another name is as unanswered as a red ---
 {
   openM('mhon');
