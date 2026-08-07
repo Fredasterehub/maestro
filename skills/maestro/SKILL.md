@@ -71,7 +71,7 @@ node "<plugin-root>/machine/src/deviate.js"    record-deviation <treeRoot>      
 node "<plugin-root>/machine/src/friction.js"   record|rates <treeRoot> ...           # friction ledger: ladder-engaged|seat-degraded|worker-died|revise-verdict; rates = the evidence /maestro:audit reads
 node "<plugin-root>/machine/src/stop.js"       write-stop <treeRoot> ...             # the only stop writer; fails closed outside the stop vocabulary; renders handoff.md
 node "<plugin-root>/machine/src/roster.js"     register|heartbeat|mark|reconcile|retire <treeRoot> ...   # fleet registry over live tasks
-node "<plugin-root>/machine/src/routing.js"    init|active|review-for <treeRoot> ... # active = effective routing (families, degraded tables); review-for <family> = routed reviewer
+node "<plugin-root>/machine/src/routing.js"    init|active|review-for <treeRoot> ... # active = effective routing (families, degraded tables); review-for <family> [class] [author_model] [--json] = routed reviewer, cross-family or the labeled degraded path
 node "<plugin-root>/machine/src/settings.js"   read|write <treeRoot>                 # schema-clamped project knobs (landing mode, fleet ceiling, review floor); write takes a patch via stdin
 node "<plugin-root>/machine/src/project.js"    views <treeRoot>                      # regenerate bounded projections in views/ — the only .maestro surfaces to read
 ```

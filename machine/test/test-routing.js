@@ -7,7 +7,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
 const SRC = path.join(__dirname, '..', 'src', 'routing.js');
-const { DATED_CONFIG_RE, CURRENT_ROUTING_REVISION, buildRevision1Config } = require(SRC);
+const { DATED_CONFIG_RE, CURRENT_ROUTING_REVISION, buildRevision1Config, buildDefaultConfig, validateRoutingConfig } = require(SRC);
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-routing-'));
 process.on('exit', () => fs.rmSync(tmp, { recursive: true, force: true }));
@@ -29,6 +29,27 @@ function initTree(name) {
   return { root, init: JSON.parse(r.stdout) };
 }
 
+// A tree whose dated config is the shipped default with one mutation — for
+// exercising read-path refusals that the shipped content never triggers.
+// The digest is computed from the mutated bytes, so only shape validation
+// stands between the mutation and the resolver.
+function customTree(name, mutate) {
+  const root = freshTree(name);
+  const dir = path.join(root, 'routing');
+  fs.mkdirSync(dir, { recursive: true });
+  const config = buildDefaultConfig('2026-08-07');
+  mutate(config);
+  const filename = 'routing-2026-08-07-1.json';
+  fs.writeFileSync(path.join(dir, filename), JSON.stringify(config, null, 2) + '\n');
+  const digest =
+    'sha256:' + require('node:crypto').createHash('sha256').update(fs.readFileSync(path.join(dir, filename))).digest('hex');
+  fs.writeFileSync(
+    path.join(dir, 'active.json'),
+    JSON.stringify({ schema_version: 1, active_config: filename, digest }) + '\n'
+  );
+  return root;
+}
+
 function setPreflight(root, perProvider) {
   fs.writeFileSync(
     path.join(root, 'state.json'),
@@ -48,11 +69,11 @@ function setPreflight(root, perProvider) {
 
   const config = JSON.parse(fs.readFileSync(path.join(root, 'routing', init.active_config), 'utf8'));
   // Literals, not the module's own constant, so this can actually fail:
-  // the highest shipped migration is r1->r2, so the current revision is 2
+  // the highest shipped migration is r2->r3, so the current revision is 3
   // and init stamps exactly that — never a label above or below the
   // content. Each slice that ships a migration raises both literals.
-  assert.strictEqual(CURRENT_ROUTING_REVISION, 2);
-  assert.strictEqual(config.revision, 2);
+  assert.strictEqual(CURRENT_ROUTING_REVISION, 3);
+  assert.strictEqual(config.revision, 3);
   assert.deepStrictEqual(config.review_routing, {
     claude: ['reviewer-sol-expert-rev', 'reviewer-gemini'],
     gpt: ['reviewer-claude', 'reviewer-gemini'],
@@ -236,9 +257,20 @@ function setPreflight(root, perProvider) {
   assert.deepStrictEqual(active.review_routing.claude, [], 'no cross-family reviewer remains for claude work');
   assert.deepStrictEqual(active.review_routing.gpt, ['reviewer-claude']);
 
+  // With every cross-family lane out, claude-authored work no longer waits:
+  // it falls to the explicit degraded path (class defaults to standard →
+  // sonnet-authored pairing), labeled by the decorrelation notice — never
+  // relabeled cross-family.
   const claude = run(['review-for', root, 'claude']);
-  assert.strictEqual(claude.status, 1, 'claude-authored review must refuse rather than scale the floor down');
-  assert.match(claude.stderr, /review_floor_scale_down is banned/);
+  assert.strictEqual(claude.status, 0, claude.stderr);
+  assert.strictEqual(claude.stdout.trim(), 'reviewer-degraded-opus');
+  assert.match(claude.stderr, /NOT cross-family review/, 'the degraded transition carries the decorrelation notice');
+
+  const apex = run(['review-for', root, 'claude', 'apex', '--json']);
+  assert.strictEqual(apex.status, 0, apex.stderr);
+  const apexBundle = JSON.parse(apex.stdout);
+  assert.strictEqual(apexBundle.seat, 'reviewer-degraded-opus-apex', 'apex tier-scales to the heavy-model pairing, no ceiling');
+  assert.strictEqual(apexBundle.independence, 'degraded-path');
 
   assert.strictEqual(run(['review-for', root, 'gpt']).stdout.trim(), 'reviewer-claude');
 
@@ -247,6 +279,242 @@ function setPreflight(root, perProvider) {
   // gemini_down — the composed substitution must land on the live seat,
   // never the dead intermediate.
   assert.strictEqual(active.seat_substitutions['plan-counterpart'], 'reviewer-claude');
+}
+
+// --- operator-down lanes compose like probe-down ones (settings channel) -----
+{
+  const { root } = initTree('operator-down');
+  // Preflight healthy: the degradation must come from settings alone.
+  setPreflight(root, { codex: { routing: 'present' }, gemini: { routing: 'present' } });
+  // provider_lanes is a settings SCHEMA knob (3a), read through settings'
+  // clamped boundary. The live tree already carries this key — publishing
+  // the lane as "auto" against it was finding N1.
+  fs.writeFileSync(
+    path.join(root, 'settings.json'),
+    JSON.stringify({ provider_lanes: { gpt: 'operator-down' } }) + '\n'
+  );
+
+  const active = JSON.parse(run(['active', root]).stdout);
+  assert.strictEqual(active.provider_lanes.gpt, 'operator-down', 'a lane the operator declared down is never published as auto');
+  assert.deepStrictEqual(active.degraded_modes, ['codex_down'], 'operator-down activates the same degraded table a probe failure does');
+  assert.strictEqual(active.notices.length, 1);
+  assert.match(active.notices[0], /operator-down/, 'the notice names the operator toggle, not a probe failure');
+  assert.ok(!('degraded_review_posture' in active), 'the settings-snapshot posture is internal, not printed');
+
+  const claude = run(['review-for', root, 'claude']);
+  assert.strictEqual(claude.stdout.trim(), 'reviewer-gemini', 'claude work reroutes off the operator-down gpt lane');
+
+  // Both lanes operator-down: the composed state is the degraded transition.
+  fs.writeFileSync(
+    path.join(root, 'settings.json'),
+    JSON.stringify({ provider_lanes: { gpt: 'operator-down', gemini: 'operator-down' } }) + '\n'
+  );
+  const degraded = run(['review-for', root, 'claude']);
+  assert.strictEqual(degraded.status, 0, degraded.stderr);
+  assert.strictEqual(degraded.stdout.trim(), 'reviewer-degraded-opus');
+  assert.match(degraded.stderr, /NOT cross-family review/);
+}
+
+// --- the lane state survives sanctioned settings writes (round-two R1) -------
+{
+  // R1's failure was that settings.write rebuilt the file from SCHEMA keys
+  // alone and stripped provider_lanes, so the recovered lane state silently
+  // reverted on any unrelated write. With the 3a knobs in SCHEMA the key is
+  // durable: an unrelated write must leave the operator-down lane on disk
+  // and operating.
+  const settingsMod = require(path.join(__dirname, '..', 'src', 'settings.js'));
+  const { root } = initTree('lane-durability');
+  setPreflight(root, { codex: { routing: 'present' }, gemini: { routing: 'present' } });
+  settingsMod.write(root, { provider_lanes: { gpt: 'operator-down' } });
+  settingsMod.write(root, { fleet_ceiling: 5 }); // the unrelated knob from R1's own reproduction
+
+  const onDisk = JSON.parse(fs.readFileSync(path.join(root, 'settings.json'), 'utf8'));
+  assert.strictEqual(onDisk.provider_lanes.gpt, 'operator-down', 'a sanctioned write of an unrelated knob must not strip the lane state off disk');
+
+  const active = JSON.parse(run(['active', root]).stdout);
+  assert.strictEqual(active.provider_lanes.gpt, 'operator-down', 'the lane state survives the write and keeps operating');
+  assert.deepStrictEqual(active.degraded_modes, ['codex_down']);
+}
+
+// --- the hold posture operates through the same settings channel -------------
+{
+  const { root } = initTree('hold-posture');
+  setPreflight(root, {}); // both providers route as absent
+  fs.writeFileSync(path.join(root, 'settings.json'), JSON.stringify({ degraded_review: 'hold' }) + '\n');
+  const held = run(['review-for', root, 'claude']);
+  assert.strictEqual(held.status, 1, 'an operator-selected hold must refuse, not resolve');
+  assert.match(held.stderr, /operator-selected hold posture refuses the degraded path/);
+
+  // Only the exact token holds; the explicit non-default resolves normally.
+  fs.writeFileSync(path.join(root, 'settings.json'), JSON.stringify({ degraded_review: 'degraded-path' }) + '\n');
+  assert.strictEqual(run(['review-for', root, 'claude']).stdout.trim(), 'reviewer-degraded-opus');
+}
+
+// --- the no-laundering invariant refuses a family-less reviewer seat ---------
+{
+  // Validation half: a routed reviewer seat that declares no family is
+  // refused at the read boundary, not compared open through undefined.
+  const config = buildDefaultConfig('2026-08-07');
+  config.seats['reviewer-mystery'] = { model: 'opus-5', effort: 'high' }; // a Claude model, no declared family
+  config.review_routing.claude.push('reviewer-mystery');
+  const { ok, errors } = validateRoutingConfig(config);
+  assert.strictEqual(ok, false, 'a family-less seat in a cross-family row must fail validation');
+  assert.ok(errors.some((e) => /declares no family/.test(e)), errors.join('; '));
+}
+{
+  // Resolution half: a degraded substitution can land on a seat no review
+  // row names, so row validation never saw it — the guard itself must
+  // refuse rather than resolve the seat as cross-family.
+  const root = customTree('launder-familyless', (config) => {
+    config.seats['reviewer-mystery'] = { model: 'opus-5', effort: 'high' };
+    config.degraded.codex_down.seats['reviewer-gemini'] = 'reviewer-mystery';
+  });
+  setPreflight(root, { codex: { routing: 'absent' }, gemini: { routing: 'present' } });
+  const r = run(['review-for', root, 'claude']);
+  assert.strictEqual(r.status, 1, 'a family-less resolved reviewer must refuse, never resolve');
+  assert.match(r.stderr, /declares no family/);
+}
+
+// --- a degraded seat in a cross-family row is refused by name ----------------
+{
+  // The rows-membership check alone is self-referential: omit the seat
+  // from this config's own degraded_review.rows and it would pass. The
+  // reserved reviewer-degraded-* namespace closes that door.
+  const config = buildDefaultConfig('2026-08-07');
+  for (const row of Object.values(config.degraded_review.rows)) {
+    for (const key of Object.keys(row)) {
+      if (row[key] === 'reviewer-degraded-opus') row[key] = 'reviewer-degraded-sonnet';
+    }
+  }
+  config.review_routing.gpt.push('reviewer-degraded-opus'); // claude-family seat in a gpt row: the family check alone passes it
+  const { ok, errors } = validateRoutingConfig(config);
+  assert.strictEqual(ok, false, 'a degraded-named seat in a cross-family row must fail validation even when rows omit it');
+  assert.ok(errors.some((e) => /"reviewer-degraded-opus", which never appears in a cross-family row/.test(e)), errors.join('; '));
+}
+
+// --- the verbatim notices are pinned by validation ---------------------------
+{
+  const config = buildDefaultConfig('2026-08-07');
+  config.degraded_review.notice = 'whatever';
+  const { ok, errors } = validateRoutingConfig(config);
+  assert.strictEqual(ok, false, 'a diverged degraded-review notice must fail validation — the design text is verbatim authoritative');
+  assert.ok(errors.some((e) => /verbatim degraded-path notice text/.test(e)), errors.join('; '));
+  assert.strictEqual(validateRoutingConfig(buildDefaultConfig('2026-08-07')).ok, true, 'the shipped text itself validates');
+}
+
+// --- an incomplete review_routing table is a named refusal, not a TypeError --
+{
+  const config = buildDefaultConfig('2026-08-07');
+  delete config.review_routing.gemini;
+  const { ok, errors } = validateRoutingConfig(config);
+  assert.strictEqual(ok, false, 'a review_routing table missing a family must fail validation');
+  assert.ok(errors.some((e) => /review_routing\.gemini must be an array/.test(e)), errors.join('; '));
+}
+
+// --- the degraded path is scoped to claude-authored work ---------------------
+{
+  // A gpt author whose effective row empties must refuse, never receive a
+  // Claude reviewer under a notice asserting a shared family it does not
+  // share — a false record is worse than a refusal.
+  const root = customTree('non-claude-degraded', (config) => {
+    config.degraded.codex_down.review_routing.gpt = [];
+  });
+  setPreflight(root, { codex: { routing: 'absent' }, gemini: { routing: 'present' } });
+  const r = run(['review-for', root, 'gpt']);
+  assert.strictEqual(r.status, 1, 'a non-claude author must never fall into the claude-scoped degraded path');
+  assert.match(r.stderr, /scoped to claude-authored work/);
+}
+
+// --- degraded pairing by author model, and bundle shape symmetry -------------
+{
+  const { root } = initTree('author-model');
+  setPreflight(root, {}); // both providers route as absent
+  const opus = run(['review-for', root, 'claude', 'apex', 'opus-5', '--json']);
+  assert.strictEqual(opus.status, 0, opus.stderr);
+  const opusBundle = JSON.parse(opus.stdout);
+  assert.strictEqual(opusBundle.seat, 'reviewer-degraded-fable-apex', 'the opus-authored apex pairing is resolvable from the CLI, not only the row-order default');
+  assert.strictEqual(opusBundle.author_model, 'opus-5');
+  assert.strictEqual(opusBundle.fallback.model, 'opus-5');
+
+  // Same substitution fields as the cross-family path: consumers never
+  // branch on independence to learn which fields exist.
+  assert.strictEqual(opusBundle.requested_seat, opusBundle.seat);
+  assert.strictEqual(opusBundle.substituted, false);
+
+  const unpaired = run(['review-for', root, 'claude', 'apex', 'haiku', '--json']);
+  assert.strictEqual(unpaired.status, 1, 'an unpaired author model is refused, never silently defaulted');
+  assert.match(unpaired.stderr, /no pairing for author model "haiku"/);
+}
+
+// --- the qualification bound refuses scale-down, never relabels it -----------
+{
+  // The mission's own live lane state: gpt operator-down, gemini up. This
+  // is the configuration whose round-one behaviour — expert and apex
+  // claude work resolving reviewer-gemini labeled cross-family — violated
+  // the review-floor ban and disproved the N3/N4 deferral's bound.
+  const { root } = initTree('qualification-bound');
+  setPreflight(root, { codex: { routing: 'present' }, gemini: { routing: 'present' } });
+  fs.writeFileSync(
+    path.join(root, 'settings.json'),
+    JSON.stringify({ provider_lanes: { gpt: 'operator-down' } }) + '\n'
+  );
+
+  const standard = JSON.parse(run(['review-for', root, 'claude', 'standard', 'sonnet-5', '--json']).stdout);
+  assert.strictEqual(standard.seat, 'reviewer-gemini', 'gemini keeps its remaining standard-and-below reviewer scope');
+  assert.strictEqual(standard.independence, 'cross-family');
+  // The pairing key is a degraded-path concept: on the cross-family path
+  // the accepted author-model argument has no bearing, and the bundle says
+  // so explicitly rather than omitting the field.
+  assert.strictEqual(standard.author_model, null);
+
+  const expert = JSON.parse(run(['review-for', root, 'claude', 'expert', '--json']).stdout);
+  assert.strictEqual(expert.seat, 'reviewer-degraded-sonnet', 'expert claude work skips the unqualified gemini reviewer and falls to the degraded path');
+  assert.strictEqual(expert.independence, 'degraded-path');
+
+  const apex = JSON.parse(run(['review-for', root, 'claude', 'apex', '--json']).stdout);
+  assert.strictEqual(apex.seat, 'reviewer-degraded-opus-apex', 'apex falls to the heavy-model degraded pairing, never a scaled-down cross-family claim');
+  assert.strictEqual(apex.independence, 'degraded-path');
+
+  // gpt- and gemini-authored work stays on the always-on claude floor at
+  // every class: reviewer-claude carries the apex bound until r4 splits
+  // the claude ladder, because the degraded path is claude-scoped.
+  assert.strictEqual(run(['review-for', root, 'gpt', 'apex']).stdout.trim(), 'reviewer-claude');
+  assert.strictEqual(run(['review-for', root, 'gemini', 'expert']).stdout.trim(), 'reviewer-claude');
+}
+
+// --- apex never scales down onto the expert review rung ----------------------
+{
+  // gpt lane up, gemini down: the only cross-family candidate for claude
+  // work is the expert rung, whose bound is expert — apex refuses it and
+  // degrades rather than resolve below its floor. r4's class-keyed ladders
+  // will route this to reviewer-sol-apex-rev instead.
+  const { root } = initTree('apex-floor');
+  setPreflight(root, { codex: { routing: 'present' }, gemini: { routing: 'absent' } });
+  assert.strictEqual(run(['review-for', root, 'claude', 'expert']).stdout.trim(), 'reviewer-sol-expert-rev');
+  const apex = JSON.parse(run(['review-for', root, 'claude', 'apex', '--json']).stdout);
+  assert.strictEqual(apex.seat, 'reviewer-degraded-opus-apex');
+  assert.strictEqual(apex.independence, 'degraded-path');
+}
+
+// --- the qualification table is validated, and inseparable from degraded_review ----
+{
+  const uncovered = buildDefaultConfig('2026-08-07');
+  delete uncovered.review_qualification['reviewer-gemini'];
+  const r1 = validateRoutingConfig(uncovered);
+  assert.strictEqual(r1.ok, false, 'a routed reviewer seat without a qualification bound must fail validation');
+  assert.ok(r1.errors.some((e) => /"reviewer-gemini" with no review_qualification entry/.test(e)), r1.errors.join('; '));
+
+  const badBound = buildDefaultConfig('2026-08-07');
+  badBound.review_qualification['reviewer-gemini'] = 'ultra';
+  const r2 = validateRoutingConfig(badBound);
+  assert.strictEqual(r2.ok, false, 'a bound outside the closed class vocabulary must fail validation');
+  assert.ok(r2.errors.some((e) => /review_qualification\.reviewer-gemini must be one of/.test(e)), r2.errors.join('; '));
+
+  const stripped = buildDefaultConfig('2026-08-07');
+  delete stripped.review_qualification;
+  const r3 = validateRoutingConfig(stripped);
+  assert.strictEqual(r3.ok, false, 'the two r3 blocks are one contract — neither fence can be stripped alone');
+  assert.ok(r3.errors.some((e) => /arrive together in the r2->r3 migration/.test(e)), r3.errors.join('; '));
 }
 
 // --- revise: a failed dated-config write consumes no immutable name ----------
