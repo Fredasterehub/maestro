@@ -150,7 +150,13 @@ function revision1Tree(name, dateStr) {
   const r = run(ROUTING_SRC, ['revise', root]);
   assert.strictEqual(r.status, 0, r.stderr);
   const result = JSON.parse(r.stdout);
-  const writtenDate = result.active_config.match(/^routing-(\d{4}-\d{2}-\d{2})-\d+\.json$/)[1];
+  // Guarded rather than indexed straight off the match: an active_config
+  // that does not match this shape is exactly what this test exists to
+  // catch, so it has to arrive as a named assertion, not a TypeError on
+  // null[1].
+  const written = String(result.active_config).match(/^routing-(\d{4}-\d{2}-\d{2})-\d+\.json$/);
+  assert.ok(written, `revise wrote an unexpected active_config filename: ${JSON.stringify(result.active_config)}`);
+  const writtenDate = written[1];
   if (writtenDate !== today) {
     console.log(`test-migrations: SKIP collision-suffix strict filename assertion (UTC date rolled over mid-test: fixture built for ${today}, revise wrote under ${writtenDate})`);
   } else {

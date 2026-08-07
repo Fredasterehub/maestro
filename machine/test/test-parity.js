@@ -146,16 +146,22 @@ for (const seatName of Object.keys(config.seats)) {
 for (const [seatName, seat] of Object.entries(config.seats)) {
   if ('alias_of' in seat) continue; // aliases: existence only, checked separately below
 
-  const agent = agents.get(seatName);
-  if (!agent) {
-    violations.push(`${seatName}: no agents/${seatName}.md file`);
-    continue;
-  }
-  const fm = agent.frontmatter;
+  // No existence guard here: the assert above already aborts the run on any
+  // config seat without a file, so an absent entry is unreachable.
+  const fm = agents.get(seatName).frontmatter;
   if (!fm) {
     violations.push(`${seatName}: agents/${seatName}.md has no parseable frontmatter block`);
     continue;
   }
+
+  // The map above is keyed by filename, but the agent runtime resolves a
+  // seat by the frontmatter `name` field: a file that exists under one
+  // identity and registers under another satisfies "every routed seat has a
+  // file" in the letter only, and fails at dispatch time rather than here.
+  check(
+    fm.name === seatName,
+    `${seatName}: frontmatter name "${fm.name}" must equal the seat name its filename agents/${seatName}.md declares`
+  );
 
   const hasHostPair = 'host' in seat && 'host_effort' in seat;
   const hasWorkerEffort = 'effort' in seat;
@@ -182,6 +188,11 @@ for (const [seatName, seat] of Object.entries(config.seats)) {
         fm.worker_effort === seat.effort,
         `${seatName}: frontmatter worker_effort "${fm.worker_effort}" must equal config.effort "${seat.effort}"`
       );
+    } else if ('worker_effort' in fm) {
+      // Symmetric with the fallback arms below: config recording no worker
+      // effort is a reason to skip the comparison, never a licence for the
+      // prompt to carry an arbitrary one unchallenged.
+      check(false, `${seatName}: frontmatter declares worker_effort "${fm.worker_effort}" with no counterpart in config`);
     }
     check(
       fm.model === shortClaudeModel(seat.host),
@@ -222,20 +233,40 @@ for (const [seatName, seat] of Object.entries(config.seats)) {
   }
 
   // Family attribution: the config's family must name the model actually
-  // doing the intellectual work. Derived structurally from the worker
-  // model's own name where one exists (catches a hosted seat mislabeled
-  // into the *wrong other* family, not only mislabeled onto the Claude
-  // host); falls back to the weaker "not claude" check only when config
-  // names no worker model to derive a family from (plan-counterpart).
-  if (hasHostPair || seat.hosted === true) {
-    const expectedFamily = expectedFamilyForModel(seat.model);
-    if (expectedFamily) {
+  // doing the intellectual work — for a hosted seat the worker rather than
+  // the Claude host, for a native seat its own model. Checked for every
+  // routed seat that declares a family, not only the hosted ones: `family`
+  // is the key review_routing reads to pick a cross-family reviewer, so a
+  // mislabeled native seat breaks the same law a mislabeled hosted seat
+  // does. A seat declaring no family at all (convergence) is outside this
+  // check's reach — requiring the key is a routing.js change, not a test
+  // change, and belongs to the slice that owns that file.
+  if ('family' in seat) {
+    if ('model' in seat) {
+      const expectedFamily = expectedFamilyForModel(seat.model);
+      // A model name matching no known prefix is a loud failure, never a
+      // silently skipped check: the prefix list is a maintained lookup like
+      // any other, and failing open here would reopen the mislabeling hole
+      // with no signal that the strong check had stopped running.
       check(
-        seat.family === expectedFamily,
-        `${seatName}: config.family "${seat.family}" must name the worker model "${seat.model}"'s family ("${expectedFamily}"), not the host's`
+        expectedFamily !== undefined,
+        `${seatName}: config.model "${seat.model}" matches no family prefix expectedFamilyForModel knows, so config.family "${seat.family}" cannot be verified — teach the helper the new prefix rather than leaving the family unchecked`
       );
+      if (expectedFamily !== undefined) {
+        check(
+          seat.family === expectedFamily,
+          `${seatName}: config.family "${seat.family}" must name the model "${seat.model}"'s family ("${expectedFamily}")`
+        );
+      }
     } else {
-      check(seat.family !== 'claude', `${seatName}: hosted seat's config.family must name the worker, not the Claude host`);
+      // plan-counterpart: config names no model at all, so there is nothing
+      // to derive from. The weakest defensible floor — a hosted seat's
+      // family is at least not the Claude host's — until config carries a
+      // worker model here (machine/src/, out of this slice's scope).
+      check(
+        seat.family !== 'claude',
+        `${seatName}: config names no model to derive a family from; a hosted seat's config.family must name the worker, not the Claude host`
+      );
     }
   }
 
@@ -276,15 +307,13 @@ for (const [seatName, expected] of Object.entries(DORMANT_GPT_PROFILES)) {
   }
 }
 
-assert.strictEqual(violations.length, 0, `parity violations (${violations.length}):\n${violations.join('\n')}`);
-
 // --- alias seats are unroutable ----------------------------------------------
 
 for (const [seatName, seat] of Object.entries(config.seats)) {
   if (!('alias_of' in seat)) continue;
-  assert.ok(agents.has(seatName), `alias seat "${seatName}" has no agents/${seatName}.md file`);
+  check(agents.has(seatName), `alias seat "${seatName}" has no agents/${seatName}.md file`);
   for (const family of FAMILIES) {
-    assert.ok(
+    check(
       !config.review_routing[family].includes(seatName),
       `alias seat "${seatName}" must not appear in review_routing.${family}`
     );
@@ -292,7 +321,7 @@ for (const [seatName, seat] of Object.entries(config.seats)) {
   if (config.tiers && config.tiers.classes) {
     for (const [className, klass] of Object.entries(config.tiers.classes)) {
       const names = (klass.candidates || []).map((c) => c.seat);
-      assert.ok(!names.includes(seatName), `alias seat "${seatName}" must not appear in tiers.classes.${className}.candidates`);
+      check(!names.includes(seatName), `alias seat "${seatName}" must not appear in tiers.classes.${className}.candidates`);
     }
   }
 }
@@ -308,13 +337,18 @@ function profileTuple(seat) {
   return `${seat.model}|${seat.effort}`;
 }
 
-assert.notStrictEqual(
-  profileTuple(config.seats['executor-sol-expert']), profileTuple(config.seats['executor-sol-apex']),
+check(
+  profileTuple(config.seats['executor-sol-expert']) !== profileTuple(config.seats['executor-sol-apex']),
   'executor-sol-expert and executor-sol-apex must be distinct (model, effort) profiles'
 );
-assert.notStrictEqual(
-  profileTuple(config.seats['reviewer-sol-expert-rev']), profileTuple(config.seats['reviewer-sol-apex-rev']),
+check(
+  profileTuple(config.seats['reviewer-sol-expert-rev']) !== profileTuple(config.seats['reviewer-sol-apex-rev']),
   'reviewer-sol-expert-rev and reviewer-sol-apex-rev must be distinct (model, effort) profiles'
 );
+
+// One terminal assertion over every section above, so a mismatch in seat
+// parity can no longer suppress the alias and distinctness results in the
+// same run — which is what the accumulator was introduced to promise.
+assert.strictEqual(violations.length, 0, `parity violations (${violations.length}):\n${violations.join('\n')}`);
 
 console.log('test-parity: OK');
