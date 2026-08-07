@@ -163,18 +163,18 @@ function checkBoolean(errors, value, label) {
 
 // Both null (a native seat runs the model directly) or both present (a hosted
 // seat's host is a real second placement). One of each is an unreadable record.
-function checkHostPair(errors, model, effort, label) {
+function checkHostPair(errors, model, effort, modelKey, effortKey, label) {
   const bothNull = model === null && effort === null;
   const bothSet = isNonEmptyString(model) && isNonEmptyString(effort);
   if (!bothNull && !bothSet) {
     errors.push(
-      `${label} must both be null (native seat) or both be non-empty strings (hosted seat)`
+      `${label} fields "${modelKey}" and "${effortKey}" must both be null (native seat) or both be non-empty strings (hosted seat)`
     );
     return;
   }
   if (bothSet) {
-    checkToken(errors, model, `${label.replace(' must', '')} model`);
-    checkToken(errors, effort, `${label.replace(' must', '')} effort`);
+    checkToken(errors, model, `${label} field "${modelKey}"`);
+    checkToken(errors, effort, `${label} field "${effortKey}"`);
   }
 }
 
@@ -237,7 +237,7 @@ function validateAuthorRouteChecked(input, hasPredecessor) {
   checkEnum(errors, input.author_family, `${label} field "author_family"`, [...FAMILIES]);
   checkToken(errors, input.worker_model, `${label} field "worker_model"`);
   checkToken(errors, input.worker_effort, `${label} field "worker_effort"`);
-  checkHostPair(errors, input.host_model, input.host_effort, `${label} fields "host_model" and "host_effort"`);
+  checkHostPair(errors, input.host_model, input.host_effort, 'host_model', 'host_effort', label);
   checkBoolean(errors, input.escalation_profile, `${label} field "escalation_profile"`);
 
   if (input.fallback_profile !== null) {
@@ -461,7 +461,9 @@ function validateReviewRouteChecked(input) {
     errors,
     input.reviewer_host_model,
     input.reviewer_host_effort,
-    `${label} fields "reviewer_host_model" and "reviewer_host_effort"`
+    'reviewer_host_model',
+    'reviewer_host_effort',
+    label
   );
   checkEnum(errors, input.independence, `${label} field "independence"`, INDEPENDENCE);
   if (typeof input.routing_config !== 'string' || !DATED_CONFIG_RE.test(input.routing_config)) {
@@ -813,7 +815,6 @@ function checkReviewAgainstAuthor(input, authorRoute) {
 // escalations can never both pass the budget check. Lock order (state →
 // ledger) matches every other writer, so they cannot deadlock.
 function withOpenMission(treeRoot, missionId, fn) {
-  requireTree(treeRoot);
   if (!isNonEmptyString(missionId) || !SEGMENT_RE.test(missionId)) {
     throw new TypeError(`route: mission_id must match ${SEGMENT_RE}`);
   }
