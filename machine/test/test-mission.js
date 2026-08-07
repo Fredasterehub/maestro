@@ -17,6 +17,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-mission-'));
 process.on('exit', () => fs.rmSync(tmp, { recursive: true, force: true }));
 
 const root = path.join(tmp, '.maestro');
+fx.initRouting(root);
 
 function run(script, args, stdin, options) {
   return spawnSync(process.execPath, [script, ...args], {
@@ -418,10 +419,13 @@ const mxGateSeq = fx.runGreenGate(root, 'mx', 'tests', mxRepo);
   const author = fx.reserveChain(root, 'mlie', identity); // reserves the honest review route too
   const lying = appendRaw('route', 'mlie', {
     ...fx.reviewRouteInput('mlie', author.authorSeq, author.authorSeq, identity, {
-      reviewer_seat: 'reviewer-terra',
+      // A seat whose config family really is gpt, so the derivation this
+      // record passes leaves the unrecorded deviation as the only thing
+      // wrong with it — which is what this block is about.
+      reviewer_seat: 'reviewer-sol-expert-rev',
       reviewer_family: 'gpt',
-      reviewer_model: 'gpt-5.6',
-      reviewer_effort: 'high',
+      reviewer_model: 'gpt-5.6-sol',
+      reviewer_effort: 'medium',
       independence: 'cross-family',
     }),
     phase: 'review',
@@ -468,6 +472,287 @@ const mxGateSeq = fx.runGreenGate(root, 'mx', 'tests', mxRepo);
   const r = fx.runClose(root, 'mind', repo, fx.closeInputOf({ authorSeq: author.seq, reviewSeq: review.seq }, gateSeq));
   assert.strictEqual(r.status, 1, 'a same-family review labeled cross-family must not close');
   assert.match(r.stderr, /laundered label/);
+}
+
+// --- close: the reviewer's family is re-derived from the routing config ------
+//
+// route.js refuses to WRITE a review route whose asserted family the config
+// contradicts. This is the second fence, and it exists because the first is
+// written by the same hand that writes the record — and because records that
+// predate the rule are already on ledgers. The reviewer's own reproduction,
+// hand-appended past the writer that now refuses it: a gemini seat wearing a
+// claude family, agreed to by the author route's reservation and therefore
+// invisible to every check that compares the record with itself.
+{
+  openM('mgem');
+  const repo = fx.newWorkRepo(tmp);
+  const identity = fx.artifactIdentity(repo);
+  const falsePair = {
+    seat: 'reviewer-gemini',
+    family: 'claude',
+    model: 'gemini-3.1-pro-preview',
+    effort: 'high',
+    independence: 'degraded-path',
+  };
+  const author = appendRaw('route', 'mgem', {
+    ...fx.authorRouteInput('mgem', { reserved_review: falsePair }),
+    phase: 'author',
+    predecessor: null,
+    resumed: false,
+  });
+  const review = appendRaw('route', 'mgem', {
+    ...fx.reviewRouteInput('mgem', author.seq, author.seq, identity, {
+      reviewer_seat: falsePair.seat,
+      reviewer_family: falsePair.family,
+      reviewer_model: falsePair.model,
+      reviewer_effort: falsePair.effort,
+    }),
+    phase: 'review',
+    predecessor: null,
+  });
+  fx.recordApprove(root, 'mgem', { reviewSeq: review.seq }, identity, review.seq);
+  const gateSeq = fx.runGreenGate(root, 'mgem', 'tests', repo);
+  fx.land(repo, 'merge');
+  const r = fx.runClose(root, 'mgem', repo, fx.closeInputOf({ authorSeq: author.seq, reviewSeq: review.seq }, gateSeq));
+  assert.strictEqual(r.status, 1, 'a family the routing config contradicts must not close');
+  assert.match(r.stderr, /claims reviewer family "claude" for seat "reviewer-gemini", which the routing config seats in family "gemini"/);
+  assert.strictEqual(stateOf().missions.mgem.status, 'open');
+}
+
+// --- close: the AUTHOR's family is re-derived too ----------------------------
+//
+// The same fence over the comparison's other operand, and the reason it is not
+// a separate concern: every field here is honest except the author's family,
+// the reviewer is honestly derived claude, and the review is recorded as
+// cross-family purely because the author route claims to be gpt. Without this
+// half, the whole chain closes — it did, on the probe that opened this pass.
+{
+  openM('mauth');
+  const repo = fx.newWorkRepo(tmp);
+  const identity = fx.artifactIdentity(repo);
+  const reviewerPair = {
+    seat: 'reviewer-degraded-sonnet',
+    family: 'claude',
+    model: 'sonnet-5',
+    effort: 'high',
+    independence: 'cross-family',
+  };
+  const author = appendRaw('route', 'mauth', {
+    ...fx.authorRouteInput('mauth', {
+      resolved_seat: 'executor-claude', // the config seats this in claude
+      author_family: 'gpt', // ...and this is the lie the whole chain rests on
+      reserved_review: reviewerPair,
+      lane_state: { claude: 'auto', gpt: 'auto', gemini: 'auto' },
+      degraded_modes: [],
+      notices: [],
+    }),
+    phase: 'author',
+    predecessor: null,
+    resumed: false,
+  });
+  const review = appendRaw('route', 'mauth', {
+    ...fx.reviewRouteInput('mauth', author.seq, author.seq, identity, { independence: 'cross-family' }),
+    phase: 'review',
+    predecessor: null,
+    reviewer_family_derived: true, // the reviewer half is honest and derived
+  });
+  fx.recordApprove(root, 'mauth', { reviewSeq: review.seq }, identity, review.seq);
+  const gateSeq = fx.runGreenGate(root, 'mauth', 'tests', repo);
+  fx.land(repo, 'merge');
+  const r = fx.runClose(root, 'mauth', repo, fx.closeInputOf({ authorSeq: author.seq, reviewSeq: review.seq }, gateSeq));
+  assert.strictEqual(r.status, 1, 'a false author family must not close a same-family review as cross-family');
+  assert.match(r.stderr, /claims author family "gpt" for seat "executor-claude", which the routing config seats in family "claude"/);
+  assert.strictEqual(stateOf().missions.mauth.status, 'open');
+}
+
+// --- close: the author tolerance is bounded by author routes alone -----------
+// Each phase is bounded by its own records. A stream that derives reviewers
+// says nothing about whether its AUTHOR routes predate the author-side rule,
+// so the reviewer marker must not condemn an author route — while a real
+// author-side omission still refuses.
+{
+  const root4 = path.join(tmp, '.maestro-authpre');
+  fx.initRouting(root4);
+  const rawAt = (missionId, kind, payload) =>
+    appendRecord(path.join(root4, 'ledger.jsonl'), { kind, payload, correlation_id: missionId });
+
+  // (1) a pre-rule author route naming a seat this config cannot resolve, in a
+  // stream whose review routes DO derive: the author half still closes.
+  const r0 = mission(['open', root4], { mission_id: 'mapre', title: 'author pre-rule', brief: VALID_BRIEF });
+  assert.strictEqual(r0.status, 0, r0.stderr);
+  const repo = fx.newWorkRepo(tmp);
+  const identity = fx.artifactIdentity(repo);
+  const author = rawAt('mapre', 'route', {
+    ...fx.authorRouteInput('mapre', { resolved_seat: 'executor-luna', author_family: 'gpt' }),
+    phase: 'author',
+    predecessor: null,
+    resumed: false,
+  });
+  const review = rawAt('mapre', 'route', {
+    ...fx.reviewRouteInput('mapre', author.seq, author.seq, identity, {}),
+    phase: 'review',
+    predecessor: null,
+    reviewer_family_derived: true,
+  });
+  fx.recordApprove(root4, 'mapre', { reviewSeq: review.seq }, identity, review.seq);
+  const gateSeq = fx.runGreenGate(root4, 'mapre', 'tests', repo);
+  fx.land(repo, 'merge');
+  const r = fx.runClose(root4, 'mapre', repo, fx.closeInputOf({ authorSeq: author.seq, reviewSeq: review.seq }, gateSeq));
+  assert.strictEqual(r.status, 0, r.stderr);
+
+  // (2) once an author route in this stream derives its family, a later one
+  // that does not is an omission — the author-side bound, closed by an
+  // author-side record.
+  const r1 = mission(['open', root4], { mission_id: 'mapost', title: 'author post-rule', brief: VALID_BRIEF });
+  assert.strictEqual(r1.status, 0, r1.stderr);
+  const repo2 = fx.newWorkRepo(tmp);
+  const identity2 = fx.artifactIdentity(repo2);
+  const derived = fx.reserveChain(root4, 'mapost', identity2);
+  assert.strictEqual(derived.author.author_family_derived, true, 'this is the record that bounds the tolerance');
+  const late = rawAt('mapost', 'route', {
+    ...fx.authorRouteInput('mapost', { resolved_seat: 'executor-luna', author_family: 'gpt' }),
+    phase: 'author',
+    predecessor: null,
+    resumed: false,
+  });
+  const lateReview = rawAt('mapost', 'route', {
+    ...fx.reviewRouteInput('mapost', late.seq, late.seq, identity2, {}),
+    phase: 'review',
+    predecessor: null,
+    reviewer_family_derived: true,
+  });
+  fx.recordApprove(root4, 'mapost', { reviewSeq: lateReview.seq }, identity2, lateReview.seq);
+  const gate2 = fx.runGreenGate(root4, 'mapost', 'tests', repo2);
+  fx.land(repo2, 'merge');
+  const r2 = fx.runClose(root4, 'mapost', repo2, fx.closeInputOf({ authorSeq: late.seq, reviewSeq: lateReview.seq }, gate2));
+  assert.strictEqual(r2.status, 1, 'an author-side omission must not close once author routes derive');
+  assert.match(r2.stderr, /names author seat "executor-luna".*an omission is not a legacy record/s);
+}
+
+// --- close: an underivable seat is an omission, not a legacy record ----------
+// A seat the config does not carry establishes no family. In a stream whose
+// review routes already record a derived family, a later record that does not
+// is the cheapest way past this binding — name a seat nobody has heard of and
+// the family goes unchecked — so the tolerance stops at the first derived one.
+{
+  openM('mnoseat');
+  const repo = fx.newWorkRepo(tmp);
+  const identity = fx.artifactIdentity(repo);
+  // reserveChain writes a derived review route first, which is what bounds the
+  // tolerance for everything appended after it.
+  const honest = fx.reserveChain(root, 'mnoseat', identity);
+  assert.strictEqual(honest.review.reviewer_family_derived, true);
+  const absent = appendRaw('route', 'mnoseat', {
+    ...fx.reviewRouteInput('mnoseat', honest.authorSeq, honest.authorSeq, identity, {
+      reviewer_seat: 'reviewer-terra',
+      reviewer_family: 'gpt',
+      reviewer_model: 'gpt-5.6-terra',
+      independence: 'cross-family',
+      replacement_reason: 'a seat this config does not carry',
+    }),
+    phase: 'review',
+    predecessor: null,
+  });
+  fx.recordApprove(root, 'mnoseat', { reviewSeq: absent.seq }, identity, absent.seq);
+  const gateSeq = fx.runGreenGate(root, 'mnoseat', 'tests', repo);
+  fx.land(repo, 'merge');
+  const r = fx.runClose(root, 'mnoseat', repo, fx.closeInputOf({ authorSeq: honest.authorSeq, reviewSeq: absent.seq }, gateSeq));
+  assert.strictEqual(r.status, 1, 'an underivable family must not close a stream that already derives them');
+  assert.match(r.stderr, /whose family cannot be derived .*records no seat "reviewer-terra".*an omission is not a legacy record/s);
+}
+
+// --- close: a review route from before the rule still closes -----------------
+// The other half of the bound, in its own tree so the stream genuinely
+// predates the rule: no review route here records a derived family, so a
+// record naming a seat this config cannot resolve closes. A legal close is
+// never invalidated by a rule arriving later — and the block above is what
+// keeps that from being a door.
+{
+  const root3 = path.join(tmp, '.maestro-prerule');
+  fx.initRouting(root3);
+  const r0 = mission(['open', root3], { mission_id: 'mpre', title: 'pre-rule tree', brief: VALID_BRIEF });
+  assert.strictEqual(r0.status, 0, r0.stderr);
+  const repo = fx.newWorkRepo(tmp);
+  const identity = fx.artifactIdentity(repo);
+  const reserved = {
+    seat: 'reviewer-terra',
+    family: 'gpt',
+    model: 'gpt-5.6-terra',
+    effort: 'high',
+    independence: 'cross-family',
+  };
+  const rawAt = (kind, payload) =>
+    appendRecord(path.join(root3, 'ledger.jsonl'), { kind, payload, correlation_id: 'mpre' });
+  const author = rawAt('route', {
+    ...fx.authorRouteInput('mpre', { reserved_review: reserved }),
+    phase: 'author',
+    predecessor: null,
+    resumed: false,
+  });
+  const review = rawAt('route', {
+    ...fx.reviewRouteInput('mpre', author.seq, author.seq, identity, {
+      reviewer_seat: reserved.seat,
+      reviewer_family: reserved.family,
+      reviewer_model: reserved.model,
+      reviewer_effort: reserved.effort,
+      independence: 'cross-family',
+    }),
+    phase: 'review',
+    predecessor: null,
+  });
+  assert.ok(
+    !Object.prototype.hasOwnProperty.call(review, 'reviewer_family_derived'),
+    'this record must genuinely predate the rule, or it proves nothing'
+  );
+  fx.recordApprove(root3, 'mpre', { reviewSeq: review.seq }, identity, review.seq);
+  const gateSeq = fx.runGreenGate(root3, 'mpre', 'tests', repo);
+  fx.land(repo, 'merge');
+  const r = fx.runClose(root3, 'mpre', repo, fx.closeInputOf({ authorSeq: author.seq, reviewSeq: review.seq }, gateSeq));
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.strictEqual(readJson(path.join(root3, 'state.json'), undefined).missions.mpre.status, 'done');
+
+  // ...but a false family is false at any age: derivable and contradicted
+  // refuses even in a stream that carries no derived record at all.
+  const r1 = mission(['open', root3], { mission_id: 'mpre2', title: 'pre-rule tree, false family', brief: VALID_BRIEF });
+  assert.strictEqual(r1.status, 0, r1.stderr);
+  const repo2 = fx.newWorkRepo(tmp);
+  const identity2 = fx.artifactIdentity(repo2);
+  const falsePair = {
+    seat: 'reviewer-gemini',
+    family: 'claude',
+    model: 'gemini-3.1-pro-preview',
+    effort: 'high',
+    independence: 'degraded-path',
+  };
+  const rawAt2 = (kind, payload) =>
+    appendRecord(path.join(root3, 'ledger.jsonl'), { kind, payload, correlation_id: 'mpre2' });
+  const author2 = rawAt2('route', {
+    ...fx.authorRouteInput('mpre2', { reserved_review: falsePair }),
+    phase: 'author',
+    predecessor: null,
+    resumed: false,
+  });
+  const review2 = rawAt2('route', {
+    ...fx.reviewRouteInput('mpre2', author2.seq, author2.seq, identity2, {
+      reviewer_seat: falsePair.seat,
+      reviewer_family: falsePair.family,
+      reviewer_model: falsePair.model,
+      reviewer_effort: falsePair.effort,
+    }),
+    phase: 'review',
+    predecessor: null,
+  });
+  fx.recordApprove(root3, 'mpre2', { reviewSeq: review2.seq }, identity2, review2.seq);
+  const gate2 = fx.runGreenGate(root3, 'mpre2', 'tests', repo2);
+  fx.land(repo2, 'merge');
+  const r2 = fx.runClose(
+    root3,
+    'mpre2',
+    repo2,
+    fx.closeInputOf({ authorSeq: author2.seq, reviewSeq: review2.seq }, gate2)
+  );
+  assert.strictEqual(r2.status, 1, 'the tolerance covers an underivable family, never a contradicted one');
+  assert.match(r2.stderr, /which the routing config seats in family "gemini"/);
 }
 
 // --- close: the artifact changed between review and gate ----------------------
@@ -588,6 +873,7 @@ const mxGateSeq = fx.runGreenGate(root, 'mx', 'tests', mxRepo);
 // where no gate record has ever carried an identity.
 {
   const root2 = path.join(tmp, '.maestro-legacy');
+  fx.initRouting(root2);
   const r0 = mission(['open', root2], { mission_id: 'mleg', title: 'legacy tree', brief: VALID_BRIEF });
   assert.strictEqual(r0.status, 0, r0.stderr);
   const repo = fx.newWorkRepo(tmp);
@@ -778,11 +1064,14 @@ const mxGateSeq = fx.runGreenGate(root, 'mx', 'tests', mxRepo);
   openM('mxf');
   const repo = fx.newWorkRepo(tmp);
   const identity = fx.artifactIdentity(repo);
+  // A real cross-family seat out of the config's own table: the reviewer's
+  // family is derived from that entry now, so a made-up seat would refuse here
+  // for a reason this block is not about.
   const reserved = {
-    seat: 'reviewer-terra',
+    seat: 'reviewer-sol-expert-rev',
     family: 'gpt',
     model: 'gpt-5.6-sol',
-    effort: 'high',
+    effort: 'medium',
     independence: 'cross-family',
   };
   const chain = fx.reserveChain(root, 'mxf', identity, {
@@ -797,6 +1086,8 @@ const mxGateSeq = fx.runGreenGate(root, 'mx', 'tests', mxRepo);
       reviewer_family: reserved.family,
       reviewer_model: reserved.model,
       reviewer_effort: reserved.effort,
+      reviewer_host_model: 'sonnet-5',
+      reviewer_host_effort: 'medium',
       independence: 'cross-family',
     },
   });

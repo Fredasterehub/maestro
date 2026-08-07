@@ -29,6 +29,19 @@
 // The escalation budgets below therefore count *distinct predecessors*, so a
 // retry after such a crash is not charged twice for one escalation event.
 //
+// A FAMILY IS DERIVED, NOT ACCEPTED — on BOTH sides. `author_family` and
+// `reviewer_family` each name a fact about a seat, and the routing config's
+// seat table is where that fact lives, so every writer of a route record
+// resolves it there and refuses a record the config contradicts. It was never
+// enough to cross-check a family against the author route's reserved capacity
+// or against the other operand: those are the caller's own words too, so the
+// pair can agree and still be false — which is how a `reviewer-gemini` seat with
+// family `claude` entered the ledger through the sanctioned path, defeating §8's
+// cross-family law with one lawful call and no forgery. The same move works from
+// the author end: an `executor-claude` route asserting family `gpt` makes a
+// claude reviewer read as cross-family. §8's law is a COMPARISON, so protecting
+// one operand and leaving the other asserted protects nothing.
+//
 // The §9 escalation state machine is validated here from day one, even though
 // its full consumer lands in a later slice: every route naming a predecessor
 // declares a transition and a reason, and this module decides whether that
@@ -41,7 +54,7 @@ const path = require('node:path');
 const { withLock, appendRecord, readRecords } = require('./jsonl.js');
 const { readJson } = require('./atomic-json.js');
 const { BRIEF_TIER_VALUES } = require('./validators.js');
-const { FAMILIES, DATED_CONFIG_RE } = require('./routing.js');
+const { FAMILIES, DATED_CONFIG_RE, loadRouting } = require('./routing.js');
 
 const LEDGER_BASENAME = 'ledger.jsonl';
 const STATE_BASENAME = 'state.json';
@@ -175,6 +188,103 @@ function checkHostPair(errors, model, effort, modelKey, effortKey, label) {
   if (bothSet) {
     checkToken(errors, model, `${label} field "${modelKey}"`);
     checkToken(errors, effort, `${label} field "${effortKey}"`);
+  }
+}
+
+// --- the seat table: a family is derived, never asserted ---------------------
+
+// A family a record ASSERTS is worth nothing on its own: the assertion and the
+// reservation it is cross-checked against are both the caller's, so the pair
+// can be self-consistent and false. The routing config is the authority on
+// which family a seat belongs to — the same authority the parity sweep binds
+// agent frontmatter to — and this is the single shape every fence reads: this
+// module at reservation time, mission.js again at close, for BOTH operands of
+// §8's cross-family comparison.
+//
+// Three ways the family fails to come out, and all three are the same answer:
+// no family. An alias seat is deliberately NOT resolved, matching routing.js's
+// own read rule (an alias exists only so an older config keeps validating, and
+// is never routable), so a record naming one is refused by absence. A seat the
+// table does not carry, and a seat entry that records no family, likewise
+// establish nothing. Callers refuse on `family === null` — a family that
+// cannot be established has not been established, and there is no default.
+function seatFamily(treeRoot, seatName) {
+  let config;
+  try {
+    ({ config } = loadRouting(treeRoot));
+  } catch (err) {
+    return { family: null, reason: `the routing config could not be read (${err.message})` };
+  }
+  const seats = isPlainObject(config.seats) ? config.seats : {};
+  const seat = Object.prototype.hasOwnProperty.call(seats, seatName) ? seats[seatName] : undefined;
+  if (!isPlainObject(seat)) {
+    return { family: null, reason: `the routing config's seat table records no seat "${seatName}"` };
+  }
+  if (Object.prototype.hasOwnProperty.call(seat, 'alias_of')) {
+    return {
+      family: null,
+      reason: `the routing config records "${seatName}" as an alias of "${seat.alias_of}", and an alias seat is never routable`,
+    };
+  }
+  if (!isNonEmptyString(seat.family)) {
+    return { family: null, reason: `the routing config's entry for seat "${seatName}" records no family` };
+  }
+  return { family: seat.family, reason: null };
+}
+
+// §8's cross-family law is one COMPARISON, and a comparison has two operands.
+// Each is a family, each belongs to a seat the record names, and each is
+// therefore derived from the seat table rather than accepted. Deriving one and
+// leaving the other asserted is not a fence: the identical move that made a
+// gemini reviewer wear a claude family also makes a claude author wear a gpt
+// one, and a same-family review then passes as cross-family with the lie on
+// whichever side the caller prefers. So both go through this table — one shape,
+// one set of rules, no room for the two operands to drift apart.
+//
+// `marker` is the field the payload builders stamp on a record whose family was
+// derived when it was written. mission.js reads these same specs, so the writer
+// and the close-side fence can never disagree about what marks a record or
+// which field it explains.
+const FAMILY_DERIVATION = {
+  author: {
+    phase: 'author',
+    who: 'author',
+    article: 'an',
+    label: 'author route',
+    seatField: 'resolved_seat',
+    familyField: 'author_family',
+    marker: 'author_family_derived',
+  },
+  review: {
+    phase: 'review',
+    who: 'reviewer',
+    article: 'a',
+    label: 'review route',
+    seatField: 'reviewer_seat',
+    familyField: 'reviewer_family',
+    marker: 'reviewer_family_derived',
+  },
+};
+
+// The family a route record asserts must be the one the config records for the
+// seat that record names, or the record does not become durable. Cross-checking
+// the assertion against anything else the caller supplied — the author route's
+// reserved capacity, a matching field on the same record — proves nothing: the
+// same hand wrote both, which is exactly how a self-consistent falsehood passed
+// as lawful.
+function checkFamilyDerived(treeRoot, phase, input) {
+  const spec = FAMILY_DERIVATION[phase];
+  const seatName = input[spec.seatField];
+  const { family, reason } = seatFamily(treeRoot, seatName);
+  if (family === null) {
+    throw new Error(
+      `route: the family of ${spec.who} seat "${seatName}" cannot be derived — ${reason}; a family that cannot be established has not been established`
+    );
+  }
+  if (family !== input[spec.familyField]) {
+    throw new Error(
+      `route: ${spec.familyField} "${input[spec.familyField]}" contradicts the routing config, which seats "${seatName}" in family "${family}" — ${spec.article} ${spec.who}'s family belongs to the seat and is derived from the config, never asserted alongside it`
+    );
   }
 }
 
@@ -751,6 +861,10 @@ function authorPayload(input, predecessorBlock) {
   payload.predecessor = predecessorBlock;
   // Derived, never caller-supplied: only a same-profile resume is a resume.
   payload.resumed = predecessorBlock !== null && predecessorBlock.transition === 'same-profile-resume';
+  // Likewise derived, and excluded from AUTHOR_KEYS so a caller offering it is
+  // refused as an extra key: this record's author_family was checked against
+  // the routing config's seat table when it was written.
+  payload.author_family_derived = true;
   return payload;
 }
 
@@ -761,6 +875,12 @@ function reviewPayload(input, predecessorBlock) {
   for (const key of IDENTITY_KEYS) payload.artifact_identity[key] = input.artifact_identity[key];
   payload.phase = 'review';
   payload.predecessor = predecessorBlock;
+  // Derived, never caller-supplied — REVIEW_KEYS excludes it, so a caller
+  // offering it is refused as an extra key. It says one thing: this record's
+  // reviewer_family was checked against the routing config's seat table when
+  // it was written. close reads its presence to tell a record written under
+  // that rule from one that predates it.
+  payload.reviewer_family_derived = true;
   return payload;
 }
 
@@ -841,6 +961,7 @@ function reserve(treeRoot, input) {
   if (!ok) {
     throw new TypeError(`route: invalid author route — ${errors.join('; ')}`);
   }
+  checkFamilyDerived(treeRoot, 'author', input);
   return withOpenMission(treeRoot, input.mission_id, () =>
     appendRoute(treeRoot, authorPayload(input, null), input.mission_id)
   );
@@ -854,6 +975,7 @@ function reserveReview(treeRoot, input) {
   if (!ok) {
     throw new TypeError(`route: invalid review route — ${errors.join('; ')}`);
   }
+  checkFamilyDerived(treeRoot, 'review', input);
   return withOpenMission(treeRoot, input.mission_id, () => {
     const records = readLedger(treeRoot);
     checkReviewAgainstAuthor(input, routeAtSeq(records, input.author_route_seq));
@@ -918,6 +1040,9 @@ function supersede(treeRoot, input) {
       if (!check.ok) {
         throw new TypeError(`route: invalid author route — ${check.errors.join('; ')}`);
       }
+      // A provider reroute is exactly where a replacement crosses families, so
+      // the fence reserve holds must hold here too.
+      checkFamilyDerived(treeRoot, 'author', replacement);
       checkAuthorTransition(records, predecessor, replacement, block);
       payload = authorPayload(replacement, block);
     } else {
@@ -925,6 +1050,11 @@ function supersede(treeRoot, input) {
       if (!check.ok) {
         throw new TypeError(`route: invalid review route — ${check.errors.join('; ')}`);
       }
+      // The same derivation, because this site writes the same record kind: a
+      // replacement reviewer is exactly where a lost cross-family lane gets
+      // swapped, and a fence only reserveReview held would be one supersede
+      // call away from the hole it closed.
+      checkFamilyDerived(treeRoot, 'review', replacement);
       checkReviewTransition(predecessor, replacement, block);
       checkReviewAgainstAuthor(replacement, routeAtSeq(records, replacement.author_route_seq));
       payload = reviewPayload(replacement, block);
@@ -966,19 +1096,25 @@ commands:
                   (native seat) or both set (hosted); selection is
                   { candidates_skipped: [{seat, reason: ${SKIP_REASONS.join('|')}}],
                   substituted, substitution_reason }; reserved_review is
-                  { seat, family, model, effort, independence }. A FRESH route
-                  skips ineligible candidates and may never claim
+                  { seat, family, model, effort, independence }. author_family
+                  is DERIVED from the routing config's entry for resolved_seat,
+                  on the same terms reserve-review derives the reviewer's. A
+                  FRESH route skips ineligible candidates and may never claim
                   substituted:true, request a seat it skipped, or select an
                   escalation-only profile. Appends phase "author".
   reserve-review  Written after the author completes, before any review
                   dispatch. stdin keys: ${REVIEW_KEYS.join(', ')}.
                   artifact_identity is { source_head, source_tree,
                   patch_digest, dirty } — oids and digests never interchange,
-                  and a dirty worktree is refused. Binds the named author route:
-                  a reviewer differing from its reserved review capacity
-                  requires replacement_reason, an honoured one forbids it, and
-                  cross-family independence naming the author's own family is
-                  refused. Appends phase "review".
+                  and a dirty worktree is refused. reviewer_family is DERIVED
+                  from the routing config's entry for reviewer_seat: a family
+                  the config contradicts is refused, and so is a seat the seat
+                  table does not carry, an alias seat, or an entry recording no
+                  family — an unestablished family never passes as a default.
+                  Binds the named author route: a reviewer differing from its
+                  reserved review capacity requires replacement_reason, an
+                  honoured one forbids it, and cross-family independence naming
+                  the author's own family is refused. Appends phase "review".
   supersede       stdin { mission_id, predecessor_route_seq, transition, reason,
                   evidence_seq, replacement }. transition one of
                   ${TRANSITIONS.join(', ')};
@@ -991,7 +1127,9 @@ commands:
                   per mission, infrastructure/quota/runtime reroutes consume no
                   quality budget, a safety refusal reroutes the unchanged brief,
                   apex invents no higher effort, and an escalation-only profile
-                  is reachable only through an escalation transition. Prints
+                  is reachable only through an escalation transition. A
+                  replacement derives its family from the seat it names exactly
+                  as the fresh writers do, whichever phase it is. Prints
                   { route, superseded }.
 
 Every route record is immutable: a predecessor is never overwritten. Refusals
@@ -1041,6 +1179,8 @@ module.exports = {
   reserve,
   reserveReview,
   supersede,
+  seatFamily,
+  FAMILY_DERIVATION,
   validateAuthorRoute,
   validateReviewRoute,
   validateArtifactIdentity,

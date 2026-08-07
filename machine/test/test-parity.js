@@ -313,10 +313,15 @@ for (const [seatName, seat] of Object.entries(config.seats)) {
   if (!('alias_of' in seat)) continue;
   check(agents.has(seatName), `alias seat "${seatName}" has no agents/${seatName}.md file`);
   for (const family of FAMILIES) {
-    check(
-      !config.review_routing[family].includes(seatName),
-      `alias seat "${seatName}" must not appear in review_routing.${family}`
-    );
+    // One ladder per class from revision 4 on, one flat row per family before
+    // it: an alias is unroutable from every row of either shape.
+    const rows = config.review_routing[family];
+    for (const [klass, row] of Array.isArray(rows) ? [[null, rows]] : Object.entries(rows)) {
+      check(
+        !row.includes(seatName),
+        `alias seat "${seatName}" must not appear in review_routing.${family}${klass === null ? '' : `.${klass}`}`
+      );
+    }
   }
   if (config.tiers && config.tiers.classes) {
     for (const [className, klass] of Object.entries(config.tiers.classes)) {

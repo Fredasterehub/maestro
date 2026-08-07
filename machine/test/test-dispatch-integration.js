@@ -53,6 +53,18 @@ function run(script, args, stdin) {
   });
 }
 
+// Every fixture tree here reserves a route, and a route record's family is
+// derived from the routing config's seat table — a tree with no table
+// establishes no family, which refuses rather than defaulting. So each root is
+// initialised, not merely created.
+function newTree(...segments) {
+  const root = path.join(tmp, ...segments);
+  fs.mkdirSync(root, { recursive: true });
+  const r = run(path.join(__dirname, '..', 'src', 'routing.js'), ['init', root]);
+  assert.strictEqual(r.status, 0, r.stderr);
+  return root;
+}
+
 function git(repo, ...args) {
   const r = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8' });
   assert.strictEqual(r.status, 0, `git ${args.join(' ')}: ${r.stderr}`);
@@ -109,6 +121,14 @@ function readRoster(root) {
   return JSON.parse(fs.readFileSync(path.join(root, 'roster.json'), 'utf8'));
 }
 
+// The seat here was 'executor-sol' when this fixture was written, which the
+// r1->r2 Sol split has since turned into an alias of 'executor-sol-expert'.
+// routing.js resolves an alias on no read path — it exists so an older config
+// keeps validating, and is never routable — so a route record naming one
+// establishes no family and is refused. The name is fixture furniture, not
+// what any block below asserts; every assertion is on ledger order, recovery
+// from disk, replacement-first supersession and the identity refusals, and
+// each reads the same string this returns. Do not put the alias back.
 function authorInput(missionId, overrides) {
   return {
     mission_id: missionId,
@@ -118,8 +138,8 @@ function authorInput(missionId, overrides) {
     routing_config: 'routing-2026-08-06-2.json',
     routing_digest: 'sha256:' + 'b'.repeat(64),
     routing_revision: 6,
-    requested_seat: 'executor-sol',
-    resolved_seat: 'executor-sol',
+    requested_seat: 'executor-sol-expert',
+    resolved_seat: 'executor-sol-expert',
     author_family: 'gpt',
     worker_model: 'gpt-5.6-sol',
     worker_effort: 'high',
@@ -168,8 +188,7 @@ function reviewInput(missionId, authorRoute, identity, overrides) {
 // review dispatch (second registration), exactly as
 // "Dispatching through the route lifecycle" in dispatch.md describes it.
 {
-  const root = path.join(tmp, 'flow', '.maestro');
-  fs.mkdirSync(root, { recursive: true });
+  const root = newTree('flow', '.maestro');
   const m = openMission(root);
 
   // 1-3: seat picked, reviewer resolved (fixed in this fixture), route reserved
@@ -185,7 +204,7 @@ function reviewInput(missionId, authorRoute, identity, overrides) {
   // test's own calls landed in the documented order, never a proof that an
   // out-of-order call would be refused.
   const authorReg = run(ROSTER, ['register', root], {
-    seat: 'executor-sol',
+    seat: 'executor-sol-expert',
     task_id: `${m}-author`,
     family: 'gpt',
     mission_id: m,
@@ -260,13 +279,12 @@ function reviewInput(missionId, authorRoute, identity, overrides) {
 // registration objects the flow above produced — must be enough to rebuild
 // which route belongs to which mission and which review route reviews it.
 {
-  const root = path.join(tmp, 'recovery', '.maestro');
-  fs.mkdirSync(root, { recursive: true });
+  const root = newTree('recovery', '.maestro');
   const m = openMission(root);
 
   const authorRoute = reserve(root, authorInput(m));
   const authorReg = run(ROSTER, ['register', root], {
-    seat: 'executor-sol',
+    seat: 'executor-sol-expert',
     task_id: `${m}-author`,
     family: 'gpt',
     mission_id: m,
@@ -300,7 +318,7 @@ function reviewInput(missionId, authorRoute, identity, overrides) {
   assert.strictEqual(recoveredReview.mission_id, m);
   assert.deepStrictEqual(recoveredReview.artifact_identity, identity);
 
-  const recoveredAuthorReg = roster.entries.find((e) => e.mission_id === m && e.seat === 'executor-sol');
+  const recoveredAuthorReg = roster.entries.find((e) => e.mission_id === m && e.seat === 'executor-sol-expert');
   const recoveredReviewReg = roster.entries.find((e) => e.mission_id === m && e.seat === 'reviewer-claude');
   assert.ok(recoveredAuthorReg && recoveredReviewReg, 'both dispatches must be reconstructable from roster.json alone');
   assert.strictEqual(recoveredAuthorReg.family, 'gpt');
@@ -315,8 +333,7 @@ function reviewInput(missionId, authorRoute, identity, overrides) {
 // between them would leave behind: an orphan reservation, never a dangling
 // pointer.
 {
-  const root = path.join(tmp, 'supersede', '.maestro');
-  fs.mkdirSync(root, { recursive: true });
+  const root = newTree('supersede', '.maestro');
   const m = openMission(root);
   const authorRoute = reserve(root, authorInput(m));
 
@@ -352,8 +369,7 @@ function reviewInput(missionId, authorRoute, identity, overrides) {
 // refusals at this base; neither compares against a previously-recorded
 // identity, because nothing upstream of reserve-review records one yet.
 {
-  const root = path.join(tmp, 'identity', '.maestro');
-  fs.mkdirSync(root, { recursive: true });
+  const root = newTree('identity', '.maestro');
   const m = openMission(root);
   const authorRoute = reserve(root, authorInput(m));
 

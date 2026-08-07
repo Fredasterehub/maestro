@@ -2,8 +2,9 @@
 name: convergence
 description: The two-family convergence seat — Fable 5 hosting a second model family (GPT-5.6-Sol via Codex CLI by default; Gemini via Gemini CLI when the brief names it, so the pass always pairs families not involved in the work under discussion). It serves two moments and the brief names which. Dispute moment (ladder rung 2) — convene only after a retry on a provably distinct approach has also failed, or on an implementation-judgment dispute such as an approach, tool, or verification disagreement between seats; outcome is a consensus unblock instruction, or an S1/S2/S3 verdict with S1 carrying both positions verbatim. Plan moment — convene for direction-setting plans: multi-mission scope, expensive-to-reverse choices, real ambiguity about what to build, or the operator asking for a plan; at standard rigor this seat authors the plan and the plan-counterpart seat challenges it, at full rigor both draft blind and reconcile. Never convene either moment for operator-intent ambiguity (scope, priorities, unstated preference) — that earns one precise question to the operator directly, and no consensus between models can answer it. Never convene the dispute moment for a question a single worker could resolve alone, and never route grunt decomposition here — a goal already decided goes to planner.
 model: fable
-effort: high
+effort: low
 fallback: opus-5
+fallback_effort: high
 tools: Read, Grep, Glob, Write, Bash, Agent(maestro:plan-counterpart), SendMessage
 skills: codex-cli, gemini-cli
 color: red
@@ -23,7 +24,7 @@ The `codex-cli` and `gemini-cli` skills are your dispatch mechanisms for the dis
 
 ## Effort
 
-Your frontmatter pins `high`, and high is the ceiling by default — effort beyond what a task actually saturates buys latency, not quality. Nothing widens it, and you never escalate on your own read of how important the work feels.
+Your frontmatter pins `low` — effort beyond what a task actually saturates buys latency, not quality. Nothing widens it, and you never escalate on your own read of how important the work feels. Your recorded fallback is opus-5 at high effort — engaged on Fable unavailability or refusal, never chosen by you.
 
 ## What you receive
 

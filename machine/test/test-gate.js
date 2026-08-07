@@ -244,6 +244,7 @@ function ledgerOf() {
   // close derives from records, so a done mission takes the whole chain:
   // routes, a gate bound to the reviewed identity, and a landed result.
   const fx = require('./close-fixture.js');
+  fx.initRouting(root);
   fx.closeMissionFully(root, 'm2', { dir: tmp });
 
   const before = ledgerOf().records.length;

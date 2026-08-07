@@ -10,16 +10,25 @@ const ROUTE = path.join(__dirname, '..', 'src', 'route.js');
 const MISSION = path.join(__dirname, '..', 'src', 'mission.js');
 const GATE = path.join(__dirname, '..', 'src', 'gate.js');
 const JSONL = path.join(__dirname, '..', 'src', 'jsonl.js');
+const ROUTING = path.join(__dirname, '..', 'src', 'routing.js');
 
 const { readRecords } = require(JSONL);
 const { BRIEF_TIER_VALUES } = require(path.join(__dirname, '..', 'src', 'validators.js'));
-const { reserve, reserveReview, supersede, CLASS_ORDER, ROUTE_KIND, SUPERSEDED_KIND } = require(ROUTE);
+const { reserve, reserveReview, supersede, seatFamily, CLASS_ORDER, ROUTE_KIND, SUPERSEDED_KIND } = require(ROUTE);
 const { artifactIdentity } = require(GATE);
+const routing = require(ROUTING);
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-route-'));
 process.on('exit', () => fs.rmSync(tmp, { recursive: true, force: true }));
 
 const root = path.join(tmp, '.maestro');
+
+// Routing is initialized before any route is reserved, because a review route
+// now derives its reviewer's family from the config's seat table — a tree with
+// route records and no routing table is a tree that cannot say who anyone is.
+fs.mkdirSync(root, { recursive: true });
+const routingInit = routing.init(root);
+const routingConfig = routing.loadRouting(root).config;
 
 const DIGEST_A = 'sha256:' + 'a'.repeat(64);
 const DIGEST_B = 'sha256:' + 'b'.repeat(64);
@@ -383,6 +392,75 @@ function reviewInput(authorRouteSeq, overrides) {
   );
 }
 
+// --- author route: the author's family is derived from the seat table too ----
+//
+// The other operand of the same comparison, and the identical move: an
+// executor-claude route asserting family "gpt" makes an honest claude reviewer
+// read as cross-family. Deriving only the reviewer would have left this door
+// beside the fence.
+{
+  assert.strictEqual(routingConfig.seats['executor-claude'].family, 'claude');
+  const m = openMission();
+  assert.throws(
+    () => reserve(root, authorInput({ mission_id: m, author_family: 'gpt' })),
+    /author_family "gpt" contradicts the routing config, which seats "executor-claude" in family "claude"/,
+    'an author family the config contradicts is refused'
+  );
+  assert.strictEqual(recordsOf(m, 'route').length, 0, 'nothing reached disk on the refusal');
+
+  // Underivable is refused, not defaulted — the same three ways as the reviewer.
+  assert.throws(
+    () => reserve(root, authorInput({ mission_id: m, requested_seat: 'executor-luna', resolved_seat: 'executor-luna' })),
+    /the family of author seat "executor-luna" cannot be derived — the routing config's seat table records no seat/
+  );
+  assert.throws(
+    () =>
+      reserve(
+        root,
+        authorInput({
+          mission_id: m,
+          requested_seat: 'executor-sol',
+          resolved_seat: 'executor-sol',
+          author_family: 'gpt',
+          worker_model: 'gpt-5.6-sol',
+          host_model: 'sonnet-5',
+          host_effort: 'high',
+        })
+      ),
+    /records "executor-sol" as an alias of "executor-sol-expert", and an alias seat is never routable/
+  );
+
+  // An honest author route is accepted and says so on the record.
+  const honest = reserve(root, authorInput({ mission_id: m }));
+  assert.strictEqual(honest.author_family, 'claude');
+  assert.strictEqual(honest.author_family_derived, true);
+
+  // A real gpt seat, honestly seated: the fence is about truth, not about
+  // keeping every author on one family.
+  const m2 = openMission();
+  const sol = reserve(
+    root,
+    authorInput({
+      mission_id: m2,
+      requested_seat: 'executor-sol-expert',
+      resolved_seat: 'executor-sol-expert',
+      author_family: 'gpt',
+      worker_model: 'gpt-5.6-sol',
+      worker_effort: 'medium',
+      host_model: 'sonnet-5',
+      host_effort: 'medium',
+    })
+  );
+  assert.strictEqual(sol.author_family, 'gpt');
+  assert.strictEqual(sol.author_family_derived, true);
+
+  // The marker is derived, never caller-supplied.
+  assert.throws(
+    () => reserve(root, authorInput({ mission_id: m, author_family_derived: true })),
+    /unexpected extra key "author_family_derived"/
+  );
+}
+
 // --- review route: no family laundering --------------------------------------
 {
   const m = openMission();
@@ -416,6 +494,140 @@ function reviewInput(authorRouteSeq, overrides) {
   );
   assert.strictEqual(rec.independence, 'cross-family');
   assert.strictEqual(rec.reviewer_host_model, 'sonnet-5');
+}
+
+// --- review route: the reviewer's family is derived from the seat table ------
+//
+// The block above proves the laundering check works when the family is true.
+// This one is why that was not enough: the reservation reserveReview compares
+// the assertion against is the SAME caller's, so a false pair that agrees with
+// itself used to pass. The seat table is the authority, and it disagrees.
+{
+  // The exact reproduction handed over with this step: a gemini seat wearing a
+  // claude family, agreed to by the author route's own reservation.
+  const falsePair = {
+    seat: 'reviewer-gemini',
+    family: 'claude',
+    model: 'gemini-3.1-pro-preview',
+    effort: 'high',
+    independence: 'degraded-path',
+  };
+  assert.strictEqual(routingConfig.seats['reviewer-gemini'].family, 'gemini', 'the config is what contradicts the pair');
+
+  const m = openMission();
+  const author = reserve(root, authorInput({ mission_id: m, reserved_review: falsePair }));
+  assert.throws(
+    () =>
+      reserveReview(
+        root,
+        reviewInput(author.seq, {
+          mission_id: m,
+          reviewer_seat: falsePair.seat,
+          reviewer_family: falsePair.family,
+          reviewer_model: falsePair.model,
+          reviewer_effort: falsePair.effort,
+        })
+      ),
+    /reviewer_family "claude" contradicts the routing config, which seats "reviewer-gemini" in family "gemini"/,
+    'a family the config contradicts is refused even when the reservation agrees with it'
+  );
+  assert.strictEqual(recordsOf(m, 'route').length, 1, 'nothing reached disk on the refusal');
+
+  // A seat the table does not carry establishes no family at all, and an
+  // unestablished family is refused rather than defaulted.
+  assert.throws(
+    () =>
+      reserveReview(
+        root,
+        reviewInput(author.seq, {
+          mission_id: m,
+          reviewer_seat: 'reviewer-terra',
+          reviewer_family: 'gpt',
+          reviewer_model: 'gpt-5.6-terra',
+          replacement_reason: 'a seat this config does not carry',
+        })
+      ),
+    /cannot be derived — the routing config's seat table records no seat "reviewer-terra"/
+  );
+
+  // An alias is a compatibility pointer, never a routable seat: routing.js
+  // resolves none on any read path, and neither does this.
+  assert.strictEqual(routingConfig.seats['reviewer-sol'].alias_of, 'reviewer-sol-expert-rev');
+  assert.throws(
+    () =>
+      reserveReview(
+        root,
+        reviewInput(author.seq, {
+          mission_id: m,
+          reviewer_seat: 'reviewer-sol',
+          reviewer_family: 'gpt',
+          reviewer_model: 'gpt-5.6-sol',
+          reviewer_effort: 'medium',
+          reviewer_host_model: 'sonnet-5',
+          reviewer_host_effort: 'medium',
+          replacement_reason: 'an alias is not a seat',
+        })
+      ),
+    /records "reviewer-sol" as an alias of "reviewer-sol-expert-rev", and an alias seat is never routable/
+  );
+}
+
+// --- review route: an honest pair is accepted and stamped as derived ---------
+// Both independence kinds, because the fence must not cost the degraded path
+// its legality or the cross-family path its reason for existing.
+{
+  const m = openMission();
+  const author = reserve(root, authorInput({ mission_id: m }));
+
+  const degraded = reserveReview(root, reviewInput(author.seq, { mission_id: m }));
+  assert.strictEqual(degraded.reviewer_seat, 'reviewer-degraded-sonnet');
+  assert.strictEqual(degraded.reviewer_family, 'claude');
+  assert.strictEqual(degraded.independence, 'degraded-path');
+  assert.strictEqual(
+    degraded.reviewer_family_derived,
+    true,
+    'the record says its family was derived, so close can tell it from one written before the rule'
+  );
+
+  const m2 = openMission();
+  const author2 = reserve(root, authorInput({ mission_id: m2 }));
+  const cross = reserveReview(
+    root,
+    reviewInput(author2.seq, {
+      mission_id: m2,
+      reviewer_seat: 'reviewer-sol-expert-rev',
+      reviewer_family: 'gpt',
+      reviewer_model: 'gpt-5.6-sol',
+      reviewer_effort: 'medium',
+      reviewer_host_model: 'sonnet-5',
+      reviewer_host_effort: 'medium',
+      independence: 'cross-family',
+      replacement_reason: 'gpt lane came back before review dispatch',
+    })
+  );
+  assert.strictEqual(cross.reviewer_family, 'gpt');
+  assert.strictEqual(cross.reviewer_family_derived, true);
+
+  // The marker is derived, never caller-supplied.
+  assert.throws(
+    () => reserveReview(root, reviewInput(author.seq, { mission_id: m, reviewer_family_derived: true })),
+    /unexpected extra key "reviewer_family_derived"/
+  );
+}
+
+// --- review route: the derivation itself, seat by seat -----------------------
+{
+  assert.deepStrictEqual(seatFamily(root, 'reviewer-gemini'), { family: 'gemini', reason: null });
+  assert.deepStrictEqual(seatFamily(root, 'reviewer-degraded-sonnet'), { family: 'claude', reason: null });
+  assert.deepStrictEqual(seatFamily(root, 'reviewer-sol-expert-rev'), { family: 'gpt', reason: null });
+  assert.strictEqual(seatFamily(root, 'reviewer-terra').family, null);
+  assert.strictEqual(seatFamily(root, 'reviewer-sol').family, null, 'an alias resolves to no family');
+  // No routing table is no family either — the fence never fails open on a
+  // tree that cannot say who a seat is.
+  const bare = fs.mkdtempSync(path.join(tmp, 'no-routing-'));
+  const noConfig = seatFamily(bare, 'reviewer-gemini');
+  assert.strictEqual(noConfig.family, null);
+  assert.match(noConfig.reason, /the routing config could not be read/);
 }
 
 // --- review route: artifact identity is one object, never a digest/SHA mix ---
@@ -967,6 +1179,221 @@ function reviewInput(authorRouteSeq, overrides) {
   assert.strictEqual(out.route.phase, 'review');
   assert.ok(out.route.seq < out.superseded.seq, 'replacement-first holds for review routes too');
   assert.strictEqual(out.route.predecessor.predecessor_route_seq, review.seq);
+  assert.strictEqual(out.route.reviewer_family_derived, true, 'a replacement is derived like any other review record');
+}
+
+// --- supersede: a review replacement derives its family too -------------------
+// Replacing a lost reviewer is exactly where a false family would be swapped
+// in, so the fence reserveReview holds must hold here or it is one call away
+// from being useless.
+{
+  const m = openMission();
+  const author = reserve(root, authorInput({ mission_id: m }));
+  const review = reserveReview(root, reviewInput(author.seq, { mission_id: m }));
+  const before = ledger().records.length;
+  assert.throws(
+    () =>
+      supersede(root, {
+        mission_id: m,
+        predecessor_route_seq: review.seq,
+        transition: 'same-class-provider-reroute',
+        reason: 'infrastructure',
+        evidence_seq: evidenceSeqOf(m),
+        replacement: reviewInput(author.seq, {
+          mission_id: m,
+          reviewer_seat: 'reviewer-gemini',
+          reviewer_family: 'claude',
+          reviewer_model: 'gemini-3.1-pro-preview',
+          replacement_reason: 'the reserved reviewer was lost',
+        }),
+      }),
+    /reviewer_family "claude" contradicts the routing config, which seats "reviewer-gemini" in family "gemini"/
+  );
+  assert.strictEqual(ledger().records.length, before, 'a refused supersession leaves no orphan replacement');
+}
+
+// --- supersede: an author replacement derives its family too ------------------
+// A same-class provider reroute is the transition that MOVES an author across
+// families, so it is the one place a false author family would be introduced
+// after the fact.
+{
+  const m = openMission();
+  const author = reserve(root, authorInput({ mission_id: m }));
+  const before = ledger().records.length;
+  assert.throws(
+    () =>
+      supersede(root, {
+        mission_id: m,
+        predecessor_route_seq: author.seq,
+        transition: 'same-class-provider-reroute',
+        reason: 'infrastructure',
+        evidence_seq: evidenceSeqOf(m),
+        replacement: authorInput({
+          mission_id: m,
+          attempt: 2,
+          author_family: 'gemini', // executor-claude is seated in claude
+          selection: { candidates_skipped: [], substituted: false, substitution_reason: null },
+        }),
+      }),
+    /author_family "gemini" contradicts the routing config, which seats "executor-claude" in family "claude"/
+  );
+  assert.strictEqual(ledger().records.length, before, 'a refused supersession leaves no orphan replacement');
+
+  // The honest reroute across families goes through, and is stamped derived.
+  const out = supersede(root, {
+    mission_id: m,
+    predecessor_route_seq: author.seq,
+    transition: 'same-class-provider-reroute',
+    reason: 'infrastructure',
+    evidence_seq: evidenceSeqOf(m),
+    replacement: authorInput({
+      mission_id: m,
+      attempt: 2,
+      requested_seat: 'executor-claude',
+      resolved_seat: 'executor-sol-expert',
+      author_family: 'gpt',
+      worker_model: 'gpt-5.6-sol',
+      worker_effort: 'medium',
+      host_model: 'sonnet-5',
+      host_effort: 'medium',
+      selection: {
+        candidates_skipped: [],
+        substituted: true,
+        substitution_reason: 'claude lane lost; rerouted in class to the gpt expert rung',
+      },
+    }),
+  });
+  assert.strictEqual(out.route.author_family, 'gpt');
+  assert.strictEqual(out.route.author_family_derived, true);
+}
+
+// --- §9 end to end: one mission walks the shipped Claude ladder --------------
+//
+// The blocks above exercise each rule against hand-written profiles. This one
+// runs a whole mission through the CLI on the routing table the tree actually
+// carries: every seat profile is read out of the r4 config, every reserved
+// reviewer comes from routing.js's own resolution, and the route records carry
+// the real dated config, digest and revision. So the ladder the config
+// describes and the ladder route.js polices are proven to be the same one.
+//
+// Expert class, because that is where the whole ladder is constructible today:
+// the standard rungs resolve the hosted gemini reviewer, whose config entry
+// records no worker effort, and a reserved review needs one.
+{
+  const m = openMission();
+  const init = routingInit; // initialized once at the top of this file
+  const config = routingConfig;
+  const seat = (name) => config.seats[name];
+  const reviewer = (klass) => {
+    const bundle = routing.reviewFor(root, 'claude', klass);
+    return {
+      seat: bundle.seat,
+      family: bundle.family,
+      model: bundle.model,
+      effort: bundle.effort,
+      independence: bundle.independence,
+    };
+  };
+  const onLadder = (seatName, over) =>
+    authorInput({
+      mission_id: m,
+      task_class: 'expert',
+      routing_config: init.active_config,
+      routing_digest: init.digest,
+      routing_revision: config.revision,
+      requested_seat: seatName,
+      resolved_seat: seatName,
+      worker_model: seat(seatName).model,
+      worker_effort: seat(seatName).effort,
+      reserved_review: reviewer('expert'),
+      lane_state: { claude: 'auto', gpt: 'auto', gemini: 'auto' },
+      degraded_modes: [],
+      notices: [],
+      ...over,
+    });
+
+  assert.strictEqual(config.revision, 4, 'this walk is over the r4 ladder');
+  assert.strictEqual(reviewer('expert').seat, 'reviewer-sol-expert-rev', 'expert claude work is reviewed on the expert rung');
+
+  // 1. The expert default is reserved and its review capacity is honoured.
+  const author = reserve(root, onLadder('executor-claude'));
+  assert.strictEqual(author.worker_model, 'opus-5');
+  const review = reserveReview(
+    root,
+    reviewInput(author.seq, {
+      mission_id: m,
+      reviewer_seat: 'reviewer-sol-expert-rev',
+      reviewer_family: 'gpt',
+      reviewer_model: 'gpt-5.6-sol',
+      reviewer_effort: 'medium',
+      reviewer_host_model: 'sonnet-5',
+      reviewer_host_effort: 'medium',
+      independence: 'cross-family',
+      routing_config: init.active_config,
+      routing_digest: init.digest,
+    })
+  );
+  assert.strictEqual(review.phase, 'review');
+
+  const step = (predecessorSeq, transition, reason, replacement) =>
+    supersede(root, {
+      mission_id: m,
+      predecessor_route_seq: predecessorSeq,
+      transition,
+      reason,
+      evidence_seq: evidenceSeqOf(m),
+      replacement,
+    });
+
+  // 2. One same-profile quality repair, and only one.
+  const repair = step(author.seq, 'same-profile-resume', 'quality', onLadder('executor-claude'));
+  assert.strictEqual(repair.route.resumed, true);
+  assert.strictEqual(repair.route.attempt, 1, 'a repair is the same attempt');
+  assert.throws(
+    () => step(repair.route.seq, 'same-profile-resume', 'quality', onLadder('executor-claude')),
+    /already spent its one same-profile quality repair/
+  );
+
+  // 3. The escalation rung: fable-low is escalation-only, and reaching it is
+  //    what spends the mission's single profile escalation.
+  const escalated = step(
+    repair.route.seq,
+    'within-class-profile-escalation',
+    'quality',
+    onLadder('executor-fable-low', { attempt: 2, escalation_profile: true })
+  );
+  assert.strictEqual(escalated.route.worker_model, 'fable-5');
+  assert.strictEqual(escalated.route.worker_effort, 'low');
+  assert.strictEqual(escalated.route.escalation_profile, true);
+  assert.throws(
+    () =>
+      step(escalated.route.seq, 'class-escalation', 'quality', onLadder('executor-fable', { attempt: 3, task_class: 'apex' })),
+    /already spent its one profile escalation/
+  );
+
+  // 4. Infrastructure and quota still reroute in class afterwards: they never
+  //    drew on the quality budget, so its exhaustion does not bind them.
+  const rerouted = step(escalated.route.seq, 'same-class-provider-reroute', 'quota', onLadder('executor-claude', { attempt: 3 }));
+  assert.strictEqual(rerouted.route.task_class, 'expert');
+  assert.strictEqual(rerouted.route.escalation_profile, false);
+
+  // 5. Further quality disagreement goes to convergence, on the seat the
+  //    config seats there.
+  const converged = step(
+    rerouted.route.seq,
+    'convergence',
+    'quality',
+    onLadder('convergence', { attempt: 4, worker_model: seat('convergence').model, worker_effort: seat('convergence').effort })
+  );
+  assert.strictEqual(converged.route.worker_model, 'fable-5');
+  assert.strictEqual(converged.route.worker_effort, 'low');
+  assert.strictEqual(converged.superseded.transition, 'convergence');
+
+  // The mechanical rung is seated and routable on the same table, though its
+  // zero-repair rule is proven above rather than here: mechanical claude work
+  // resolves the hosted gemini reviewer, which records no worker effort, so a
+  // review capacity for it is not constructible until r5 seats that rung.
+  assert.deepStrictEqual(seat('executor-claude-mech'), { model: 'sonnet-5', family: 'claude', effort: 'low' });
 }
 
 // --- a crash between the two writes leaves an orphan, never a dangling pointer

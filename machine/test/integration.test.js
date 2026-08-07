@@ -143,9 +143,9 @@ const VALID_BRIEF = {
   assert.deepStrictEqual(effective.seat_substitutions, {}, 'no substitutions');
   assert.ok(effective.seats['executor-sol'], 'seat table present');
   assert.deepStrictEqual(
-    effective.review_routing.gpt,
+    effective.review_routing.gpt.standard,
     ['reviewer-claude', 'reviewer-gemini'],
-    'gpt review row intact'
+    'gpt standard review ladder intact'
   );
 
   const rf = ok(run('routing.js', ['review-for', root, 'gpt']), 'review-for gpt');

@@ -335,7 +335,170 @@ function migrateDegradedReview(config) {
   return out;
 }
 
-const MIGRATIONS = [migrateSolSplit, migrateDegradedReview];
+// r3 -> r4: the tiered Claude ladder becomes routable, and review routing
+// becomes class-keyed. Six Claude seats join the table — the four author rungs
+// design §4.1 pins plus the expert and apex review rungs §6.1 pins — and
+// planner and convergence take the profiles their own seat files declare,
+// which is what returns the frontmatter parity guard to green. review_routing
+// stops being one row per author family and becomes one ladder per (family,
+// class): a review floor is now read out of the data instead of inferred from
+// a class-blind row. Rows name only seats this revision's table carries — the
+// gpt standard rung (reviewer-terra) arrives with r5 and is inserted into
+// these same rows there.
+//
+// The qualification bounds move onto the new seats. r3 bounded
+// reviewer-claude at apex because it was the entire always-on Claude floor for
+// non-claude authors (§6.2), and bounding it lower would have left gpt- and
+// gemini-authored apex work with no qualified reviewer at all; the plan
+// records that bound as this migration's to undo. With reviewer-claude-expert
+// and reviewer-claude-apex present the monopoly ends, so reviewer-claude
+// returns to its design §6.1 standard rung and the higher classes route to the
+// seats that carry them — no non-claude-authored expert or apex resolution
+// lands on a reviewer profile below its class rung. reviewer-gemini stays
+// bounded at standard by the 2026-08-07 operator restriction: it is still
+// named in the claude expert and apex rows, because §6.1 keeps gemini's row
+// present at every level for roster completeness and requires resolution to
+// skip it there as unqualified rather than dispatch it. The gpt rows are the
+// one place that restriction is written as absence instead: §6.2 says
+// expert/apex gpt-authored review stays on the claude ladder or falls to the
+// degraded path, "never to gemini".
+function migrateClaudeLadder(config) {
+  const out = JSON.parse(JSON.stringify(config));
+  // Same discipline as the two migrations before it: a wrong-shaped source is
+  // refused by name rather than stamped forward (§11 — every entry is
+  // independently testable). degraded_review and review_qualification are the
+  // r2->r3 output that distinguishes a revision-3 shape from a revision-2 one,
+  // and both persist into r4, so this stays idempotent at its own boundary.
+  for (const table of ['seats', 'review_routing', 'degraded']) {
+    if (!isPlainObject(out[table])) {
+      throw new Error(`r3->r4 migration: config has no ${table} table — not a revision-3 shape`);
+    }
+  }
+  for (const required of ['degraded_review', 'review_qualification']) {
+    if (!isPlainObject(out[required])) {
+      throw new Error(
+        `r3->r4 migration: config has no ${required} block — not a revision-3 shape (the r2->r3 degraded-review migration has not been applied)`
+      );
+    }
+  }
+  for (const required of ['planner', 'convergence']) {
+    if (!isPlainObject(out.seats[required])) {
+      throw new Error(`r3->r4 migration: config has no seats["${required}"] to reprofile — not a revision-3 shape`);
+    }
+  }
+
+  // Every fable-model seat records the opus-5 high profile it drops to when
+  // Fable is unavailable or refuses (design §4.1, §6.1; §10 for the two
+  // planning seats). The config is the authority for that profile and the
+  // seat files mirror it, never the other way around — the frontmatter keys
+  // these entries require land in the step stacked on this one, so the parity
+  // guard reads red on exactly those rows until the two halves are together.
+  Object.assign(out.seats, {
+    'executor-claude-mech': { model: 'sonnet-5', family: 'claude', effort: 'low' },
+    'executor-claude-standard': { model: 'sonnet-5', family: 'claude', effort: 'high' },
+    'executor-fable-low': { model: 'fable-5', family: 'claude', effort: 'low', fallback: 'opus-5', fallback_effort: 'high' },
+    'executor-fable': { model: 'fable-5', family: 'claude', effort: 'high', fallback: 'opus-5', fallback_effort: 'high' },
+    'reviewer-claude-expert': { model: 'opus-5', family: 'claude', effort: 'high' },
+    'reviewer-claude-apex': { model: 'fable-5', family: 'claude', effort: 'low', fallback: 'opus-5', fallback_effort: 'high' },
+  });
+  // The planning fallback is a real route (§10): a Fable planner that ran on
+  // Opus is Opus execution, which only stays sayable if the profile it fell
+  // to is recorded rather than inferred. convergence also gains the family its
+  // model already determines — the standing hold from the parity-attribution
+  // correction, which left this seat outside the family check for want of a
+  // declared family.
+  out.seats.planner = { model: 'fable-5', family: 'claude', effort: 'low', fallback: 'opus-5', fallback_effort: 'high' };
+  out.seats.convergence = { ...out.seats.convergence, family: 'claude', effort: 'low', fallback_effort: 'high' };
+
+  out.review_routing = {
+    claude: {
+      recon: ['reviewer-gemini'],
+      mechanical: ['reviewer-gemini'],
+      standard: ['reviewer-gemini'],
+      expert: ['reviewer-sol-expert-rev', 'reviewer-gemini'],
+      apex: ['reviewer-sol-apex-rev', 'reviewer-gemini'],
+    },
+    gpt: {
+      recon: ['reviewer-claude', 'reviewer-gemini'],
+      mechanical: ['reviewer-claude', 'reviewer-gemini'],
+      standard: ['reviewer-claude', 'reviewer-gemini'],
+      expert: ['reviewer-claude-expert'],
+      apex: ['reviewer-claude-apex'],
+    },
+    gemini: {
+      recon: ['reviewer-claude'],
+      mechanical: ['reviewer-claude'],
+      standard: ['reviewer-claude'],
+      expert: ['reviewer-claude-expert', 'reviewer-sol-expert-rev'],
+      apex: ['reviewer-claude-apex', 'reviewer-sol-apex-rev'],
+    },
+  };
+  out.review_qualification = {
+    'reviewer-claude': 'standard',
+    'reviewer-claude-expert': 'expert',
+    'reviewer-claude-apex': 'apex',
+    'reviewer-sol-expert-rev': 'expert',
+    'reviewer-sol-apex-rev': 'apex',
+    'reviewer-gemini': 'standard',
+  };
+  // Each degraded override is the intersection filter its mode applies to the
+  // base rows, class by class: what survives with that lane out. The claude
+  // standard rungs empty out under gemini_down because the gpt standard rung
+  // does not exist yet — with no cross-family standard reviewer left, claude
+  // standard work reaches the degraded path, which is the honest r4 answer to
+  // design §6.2's "gpt only" row until r5 seats reviewer-terra there.
+  out.degraded.codex_down.review_routing = {
+    claude: {
+      recon: ['reviewer-gemini'],
+      mechanical: ['reviewer-gemini'],
+      standard: ['reviewer-gemini'],
+      expert: ['reviewer-gemini'],
+      apex: ['reviewer-gemini'],
+    },
+    gpt: {
+      recon: ['reviewer-claude', 'reviewer-gemini'],
+      mechanical: ['reviewer-claude', 'reviewer-gemini'],
+      standard: ['reviewer-claude', 'reviewer-gemini'],
+      expert: ['reviewer-claude-expert'],
+      apex: ['reviewer-claude-apex'],
+    },
+    gemini: {
+      recon: ['reviewer-claude'],
+      mechanical: ['reviewer-claude'],
+      standard: ['reviewer-claude'],
+      expert: ['reviewer-claude-expert'],
+      apex: ['reviewer-claude-apex'],
+    },
+  };
+  out.degraded.gemini_down.review_routing = {
+    claude: {
+      recon: [],
+      mechanical: [],
+      standard: [],
+      expert: ['reviewer-sol-expert-rev'],
+      apex: ['reviewer-sol-apex-rev'],
+    },
+    gpt: {
+      recon: ['reviewer-claude'],
+      mechanical: ['reviewer-claude'],
+      standard: ['reviewer-claude'],
+      expert: ['reviewer-claude-expert'],
+      apex: ['reviewer-claude-apex'],
+    },
+    gemini: {
+      recon: ['reviewer-claude'],
+      mechanical: ['reviewer-claude'],
+      standard: ['reviewer-claude'],
+      expert: ['reviewer-claude-expert', 'reviewer-sol-expert-rev'],
+      apex: ['reviewer-claude-apex', 'reviewer-sol-apex-rev'],
+    },
+  };
+
+  out.revision = 4;
+  return out;
+}
+
+const MIGRATIONS = [migrateSolSplit, migrateDegradedReview, migrateClaudeLadder];
 
 // The revision of the highest migration actually shipped — each slice that
 // pushes a MIGRATIONS entry raises this in the same commit, by construction.
@@ -358,53 +521,91 @@ function buildDefaultConfig(dateStr) {
 
 // --- read boundary -----------------------------------------------------------
 
-function checkReviewRouting(table, label, seats, degradedRowSeats, qualification, errors) {
+// True of a review-routing table whose rows are class-keyed ladders (r4+)
+// rather than one flat list per author family (r1..r3). Asked of the base
+// table once per config and then imposed on every degraded override, because
+// composition intersects the two: a config mixing the shapes would compose a
+// row against something that is not one.
+function isClassKeyedRouting(table) {
+  return isPlainObject(table) && FAMILIES.some((family) => isPlainObject(table[family]));
+}
+
+// The reviewer ladder a resolution reads: the family's flat row before r4, the
+// family's row for this task class from r4 on.
+function reviewRowOf(table, family, taskClass) {
+  const entry = table[family];
+  return Array.isArray(entry) ? entry : entry[taskClass];
+}
+
+function checkReviewRouting(table, label, seats, degradedRowSeats, qualification, classKeyed, errors) {
   if (!isPlainObject(table)) {
     errors.push(`${label} must be an object`);
     return;
   }
   for (const family of FAMILIES) {
-    const list = table[family];
-    if (!Array.isArray(list) || list.some((s) => typeof s !== 'string' || s === '')) {
-      errors.push(`${label}.${family} must be an array of seat-name strings`);
+    if (!classKeyed) {
+      checkReviewRow(table[family], `${label}.${family}`, family, seats, degradedRowSeats, qualification, errors);
       continue;
     }
-    for (const seatName of list) {
-      if (!Object.prototype.hasOwnProperty.call(seats, seatName)) {
-        errors.push(`${label}.${family} names unknown seat "${seatName}"`);
-        continue;
+    const rows = table[family];
+    if (!isPlainObject(rows)) {
+      errors.push(`${label}.${family} must be an object mapping each task class to its reviewer ladder`);
+      continue;
+    }
+    for (const key of Object.keys(rows)) {
+      if (!BRIEF_TIER_VALUES.has(key)) {
+        errors.push(`${label}.${family}.${key} is not a known task class (${[...BRIEF_TIER_VALUES].join(', ')})`);
       }
-      const seat = seats[seatName];
-      if (isPlainObject(seat) && 'alias_of' in seat) {
-        // Alias seats exist only so old names keep resolving across a
-        // migration — routing a review to one would dodge the profile split.
-        errors.push(`${label}.${family} names alias seat "${seatName}", which is never routable`);
-        continue;
-      }
-      // Cross-family rows carry the laundering invariant in their shape:
-      // no row ever names the author family's own seat, none names a seat
-      // whose family is undeclared (the invariant compares families and
-      // refuses what it cannot establish), and no row ever names a
-      // degraded seat — the degraded path is only ever reached as an
-      // explicit, relabeled transition, never as a table entry.
-      if (!isPlainObject(seat) || typeof seat.family !== 'string' || seat.family === '') {
-        errors.push(`${label}.${family} names seat "${seatName}", which declares no family — a routed reviewer seat without one fails the no-laundering invariant open`);
-      } else if (seat.family === family) {
-        errors.push(`${label}.${family} names seat "${seatName}" of the author's own family "${family}"`);
-      }
-      // Membership in this config's own degraded_review.rows is
-      // self-referential (a config could name a degraded seat here and
-      // omit it from rows), so the reserved reviewer-degraded-* namespace
-      // is refused by name as well.
-      if (degradedRowSeats.has(seatName) || seatName.startsWith('reviewer-degraded-')) {
-        errors.push(`${label}.${family} names degraded reviewer seat "${seatName}", which never appears in a cross-family row`);
-      }
-      // Where the config carries the qualification table (r3+), every seat
-      // a row can route must carry a bound — an unbounded routed reviewer
-      // would fail the review-floor ban open at resolution time.
-      if (qualification !== null && !Object.prototype.hasOwnProperty.call(qualification, seatName)) {
-        errors.push(`${label}.${family} names seat "${seatName}" with no review_qualification entry — a routed reviewer without a qualification bound would fail the review-floor ban open`);
-      }
+    }
+    for (const klass of BRIEF_TIER_VALUES) {
+      checkReviewRow(rows[klass], `${label}.${family}.${klass}`, family, seats, degradedRowSeats, qualification, errors);
+    }
+  }
+}
+
+// One row — flat or class-keyed — against every rule a routed reviewer row
+// carries. `family` is the author family the row answers for, which is what
+// the no-laundering shape check compares against.
+function checkReviewRow(list, label, family, seats, degradedRowSeats, qualification, errors) {
+  if (!Array.isArray(list) || list.some((s) => typeof s !== 'string' || s === '')) {
+    errors.push(`${label} must be an array of seat-name strings`);
+    return;
+  }
+  for (const seatName of list) {
+    if (!Object.prototype.hasOwnProperty.call(seats, seatName)) {
+      errors.push(`${label} names unknown seat "${seatName}"`);
+      continue;
+    }
+    const seat = seats[seatName];
+    if (isPlainObject(seat) && 'alias_of' in seat) {
+      // Alias seats exist only so old names keep resolving across a
+      // migration — routing a review to one would dodge the profile split.
+      errors.push(`${label} names alias seat "${seatName}", which is never routable`);
+      continue;
+    }
+    // Cross-family rows carry the laundering invariant in their shape:
+    // no row ever names the author family's own seat, none names a seat
+    // whose family is undeclared (the invariant compares families and
+    // refuses what it cannot establish), and no row ever names a
+    // degraded seat — the degraded path is only ever reached as an
+    // explicit, relabeled transition, never as a table entry.
+    if (!isPlainObject(seat) || typeof seat.family !== 'string' || seat.family === '') {
+      errors.push(`${label} names seat "${seatName}", which declares no family — a routed reviewer seat without one fails the no-laundering invariant open`);
+    } else if (seat.family === family) {
+      errors.push(`${label} names seat "${seatName}" of the author's own family "${family}"`);
+    }
+    // Membership in this config's own degraded_review.rows is
+    // self-referential (a config could name a degraded seat here and
+    // omit it from rows), so the reserved reviewer-degraded-* namespace
+    // is refused by name as well.
+    if (degradedRowSeats.has(seatName) || seatName.startsWith('reviewer-degraded-')) {
+      errors.push(`${label} names degraded reviewer seat "${seatName}", which never appears in a cross-family row`);
+    }
+    // Where the config carries the qualification table (r3+), every seat
+    // a row can route must carry a bound — an unbounded routed reviewer
+    // would fail the review-floor ban open at resolution time.
+    if (qualification !== null && !Object.prototype.hasOwnProperty.call(qualification, seatName)) {
+      errors.push(`${label} names seat "${seatName}" with no review_qualification entry — a routed reviewer without a qualification bound would fail the review-floor ban open`);
     }
   }
 }
@@ -538,7 +739,11 @@ function validateRoutingConfig(config) {
       }
     }
   }
-  checkReviewRouting(config.review_routing, 'review_routing', seats, degradedRowSeats, qualification, errors);
+  // One shape decides the whole config: the base table's own form is imposed
+  // on every degraded override below, so a table half-migrated to class-keyed
+  // rows is refused rather than composed against a row of the other kind.
+  const classKeyed = isClassKeyedRouting(config.review_routing);
+  checkReviewRouting(config.review_routing, 'review_routing', seats, degradedRowSeats, qualification, classKeyed, errors);
   if (hasDegradedReview) {
     checkDegradedReviewBlock(config.degraded_review, seats, errors);
   }
@@ -592,7 +797,15 @@ function validateRoutingConfig(config) {
       // degraded table is a read-boundary risk like any other.
       const preflightDriven = PROVIDER_MODES.some(([, name]) => name === modeName);
       if (preflightDriven || Object.prototype.hasOwnProperty.call(table, 'review_routing')) {
-        checkReviewRouting(table.review_routing, `degraded.${modeName}.review_routing`, seats, degradedRowSeats, qualification, errors);
+        checkReviewRouting(
+          table.review_routing,
+          `degraded.${modeName}.review_routing`,
+          seats,
+          degradedRowSeats,
+          qualification,
+          classKeyed,
+          errors
+        );
       }
     }
   }
@@ -729,20 +942,34 @@ function operatorDownNotice(lane) {
   );
 }
 
-// Effective review routing under the active degraded modes: each family's
-// base list survives filtered through every active mode's override, order
-// preserved. With both providers down the claude row goes empty — which
-// review-for answers with the explicit degraded-path transition, relabeled
-// and notice-carrying, never a cross-family claim scaled down.
+// Effective review routing under the active degraded modes: each row survives
+// filtered through every active mode's override, order preserved, and the
+// composed table keeps whatever shape the config's own rows have — flat per
+// family before r4, class-keyed from r4 on. With both providers down the
+// claude rows go empty, which review-for answers with the explicit
+// degraded-path transition, relabeled and notice-carrying, never a
+// cross-family claim scaled down.
 function composeReviewRouting(config, modes) {
-  const effective = {};
-  for (const family of FAMILIES) {
-    let list = config.review_routing[family];
+  const classKeyed = isClassKeyedRouting(config.review_routing);
+  const compose = (family, taskClass) => {
+    let list = reviewRowOf(config.review_routing, family, taskClass);
     for (const modeName of modes) {
-      const override = config.degraded[modeName].review_routing[family];
+      const override = reviewRowOf(config.degraded[modeName].review_routing, family, taskClass);
       list = list.filter((seat) => override.includes(seat));
     }
-    effective[family] = list;
+    return list;
+  };
+  const effective = {};
+  for (const family of FAMILIES) {
+    if (!classKeyed) {
+      effective[family] = compose(family, undefined);
+      continue;
+    }
+    const rows = {};
+    for (const klass of CLASS_ORDER) {
+      rows[klass] = compose(family, klass);
+    }
+    effective[family] = rows;
   }
   return effective;
 }
@@ -1087,27 +1314,25 @@ function reviewFor(treeRoot, authorFamily, taskClass, authorModel) {
   const effective = effectiveRouting(treeRoot);
   const seats = effective.seats;
   const subs = effective.seat_substitutions;
-  const base = effective.base_review_routing[authorFamily];
+  const base = reviewRowOf(effective.base_review_routing, authorFamily, taskClass);
   const shared = {
     class: taskClass,
     routing_config: effective.active_config,
     routing_digest: effective.active_digest,
   };
 
-  // Class-aware through the qualification bound (r3; the plan amendment
-  // "the N3/N4 deferral bound was false" at the end of execution-plan.md).
-  // review_routing rows are still not class-keyed at r3 — r4's class-keyed
-  // ladders own that and supersede this narrower form — but every seat a
-  // row can route carries a review_qualification bound, and a candidate
-  // whose bound the task class exceeds is refused from this path rather
-  // than the floor scaled down: bans.review_floor_scale_down is a ban, not
-  // a schedule. Expert and apex claude-authored work with no qualified
-  // cross-family reviewer therefore falls to the explicit degraded
-  // transition below, which is the outcome step 4b's gate fixtures
-  // predict. Configs from before the table (r1/r2) carry no bounds and no
-  // filter — honest to what their revision's law actually was.
+  // Class-aware twice over from r4: the row itself is the ladder for this
+  // task class, and every seat that row can route carries a
+  // review_qualification bound the class may not exceed. A candidate whose
+  // bound the class exceeds is refused from this path rather than the floor
+  // scaled down — bans.review_floor_scale_down is a ban, not a schedule — so
+  // gemini, bounded at standard by the operator restriction, is skipped in the
+  // expert and apex rows that name it and claude-authored work there falls to
+  // the explicit degraded transition below. Configs from before the bounds
+  // (r1/r2) carry no filter, and configs before the class-keyed rows (r3) read
+  // one flat row per family: honest to what each revision's law actually was.
   const qualification = effective.review_qualification;
-  for (const candidate of effective.review_routing[authorFamily]) {
+  for (const candidate of reviewRowOf(effective.review_routing, authorFamily, taskClass)) {
     const resolved = Object.prototype.hasOwnProperty.call(subs, candidate) ? subs[candidate] : candidate;
     const seat = seats[resolved];
     if (!isPlainObject(seat) || 'alias_of' in seat) continue; // never routable; validation refuses configs that ship this
@@ -1271,7 +1496,10 @@ commands:
   review-for  resolves the reviewer for work authored by <author_family>
               (claude | gpt | gemini) at [class] (recon | mechanical |
               standard | expert | apex; defaults to standard), author- and
-              class-aware: lane-or-capability-unavailable candidates,
+              class-aware: the candidates are that class's own ladder in
+              review_routing (one ladder per author family and class from
+              revision 4 on, one flat row per family before it),
+              lane-or-capability-unavailable candidates,
               candidates of the author's own effective family, and
               candidates whose review_qualification bound the class exceeds
               (the review floor is never scaled down) are dropped, the first

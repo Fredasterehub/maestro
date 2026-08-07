@@ -69,15 +69,85 @@ function setPreflight(root, perProvider) {
 
   const config = JSON.parse(fs.readFileSync(path.join(root, 'routing', init.active_config), 'utf8'));
   // Literals, not the module's own constant, so this can actually fail:
-  // the highest shipped migration is r2->r3, so the current revision is 3
+  // the highest shipped migration is r3->r4, so the current revision is 4
   // and init stamps exactly that — never a label above or below the
   // content. Each slice that ships a migration raises both literals.
-  assert.strictEqual(CURRENT_ROUTING_REVISION, 3);
-  assert.strictEqual(config.revision, 3);
+  assert.strictEqual(CURRENT_ROUTING_REVISION, 4);
+  assert.strictEqual(config.revision, 4);
+  // Class-keyed ladders (design §6.1/§6.2), naming only seats this revision
+  // carries: the gpt standard rung (reviewer-terra) arrives with r5 and is
+  // inserted into these same rows there. gemini is named in the claude expert
+  // and apex rows for roster completeness and skipped there at resolution as
+  // unqualified; the gpt rows write that restriction as absence, per §6.2's
+  // "never to gemini" for expert- and apex-class gpt-authored work.
   assert.deepStrictEqual(config.review_routing, {
-    claude: ['reviewer-sol-expert-rev', 'reviewer-gemini'],
-    gpt: ['reviewer-claude', 'reviewer-gemini'],
-    gemini: ['reviewer-claude', 'reviewer-sol-expert-rev'],
+    claude: {
+      recon: ['reviewer-gemini'],
+      mechanical: ['reviewer-gemini'],
+      standard: ['reviewer-gemini'],
+      expert: ['reviewer-sol-expert-rev', 'reviewer-gemini'],
+      apex: ['reviewer-sol-apex-rev', 'reviewer-gemini'],
+    },
+    gpt: {
+      recon: ['reviewer-claude', 'reviewer-gemini'],
+      mechanical: ['reviewer-claude', 'reviewer-gemini'],
+      standard: ['reviewer-claude', 'reviewer-gemini'],
+      expert: ['reviewer-claude-expert'],
+      apex: ['reviewer-claude-apex'],
+    },
+    gemini: {
+      recon: ['reviewer-claude'],
+      mechanical: ['reviewer-claude'],
+      standard: ['reviewer-claude'],
+      expert: ['reviewer-claude-expert', 'reviewer-sol-expert-rev'],
+      apex: ['reviewer-claude-apex', 'reviewer-sol-apex-rev'],
+    },
+  });
+  // The six tiered Claude seats are routable entries, and the qualification
+  // bounds sit on the seats that carry each rung — reviewer-claude's r3 apex
+  // bound existed only because it was the whole Claude floor, and the ladder
+  // ends that monopoly (plan amendment, 2026-08-07).
+  assert.deepStrictEqual(config.seats['executor-claude-mech'], { model: 'sonnet-5', family: 'claude', effort: 'low' });
+  assert.deepStrictEqual(config.seats['executor-claude-standard'], { model: 'sonnet-5', family: 'claude', effort: 'high' });
+  // Every fable-model seat records the opus-5 high profile it drops to on
+  // unavailability or refusal — the config is where that profile lives, and a
+  // seat file mirrors it.
+  assert.deepStrictEqual(config.seats['executor-fable-low'], {
+    model: 'fable-5',
+    family: 'claude',
+    effort: 'low',
+    fallback: 'opus-5',
+    fallback_effort: 'high',
+  });
+  assert.deepStrictEqual(config.seats['executor-fable'], {
+    model: 'fable-5',
+    family: 'claude',
+    effort: 'high',
+    fallback: 'opus-5',
+    fallback_effort: 'high',
+  });
+  assert.deepStrictEqual(config.seats['reviewer-claude-expert'], { model: 'opus-5', family: 'claude', effort: 'high' });
+  assert.deepStrictEqual(config.seats['reviewer-claude-apex'], {
+    model: 'fable-5',
+    family: 'claude',
+    effort: 'low',
+    fallback: 'opus-5',
+    fallback_effort: 'high',
+  });
+  assert.deepStrictEqual(config.seats.planner, {
+    model: 'fable-5',
+    family: 'claude',
+    effort: 'low',
+    fallback: 'opus-5',
+    fallback_effort: 'high',
+  });
+  assert.deepStrictEqual(config.review_qualification, {
+    'reviewer-claude': 'standard',
+    'reviewer-claude-expert': 'expert',
+    'reviewer-claude-apex': 'apex',
+    'reviewer-sol-expert-rev': 'expert',
+    'reviewer-sol-apex-rev': 'apex',
+    'reviewer-gemini': 'standard',
   });
   assert.deepStrictEqual(config.bans, {
     haiku: 'never',
@@ -90,7 +160,16 @@ function setPreflight(root, perProvider) {
 
   // Convergence protocol seats: convergence (Fable, both moments) and its
   // Sol counterpart, plan-counterpart.
-  assert.deepStrictEqual(config.seats.convergence, { model: 'fable-5', fallback: 'opus-5', effort: 'high' });
+  // convergence carries the family its model determines: without it the seat
+  // sat outside the parity family check entirely (the standing hold from the
+  // parity-attribution correction).
+  assert.deepStrictEqual(config.seats.convergence, {
+    model: 'fable-5',
+    fallback: 'opus-5',
+    effort: 'low',
+    family: 'claude',
+    fallback_effort: 'high',
+  });
   assert.deepStrictEqual(config.seats['plan-counterpart'], { family: 'gpt', hosted: true, effort: 'high' });
   assert.ok(!('agreement-pass' in config.seats), 'agreement-pass is renamed away, not carried forward');
 
@@ -126,7 +205,8 @@ function setPreflight(root, perProvider) {
   assert.deepStrictEqual(effective.degraded_modes, []);
   assert.deepStrictEqual(effective.seat_substitutions, {});
   assert.deepStrictEqual(effective.notices, []);
-  assert.deepStrictEqual(effective.review_routing.claude, ['reviewer-sol-expert-rev', 'reviewer-gemini']);
+  assert.deepStrictEqual(effective.review_routing.claude.expert, ['reviewer-sol-expert-rev', 'reviewer-gemini']);
+  assert.deepStrictEqual(effective.review_routing.claude.standard, ['reviewer-gemini']);
   assert.ok(effective.seats['executor-sol'], 'seat table rides along');
   assert.strictEqual(effective.bans.review_floor_scale_down, 'never');
   assert.ok(!('base_review_routing' in effective), 'internal comparison surface is not printed');
@@ -187,7 +267,11 @@ function setPreflight(root, perProvider) {
 {
   const { root } = initTree('review-clean');
   setPreflight(root, { codex: { routing: 'present' }, gemini: { routing: 'present' } });
-  assert.strictEqual(run(['review-for', root, 'claude']).stdout.trim(), 'reviewer-sol-expert-rev');
+  // The default class is standard, whose claude ladder is gemini's alone
+  // until r5 seats the gpt standard rung; expert climbs to the Sol expert rung.
+  assert.strictEqual(run(['review-for', root, 'claude']).stdout.trim(), 'reviewer-gemini');
+  assert.strictEqual(run(['review-for', root, 'claude', 'expert']).stdout.trim(), 'reviewer-sol-expert-rev');
+  assert.strictEqual(run(['review-for', root, 'claude', 'apex']).stdout.trim(), 'reviewer-sol-apex-rev');
   assert.strictEqual(run(['review-for', root, 'gpt']).stdout.trim(), 'reviewer-claude');
   assert.strictEqual(run(['review-for', root, 'gemini']).stdout.trim(), 'reviewer-claude');
 
@@ -218,13 +302,29 @@ function setPreflight(root, perProvider) {
   });
   assert.strictEqual(active.notices.length, 1);
   assert.match(active.notices[0], /decorrelation/);
-  assert.deepStrictEqual(active.review_routing.claude, ['reviewer-gemini']);
-  assert.deepStrictEqual(active.review_routing.gemini, ['reviewer-claude']);
+  // Every claude class keeps only the gemini lane; the expert and apex rows
+  // still name it, and it is the qualification bound below — never the row —
+  // that keeps those classes off it.
+  assert.deepStrictEqual(active.review_routing.claude, {
+    recon: ['reviewer-gemini'],
+    mechanical: ['reviewer-gemini'],
+    standard: ['reviewer-gemini'],
+    expert: ['reviewer-gemini'],
+    apex: ['reviewer-gemini'],
+  });
+  assert.deepStrictEqual(active.review_routing.gemini.standard, ['reviewer-claude']);
+  assert.deepStrictEqual(active.review_routing.gemini.expert, ['reviewer-claude-expert']);
 
   const claude = run(['review-for', root, 'claude']);
   assert.strictEqual(claude.status, 0, claude.stderr);
-  assert.strictEqual(claude.stdout.trim(), 'reviewer-gemini', 'claude work reroutes away from the dead gpt reviewer');
-  assert.match(claude.stderr, /decorrelation/, 'rerouted choice carries the notice on stderr');
+  assert.strictEqual(claude.stdout.trim(), 'reviewer-gemini', 'standard claude work keeps the reviewer its own ladder names');
+  assert.strictEqual(claude.stderr, '', 'a class whose ladder never named the dead lane is not rerouted by its loss');
+
+  // Expert claude work is: its ladder led with the Sol expert rung, and with
+  // that lane down the only remaining candidate is unqualified for the class.
+  const expert = run(['review-for', root, 'claude', 'expert']);
+  assert.strictEqual(expert.stdout.trim(), 'reviewer-degraded-sonnet');
+  assert.match(expert.stderr, /decorrelation/, 'rerouted choice carries the notice on stderr');
 
   const gpt = run(['review-for', root, 'gpt']);
   assert.strictEqual(gpt.stdout.trim(), 'reviewer-claude');
@@ -238,7 +338,13 @@ function setPreflight(root, perProvider) {
 
   const active = JSON.parse(run(['active', root]).stdout);
   assert.deepStrictEqual(active.degraded_modes, ['gemini_down'], 'unknown routing token routes as absent');
-  assert.strictEqual(run(['review-for', root, 'claude']).stdout.trim(), 'reviewer-sol-expert-rev');
+  // The claude standard rung empties out with gemini gone — the gpt standard
+  // rung arrives with r5 — so standard claude work takes the degraded path
+  // while expert and apex still climb the live Sol rungs.
+  assert.deepStrictEqual(active.review_routing.claude.standard, []);
+  assert.strictEqual(run(['review-for', root, 'claude']).stdout.trim(), 'reviewer-degraded-opus');
+  assert.strictEqual(run(['review-for', root, 'claude', 'expert']).stdout.trim(), 'reviewer-sol-expert-rev');
+  assert.strictEqual(run(['review-for', root, 'claude', 'apex']).stdout.trim(), 'reviewer-sol-apex-rev');
   assert.strictEqual(run(['review-for', root, 'gpt']).stdout.trim(), 'reviewer-claude');
   assert.strictEqual(run(['review-for', root, 'gemini']).stdout.trim(), 'reviewer-claude');
 }
@@ -254,8 +360,13 @@ function setPreflight(root, perProvider) {
     !active.degraded_modes.includes('fable-unavailable'),
     'fable-unavailable is not preflight-driven — it never enters automatic composition'
   );
-  assert.deepStrictEqual(active.review_routing.claude, [], 'no cross-family reviewer remains for claude work');
-  assert.deepStrictEqual(active.review_routing.gpt, ['reviewer-claude']);
+  assert.deepStrictEqual(
+    active.review_routing.claude,
+    { recon: [], mechanical: [], standard: [], expert: [], apex: [] },
+    'no cross-family reviewer remains for claude work at any class'
+  );
+  assert.deepStrictEqual(active.review_routing.gpt.standard, ['reviewer-claude']);
+  assert.deepStrictEqual(active.review_routing.gpt.apex, ['reviewer-claude-apex'], 'the always-on claude floor keeps its apex rung');
 
   // With every cross-family lane out, claude-authored work no longer waits:
   // it falls to the explicit degraded path (class defaults to standard →
@@ -356,7 +467,7 @@ function setPreflight(root, perProvider) {
   // refused at the read boundary, not compared open through undefined.
   const config = buildDefaultConfig('2026-08-07');
   config.seats['reviewer-mystery'] = { model: 'opus-5', effort: 'high' }; // a Claude model, no declared family
-  config.review_routing.claude.push('reviewer-mystery');
+  config.review_routing.claude.standard.push('reviewer-mystery');
   const { ok, errors } = validateRoutingConfig(config);
   assert.strictEqual(ok, false, 'a family-less seat in a cross-family row must fail validation');
   assert.ok(errors.some((e) => /declares no family/.test(e)), errors.join('; '));
@@ -386,7 +497,7 @@ function setPreflight(root, perProvider) {
       if (row[key] === 'reviewer-degraded-opus') row[key] = 'reviewer-degraded-sonnet';
     }
   }
-  config.review_routing.gpt.push('reviewer-degraded-opus'); // claude-family seat in a gpt row: the family check alone passes it
+  config.review_routing.gpt.standard.push('reviewer-degraded-opus'); // claude-family seat in a gpt row: the family check alone passes it
   const { ok, errors } = validateRoutingConfig(config);
   assert.strictEqual(ok, false, 'a degraded-named seat in a cross-family row must fail validation even when rows omit it');
   assert.ok(errors.some((e) => /"reviewer-degraded-opus", which never appears in a cross-family row/.test(e)), errors.join('; '));
@@ -404,11 +515,39 @@ function setPreflight(root, perProvider) {
 
 // --- an incomplete review_routing table is a named refusal, not a TypeError --
 {
-  const config = buildDefaultConfig('2026-08-07');
-  delete config.review_routing.gemini;
-  const { ok, errors } = validateRoutingConfig(config);
-  assert.strictEqual(ok, false, 'a review_routing table missing a family must fail validation');
-  assert.ok(errors.some((e) => /review_routing\.gemini must be an array/.test(e)), errors.join('; '));
+  const missingFamily = buildDefaultConfig('2026-08-07');
+  delete missingFamily.review_routing.gemini;
+  const r1 = validateRoutingConfig(missingFamily);
+  assert.strictEqual(r1.ok, false, 'a review_routing table missing a family must fail validation');
+  assert.ok(r1.errors.some((e) => /review_routing\.gemini must be an object mapping each task class/.test(e)), r1.errors.join('; '));
+
+  // A family present but missing one of its class rows is the same defect one
+  // level down: the class vocabulary is closed, and a ladder that omits a
+  // class would resolve that class off the end of the table.
+  const missingClass = buildDefaultConfig('2026-08-07');
+  delete missingClass.review_routing.claude.apex;
+  const r2 = validateRoutingConfig(missingClass);
+  assert.strictEqual(r2.ok, false, 'a class-keyed row missing a class must fail validation');
+  assert.ok(r2.errors.some((e) => /review_routing\.claude\.apex must be an array/.test(e)), r2.errors.join('; '));
+
+  // An unknown class key is refused rather than carried as dead data.
+  const strayClass = buildDefaultConfig('2026-08-07');
+  strayClass.review_routing.claude.heroic = ['reviewer-gemini'];
+  const r3 = validateRoutingConfig(strayClass);
+  assert.strictEqual(r3.ok, false, 'a row keyed by a class outside the closed vocabulary must fail validation');
+  assert.ok(r3.errors.some((e) => /review_routing\.claude\.heroic is not a known task class/.test(e)), r3.errors.join('; '));
+
+  // Half-migrated tables are refused as a pair, not composed against each
+  // other: composition intersects a base row with its degraded override, so
+  // the two must be the same shape.
+  const mixed = buildDefaultConfig('2026-08-07');
+  mixed.degraded.codex_down.review_routing.claude = ['reviewer-gemini'];
+  const r4 = validateRoutingConfig(mixed);
+  assert.strictEqual(r4.ok, false, 'a degraded override still carrying a flat row must fail validation');
+  assert.ok(
+    r4.errors.some((e) => /degraded\.codex_down\.review_routing\.claude must be an object mapping each task class/.test(e)),
+    r4.errors.join('; ')
+  );
 }
 
 // --- the degraded path is scoped to claude-authored work ---------------------
@@ -417,7 +556,9 @@ function setPreflight(root, perProvider) {
   // Claude reviewer under a notice asserting a shared family it does not
   // share — a false record is worse than a refusal.
   const root = customTree('non-claude-degraded', (config) => {
-    config.degraded.codex_down.review_routing.gpt = [];
+    for (const klass of Object.keys(config.degraded.codex_down.review_routing.gpt)) {
+      config.degraded.codex_down.review_routing.gpt[klass] = [];
+    }
   });
   setPreflight(root, { codex: { routing: 'absent' }, gemini: { routing: 'present' } });
   const r = run(['review-for', root, 'gpt']);
@@ -476,24 +617,73 @@ function setPreflight(root, perProvider) {
   assert.strictEqual(apex.independence, 'degraded-path');
 
   // gpt- and gemini-authored work stays on the always-on claude floor at
-  // every class: reviewer-claude carries the apex bound until r4 splits
-  // the claude ladder, because the degraded path is claude-scoped.
-  assert.strictEqual(run(['review-for', root, 'gpt', 'apex']).stdout.trim(), 'reviewer-claude');
-  assert.strictEqual(run(['review-for', root, 'gemini', 'expert']).stdout.trim(), 'reviewer-claude');
+  // every class — and from r4 on it lands on the rung its class names, never
+  // on a profile below it. reviewer-claude's r3 apex bound existed only
+  // because it was the whole floor; the ladder retires it.
+  assert.strictEqual(run(['review-for', root, 'gpt', 'apex']).stdout.trim(), 'reviewer-claude-apex');
+  assert.strictEqual(run(['review-for', root, 'gemini', 'expert']).stdout.trim(), 'reviewer-claude-expert');
+}
+
+// --- no cross-family resolution reviews above its own qualification ---------
+//
+// The two spot fixtures above prove the mission's live lane state; this is the
+// same law as a sweep, which is what the plan amendment reversing the N3/N4
+// deferral asks step 4b to assert. Every author family, every class, every
+// lane state: a resolution labeled cross-family must name a reviewer whose
+// qualification bound covers the class, and non-claude-authored expert and
+// apex work — which has no degraded path to fall to, the claude lane being its
+// always-on floor — must land on the rung its class names, never below it.
+{
+  const { reviewFor } = require(SRC);
+  const CLASSES = ['recon', 'mechanical', 'standard', 'expert', 'apex'];
+  const RUNG_OF_CLASS = { recon: 'standard', mechanical: 'standard', standard: 'standard', expert: 'expert', apex: 'apex' };
+  const qualification = buildDefaultConfig('2026-08-07').review_qualification;
+  const covers = (bound, klass) => CLASSES.indexOf(bound) >= CLASSES.indexOf(klass);
+
+  const laneStates = [
+    ['both lanes up', { codex: { routing: 'present' }, gemini: { routing: 'present' } }],
+    ['gemini only', { codex: { routing: 'absent' }, gemini: { routing: 'present' } }],
+    ['gpt only', { codex: { routing: 'present' }, gemini: { routing: 'absent' } }],
+    ['neither lane', {}],
+  ];
+  laneStates.forEach(([label, preflight], index) => {
+    const { root } = initTree(`qualification-sweep-${index}`);
+    setPreflight(root, preflight);
+    for (const family of ['claude', 'gpt', 'gemini']) {
+      for (const klass of CLASSES) {
+        const bundle = reviewFor(root, family, klass);
+        if (bundle.independence !== 'cross-family') continue;
+        const bound = qualification[bundle.seat];
+        assert.ok(
+          covers(bound, klass),
+          `${label}: ${family}-authored ${klass} work resolved "${bundle.seat}", qualified only to ${JSON.stringify(bound)} — a cross-family label over a scaled-down review floor`
+        );
+        if (family !== 'claude' && (klass === 'expert' || klass === 'apex')) {
+          assert.strictEqual(
+            bound,
+            RUNG_OF_CLASS[klass],
+            `${label}: ${family}-authored ${klass} work must reach the ${RUNG_OF_CLASS[klass]} review rung, not "${bundle.seat}"`
+          );
+        }
+      }
+    }
+  });
 }
 
 // --- apex never scales down onto the expert review rung ----------------------
 {
-  // gpt lane up, gemini down: the only cross-family candidate for claude
-  // work is the expert rung, whose bound is expert — apex refuses it and
-  // degrades rather than resolve below its floor. r4's class-keyed ladders
-  // will route this to reviewer-sol-apex-rev instead.
+  // gpt lane up, gemini down. Before the class-keyed ladders both classes read
+  // one flat row led by the expert rung, so apex had to refuse it and degrade
+  // rather than resolve below its floor; now each class reads its own rung and
+  // apex resolves the apex reviewer cross-family. Either way the expert rung
+  // never reviews apex work — that is the ban, and only the road to honouring
+  // it changed.
   const { root } = initTree('apex-floor');
   setPreflight(root, { codex: { routing: 'present' }, gemini: { routing: 'absent' } });
   assert.strictEqual(run(['review-for', root, 'claude', 'expert']).stdout.trim(), 'reviewer-sol-expert-rev');
   const apex = JSON.parse(run(['review-for', root, 'claude', 'apex', '--json']).stdout);
-  assert.strictEqual(apex.seat, 'reviewer-degraded-opus-apex');
-  assert.strictEqual(apex.independence, 'degraded-path');
+  assert.strictEqual(apex.seat, 'reviewer-sol-apex-rev');
+  assert.strictEqual(apex.independence, 'cross-family');
 }
 
 // --- the qualification table is validated, and inseparable from degraded_review ----

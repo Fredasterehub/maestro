@@ -219,6 +219,45 @@ the tables substitute same-family Claude seats — and every substituted
 dispatch's envelope carries a one-sentence decorrelation-cost notice in
 `risks`, so nobody mistakes a degraded review chain for a full one.
 
+## Escalation policy
+
+Re-dispatch is a recorded transition, not a judgment call. Every route that
+names a predecessor declares a `transition` and a `reason`, and `route.js
+supersede` decides whether that claim is legal **against the recorded chain**
+— the ledger is the authority, never the caller's description of it. This
+table mirrors what that code enforces; it adds no rule of its own.
+
+| Transition | Reason it takes | What it must keep | Budget |
+|---|---|---|---|
+| `same-profile-resume` | `quality`, `infrastructure`, `quota` — never `safety-refusal` | same attempt, same profile, same brief; the record is marked `resumed` | one per mission on `quality` — **zero for `mechanical`**, which escalates instead of grinding |
+| `same-class-provider-reroute` | any | same task class; new attempt | unlimited — infrastructure, quota and runtime trouble buy no quality escalation |
+| `class-escalation` | `quality` only | a strictly higher task class; new attempt | shares the mission's single profile escalation |
+| `within-class-profile-escalation` | `quality` only | the same class, with a genuinely changed profile; new attempt | shares that same single escalation |
+| `convergence` | `quality` only | new attempt, adjudication route | where quality disagreement goes once the escalation is spent |
+
+The rules that cut across the table:
+
+- **One escalation per mission.** The two escalation transitions draw on one
+  budget, counted by distinct predecessor — a crash-orphaned replacement and
+  the retry that follows it name the same predecessor and are charged once.
+  After it, further quality disagreement is convergence.
+- **Infrastructure never buys an escalation.** `infrastructure`, `quota` and a
+  runtime retry reroute in class; naming one of them on an escalation or
+  convergence transition is refused outright.
+- **A safety refusal reroutes the unchanged brief.** It is a
+  `same-class-provider-reroute` and the replacement must carry the same brief
+  digest — the brief is never rewritten to get past a refusal.
+- **Apex invents nothing above itself.** At apex both escalation transitions
+  are refused: convergence or an operator decision, never a higher automatic
+  effort.
+- **The escalation claim is convenience input, never authority.** A route
+  marked `escalation_profile: true` is legal only through an escalation
+  transition, and never on a fresh route — an escalation-only seat is reached
+  by superseding the route that defeated the ordinary one.
+- **A review route is replaced in class.** Only
+  `same-class-provider-reroute` supersedes a review-phase route, keeping the
+  author route and attempt it judges; escalation is an author-profile concept.
+
 ## Worktree isolation
 
 Anything that mutates the project runs in an isolated worktree via the Agent

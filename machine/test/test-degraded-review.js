@@ -129,6 +129,11 @@ function runRouting(args) {
   return spawnSync(process.execPath, [ROUTING, ...args], { encoding: 'utf8' });
 }
 
+// Every tree that RESERVES a route needs this rather than freshTree: a route
+// record's family is derived from the routing config's seat table, and a tree
+// with no table establishes no family, which refuses rather than defaulting.
+// The mission trees below therefore init too, even where the block under test
+// is about close rather than about routing.
 function initTree(name) {
   const root = freshTree(name);
   const r = runRouting(['init', root]);
@@ -455,7 +460,7 @@ const BRIEF = {
   assert.strictEqual(bundle.family, 'claude');
   assert.strictEqual(bundle.independence, 'degraded-path');
 
-  const missionRoot = freshTree('close-degraded-family-law-mission');
+  const missionRoot = initTree('close-degraded-family-law-mission');
   const missionId = 'm1';
   openMission(missionRoot, { mission_id: missionId, title: 'degraded-path close law', brief: BRIEF });
 
@@ -504,7 +509,7 @@ const BRIEF = {
 //     itself, not close's independent one.
 // =============================================================================
 {
-  const missionRoot = freshTree('route-primitives-mission');
+  const missionRoot = initTree('route-primitives-mission');
   const missionId = 'm1';
   openMission(missionRoot, { mission_id: missionId, title: 'route primitives', brief: BRIEF });
 
@@ -606,7 +611,7 @@ const BRIEF = {
 //     passes, and the amended tip — not the reviewed one — is what lands.
 // =============================================================================
 {
-  const missionRoot = freshTree('landing-changed-mission');
+  const missionRoot = initTree('landing-changed-mission');
   openMission(missionRoot, { mission_id: 'mland-changed', title: 'landed artifact drifted', brief: BRIEF });
   const repo = fx.newWorkRepo(tmp);
   const identity = fx.artifactIdentity(repo); // the commit that gets reviewed

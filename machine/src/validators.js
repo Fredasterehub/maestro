@@ -242,7 +242,27 @@ function validateDeviationChecked(deviation) {
 // pattern (revise-cap hit rate) both need per-mission counts of it. `seat` is
 // the only optional field — not every friction kind names one (ladder
 // engagement and revise-verdict are mission-scoped, not seat-scoped).
-const FRICTION_KINDS = new Set(['ladder-engaged', 'seat-degraded', 'worker-died', 'revise-verdict']);
+// The tiered-dispatch kinds (final design §16.4) join the same closed set:
+// the profile ladder's own engagement, the reservation a review lost, the
+// receipt-driven mismatch that stays dormant until receipts exist, and the
+// four reroute causes. Recording and aggregation pick them up from this set
+// alone, and the infrastructure kinds among them — provider, quota, safety
+// and runtime reroutes — are exactly the events §9 forbids counting toward
+// quality escalation, which is why they are named apart from the quality
+// ones rather than folded into a single "rerouted".
+const FRICTION_KINDS = new Set([
+  'ladder-engaged',
+  'seat-degraded',
+  'worker-died',
+  'revise-verdict',
+  'profile-escalated',
+  'review-reservation-lost',
+  'runtime-profile-mismatch',
+  'provider-rerouted',
+  'quota-rerouted',
+  'safety-refusal-rerouted',
+  'runtime-retried',
+]);
 const FRICTION_REQUIRED_KEYS = ['kind', 'mission_id', 'detail'];
 const FRICTION_KEYS = ['kind', 'mission_id', 'seat', 'detail'];
 const FRICTION_DETAIL_CEILING = 200;
