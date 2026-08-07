@@ -25,7 +25,7 @@ const crypto = require('node:crypto');
 
 const { readJson, writeJson } = require('./atomic-json.js');
 const { read: readSettings } = require('./settings.js');
-const { BRIEF_TIER_VALUES } = require('./validators.js');
+const { BRIEF_TIER_VALUES, validateBrief } = require('./validators.js');
 
 const ROUTING_DIRNAME = 'routing';
 const ACTIVE_BASENAME = 'active.json';
@@ -1301,6 +1301,12 @@ function effectiveRouting(treeRoot) {
     degraded_review: isPlainObject(config.degraded_review) ? config.degraded_review : null,
     review_qualification: isPlainObject(config.review_qualification) ? config.review_qualification : null,
     capability,
+    // The author ladders (r6+), uncomposed on purpose: a degraded mode never
+    // rewrites the tiers block the way it overrides a review row. Which rungs a
+    // lane state costs this class is a per-resolution fact, recorded as skips by
+    // the resolver rather than filtered away here — the ladder a reader sees is
+    // always the whole ladder.
+    tiers: isPlainObject(config.tiers) ? config.tiers : null,
     base_review_routing: config.review_routing,
     // Read in the same settings snapshot as provider_lanes, so one
     // resolution never mixes two settings states. Internal, like
@@ -1793,6 +1799,211 @@ function reviewFor(treeRoot, authorFamily, taskClass, authorModel) {
   return bundle;
 }
 
+// --- author-and-reviewer topology --------------------------------------------
+
+// The brief is the input and the whole input: tier-for resolves a topology from
+// a validated eight-field contract on disk, never from arguments, so the class
+// that decides the seat is the same class the worker will be held to. An
+// unreadable, unparseable or invalid brief is refused by name — a topology
+// resolved from a malformed contract is work nobody asked for.
+function readBriefForRouting(briefPath) {
+  if (typeof briefPath !== 'string' || briefPath === '') {
+    throw new Error('routing: tier-for requires a brief path');
+  }
+  const missing = Symbol('missing');
+  // readJson throws its own shaped error on unparseable JSON, which is already
+  // the refusal this wants; only absence needs a message of its own.
+  const brief = readJson(briefPath, missing);
+  if (brief === missing) {
+    throw new Error(`routing: no brief at ${briefPath} — tier-for resolves a topology from a brief on disk`);
+  }
+  const { ok, errors } = validateBrief(brief);
+  if (!ok) {
+    throw new Error(`routing: the brief at ${briefPath} is not a valid eight-field brief, so no topology is resolved from it: ${errors.join('; ')}`);
+  }
+  return brief;
+}
+
+// One brief in, one whole dispatch topology out — the author seat with its
+// profile and host pair, the review capacity reserved behind it, the rungs this
+// lane state cost, and the config revision both halves resolved under.
+//
+// Two things this deliberately does NOT do. It never re-implements review
+// resolution: `reviewFor` carries the author-family drop, the qualification
+// bounds, the degraded transition and the laundering refusal, and a second copy
+// of that law would drift from it, so the review half is one call into the same
+// function `review-for` exposes. And it never judges an `escalated` request:
+// §9's state machine lives in route.js, which refuses an escalation profile on a
+// route with no predecessor to escalate from. The flag is convenience input
+// here, never authority — tier-for resolves what was asked and route.js refuses
+// it if the ledger does not support it.
+//
+// What it does own is the refusal to emit at all. A topology whose review
+// cannot resolve — no qualified cross-family candidate and no lawful degraded
+// path, or an operator-selected hold — is not a topology: the author it names
+// could run to completion and still have nothing that could lawfully land it.
+// Discovering that here costs one call; discovering it at close costs the whole
+// run and leaves work that cannot land, so the refusal is the point of the
+// command rather than a guard on the end of it.
+//
+// Escalation, both directions. A fresh resolution walks the ordinary rungs only:
+// design §12 states an escalation entry is never selected on fresh dispatch,
+// because §10 reaches that rung by superseding a route the ordinary rung already
+// defeated, and a first dispatch selecting it would spend the mission's one
+// profile escalation before anything had failed. An escalated resolution is the
+// mirror of that, not a widening of it: it walks the escalation rungs, because
+// what an escalation asks for is precisely the profile the ordinary ladder does
+// not offer — §10's expert row is "escalate opus-high → fable-low", and a walk
+// that could answer it with the defeated opus rung again would answer a
+// within-class-profile-escalation with a route that changes no profile, which
+// route.js refuses on the same grounds.
+function tierFor(treeRoot, briefPath, escalated) {
+  const wantEscalation = escalated === true;
+  const brief = readBriefForRouting(briefPath);
+  const taskClass = brief.tier;
+
+  const effective = effectiveRouting(treeRoot);
+  if (!isPlainObject(effective.tiers) || !isPlainObject(effective.tiers.classes)) {
+    throw new Error(
+      `routing: the active config (revision ${effective.revision}) carries no tiers block, so no author ladder exists — ` +
+        'run routing.js revise before resolving a topology'
+    );
+  }
+  const klass = effective.tiers.classes[taskClass];
+  if (!isPlainObject(klass) || !Array.isArray(klass.candidates) || klass.candidates.length === 0) {
+    throw new Error(`routing: tiers.classes.${taskClass} names no candidate ladder — the active config is incomplete`);
+  }
+
+  const isEscalationRung = (candidate) => candidate.escalation === true;
+  const ladder = klass.candidates.filter((candidate) => isEscalationRung(candidate) === wantEscalation);
+  // Named, never silently dropped: a fresh resolution that had an escalation
+  // rung it did not reach is a different fact from a class that has none, and a
+  // liaison deciding whether escalation is even possible for this class reads it
+  // here. It is deliberately NOT a candidates_skipped entry — that vocabulary is
+  // route.js's closed availability enum, and a rung withheld by law was
+  // available, not absent.
+  const escalationWithheld = wantEscalation ? [] : klass.candidates.filter(isEscalationRung).map((c) => c.seat);
+
+  // The same two availability facts reviewFor records, from the same data: a
+  // seat carrying a degraded substitution is a seat whose lane is out, and the
+  // capability map excludes a model × effort it does not record as present. The
+  // author side answers a lane-out rung by walking to the next one rather than
+  // by taking the substitute — the ladder is preference-ordered over the whole
+  // topology and already names the substitute's own class-mate — which is also
+  // what keeps this a lawful fresh route: route.js (§7 correction 9) refuses a
+  // fresh route claiming substituted:true, because an ineligible candidate is
+  // recorded as a skip, never as a requested-then-substituted pair.
+  const candidatesSkipped = [];
+  let chosen = null;
+  for (const candidate of ladder) {
+    const seat = effective.seats[candidate.seat];
+    if (Object.prototype.hasOwnProperty.call(effective.seat_substitutions, candidate.seat)) {
+      candidatesSkipped.push({ seat: candidate.seat, reason: 'lane-down' });
+      continue;
+    }
+    if (capabilityUnavailable(seat, effective.capability)) {
+      candidatesSkipped.push({ seat: candidate.seat, reason: 'capability-absent' });
+      continue;
+    }
+    chosen = { candidate, seat };
+    break;
+  }
+
+  if (chosen === null) {
+    const cost = candidatesSkipped.map((s) => `${s.seat} (${s.reason})`).join(', ');
+    if (wantEscalation && ladder.length === 0) {
+      throw new Error(
+        `routing: the ${taskClass} ladder carries no escalation rung — an escalated resolution of this class has ` +
+          'nothing to select; §10 escalates it by class or sends it to convergence instead'
+      );
+    }
+    throw new Error(
+      `routing: no ${wantEscalation ? 'escalation ' : ''}author seat is available for ${taskClass} work — ` +
+        `every candidate was skipped: ${cost}`
+    );
+  }
+
+  const seatName = chosen.candidate.seat;
+  const seat = chosen.seat;
+  const authorFamily = seat.family;
+
+  // The review half through the one resolver that owns it. Its refusals become
+  // this command's refusal, unchanged and quoted: tier-for does not decide WHY a
+  // review is unresolvable — reviewFor's law does — it decides that an
+  // unresolvable review means no topology is emitted at all.
+  let review;
+  try {
+    review = reviewFor(treeRoot, authorFamily, taskClass, typeof seat.model === 'string' ? seat.model : undefined);
+  } catch (err) {
+    throw new Error(
+      `routing: refusing to emit a topology that could not lawfully close — ${authorFamily}-authored ${taskClass} ` +
+        `work on seat "${seatName}" has no resolvable review: ${err.message}`
+    );
+  }
+  // Both halves must have resolved against one config. reviewFor loads the
+  // active pointer itself, so a repoint (or a rollback) landing between the two
+  // reads would pair an author from one revision with a reviewer from another
+  // and record a single revision over both.
+  if (review.routing_config !== effective.active_config || review.routing_digest !== effective.active_digest) {
+    throw new Error(
+      `routing: the author half resolved against "${effective.active_config}" and the review half against ` +
+        `"${review.routing_config}" — the active routing pointer moved mid-resolution; re-run tier-for`
+    );
+  }
+
+  // A fallback profile is a pair or it is nothing: route.js records it as
+  // { model, effort }, and half a profile would name a model at an effort
+  // nobody chose.
+  const fallbackProfile =
+    typeof seat.fallback === 'string' && typeof seat.fallback_effort === 'string'
+      ? { model: seat.fallback, effort: seat.fallback_effort }
+      : null;
+
+  // Union, order-preserving: the lane notices this resolution ran under, plus
+  // whatever the review half added (the degraded-path notice, when it took that
+  // transition). A notice appearing on both sides is one fact, not two.
+  const notices = effective.notices.concat(review.notices.filter((n) => !effective.notices.includes(n)));
+
+  return {
+    schema_version: SCHEMA_VERSION,
+    class: taskClass,
+    escalated: wantEscalation,
+    seat: seatName,
+    // A fresh resolution resolves the seat it requested, by construction: the
+    // walk above skips what it cannot use and never substitutes.
+    requested_seat: seatName,
+    substituted: false,
+    status: chosen.candidate.status,
+    escalation_profile: chosen.candidate.escalation === true,
+    author_family: authorFamily,
+    worker_model: typeof seat.model === 'string' ? seat.model : null,
+    worker_effort: typeof seat.effort === 'string' ? seat.effort : null,
+    // Both set for a hosted seat, both null for a native one — §5's shape, and
+    // the pair route.js's host_model/host_effort validation requires.
+    host_model: typeof seat.host === 'string' ? seat.host : null,
+    host_effort: typeof seat.host_effort === 'string' ? seat.host_effort : null,
+    fallback_profile: fallbackProfile,
+    candidates_skipped: candidatesSkipped,
+    escalation_withheld: escalationWithheld,
+    // Exactly route.js's reserved_review shape (§13.1): the capacity this author
+    // is reserved against, resolved before the author is spawned rather than
+    // after it has produced work.
+    review: {
+      seat: review.seat,
+      family: review.family,
+      model: review.model,
+      effort: review.effort,
+      independence: review.independence,
+    },
+    routing_config: effective.active_config,
+    routing_digest: effective.active_digest,
+    routing_revision: effective.revision,
+    lane_state: effective.provider_lanes,
+    degraded_modes: effective.degraded_modes,
+    notices,
+  };
+}
+
 // --- CLI --------------------------------------------------------------------
 
 const HELP = `routing.js — maestro seat routing (sole writer of routing/*)
@@ -1802,6 +2013,7 @@ usage:
   routing.js revise <treeRoot>
   routing.js active <treeRoot>
   routing.js review-for <treeRoot> <author_family> [class] [author_model] [--json]
+  routing.js tier-for <treeRoot> <briefPath> [--escalated]
 
 commands:
   init        writes the dated immutable default config
@@ -1864,18 +2076,53 @@ commands:
               capability-absent — evidence_level (always "unknown": a
               resolution is a request, nothing has executed yet), notices,
               and on the degraded path the same-model fallback).
+  tier-for    resolves the WHOLE dispatch topology for the validated
+              eight-field brief at <briefPath> — author and reviewer in one
+              call — and prints it as one JSON object. The brief is
+              validated first and an invalid one is refused, listing the
+              validator's own errors. brief.tier selects the class ladder in
+              the config's tiers block, which is walked in preference order:
+              a candidate whose lane is out, or whose exact model x effort
+              the capability map does not record as present, is skipped with
+              that reason (lane-down | capability-absent) and the next rung
+              is tried — the author side answers an unavailable rung by
+              walking the ladder, never by substituting, so the resolved
+              seat is always the requested one. The review half is resolved
+              by the same review-for resolver, against the author seat's own
+              family, class and model. Escalation rungs are unreachable
+              here: a fresh resolution walks the ordinary rungs and names
+              the withheld ones in escalation_withheld, and --escalated
+              walks the escalation rungs instead — the flag is convenience
+              input, and route.js refuses an escalation profile on a route
+              with no predecessor to escalate from.
+              IT REFUSES rather than emitting when the route could not
+              lawfully close: when no review resolves at all (including the
+              operator-selected degraded_review "hold" posture), and when no
+              candidate in the class is available. Output fields: class,
+              escalated, seat, requested_seat, substituted, status,
+              escalation_profile, author_family, worker_model,
+              worker_effort, host_model/host_effort (both set for a hosted
+              seat, both null for a native one), fallback_profile,
+              candidates_skipped, escalation_withheld, review {seat, family,
+              model, effort, independence}, routing_config, routing_digest,
+              routing_revision, lane_state, degraded_modes, notices. The
+              notices are the routing layer's verbatim text; route.js's own
+              route-record notices field is a short single-line summary
+              field, so a caller composes that from these rather than
+              passing them through.
 
 Exits 0 on success; every refusal prints to stderr and exits 1.
 `;
 
-const COMMAND_ARITY = { init: [0, 0], revise: [0, 0], active: [0, 0], 'review-for': [1, 3] };
+const COMMAND_ARITY = { init: [0, 0], revise: [0, 0], active: [0, 0], 'review-for': [1, 3], 'tier-for': [1, 1] };
 
 function parseArgv(argv) {
   if (argv.includes('--help') || argv.includes('-h')) {
     return { help: true };
   }
   const json = argv.includes('--json');
-  const [command, treeRoot, ...rest] = argv.filter((arg) => arg !== '--json');
+  const escalated = argv.includes('--escalated');
+  const [command, treeRoot, ...rest] = argv.filter((arg) => arg !== '--json' && arg !== '--escalated');
   if (command === undefined) {
     return { error: 'a command is required' };
   }
@@ -1884,6 +2131,9 @@ function parseArgv(argv) {
   }
   if (json && command !== 'review-for') {
     return { error: `--json is only accepted by review-for` };
+  }
+  if (escalated && command !== 'tier-for') {
+    return { error: `--escalated is only accepted by tier-for` };
   }
   if (typeof treeRoot !== 'string' || treeRoot === '') {
     return { error: `${command} requires a <treeRoot> argument` };
@@ -1895,7 +2145,7 @@ function parseArgv(argv) {
   if (rest.length > max) {
     return { error: `unexpected extra argument(s): ${rest.slice(max).join(' ')}` };
   }
-  return { command, treeRoot, args: rest, json };
+  return { command, treeRoot, args: rest, json, escalated };
 }
 
 function main(argv) {
@@ -1941,6 +2191,11 @@ function main(argv) {
         }
         process.stdout.write(bundle.seat + '\n');
       }
+    } else if (command === 'tier-for') {
+      // Always JSON: a topology is a structure, and the one-line form that
+      // exists for review-for's back-compat would have to pick one field of
+      // a dozen to be the answer.
+      process.stdout.write(JSON.stringify(tierFor(treeRoot, args[0], parsed.escalated), null, 2) + '\n');
     }
     process.exit(0);
   } catch (err) {
@@ -1959,6 +2214,7 @@ module.exports = {
   loadRouting,
   effectiveRouting,
   reviewFor,
+  tierFor,
   validateRoutingConfig,
   buildDefaultConfig,
   buildRevision1Config,
