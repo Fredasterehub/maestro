@@ -65,6 +65,15 @@
 //     by hand outside the machine. That is an implementation gap for the
 //     plan to decide, not a test this file can honestly write — inventing
 //     one would assert an order the code does not enforce.
+//   - the brief's other family-contradiction bullet — "the recorded author
+//     family and the review family contradict the ledger" — is a distinct
+//     law from (G)'s independence-mislabeling one: a review-phase route
+//     whose reviewer_family disagrees with the family the routing config
+//     records for its own reviewer_seat. closeMission reads no such check;
+//     3b's laundering fence runs at resolution time, and a hand-written
+//     route record never goes through resolution, so this shape is a real
+//     gap in the machine (route.js, unowned past slice 2), parked as a
+//     hold rather than tested here — there is nothing to assert against.
 
 const assert = require('node:assert');
 const fs = require('node:fs');
