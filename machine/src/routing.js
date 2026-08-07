@@ -553,34 +553,68 @@ function init(treeRoot) {
   return { active_config: filename, digest };
 }
 
+// Best-effort removal of a temp only this writer can name — it never races
+// another writer. Returns the basenames it could not remove, so a caller
+// that is already reporting orphans can name them too.
+function removeTempFile(tmpPath) {
+  try {
+    fs.rmSync(tmpPath, { force: true });
+    return [];
+  } catch (err) {
+    return [path.basename(tmpPath)];
+  }
+}
+
 // Writes a dated config at the first free routing-YYYY-MM-DD-N.json name
-// for the day. The name is claimed with an exclusive create ('wx'), so
-// immutability rests on the filesystem, not on a check-then-write: a
-// concurrent writer that picked the same N loses with EEXIST and moves to
-// the next. Byte format matches atomic-json's writeJson exactly, so equal
-// content always hashes to an equal digest regardless of which path wrote
-// it. Rollback/re-upgrade cycles therefore accumulate byte-identical dated
+// for the day. The bytes land in an unpredictable dot-prefixed temp first
+// and the dated name is claimed with linkSync, which is both atomic and
+// EEXIST-exclusive: immutability rests on the filesystem, not on a
+// check-then-write, and a concurrent writer that picked the same N loses
+// with EEXIST and moves to the next. Creating the file at its final name
+// and writing into it would claim the name just as exclusively but would
+// leave a truncated file permanently occupying an immutable name whenever
+// the write failed; linking a fully written temp means a dated name only
+// ever appears complete, and a failed write consumes no dated name at all.
+// Byte format matches atomic-json's writeJson exactly, so equal content
+// always hashes to an equal digest regardless of which path wrote it.
+// Rollback/re-upgrade cycles therefore accumulate byte-identical dated
 // files under successive N — the growth immutability demands, by design.
 function writeDatedConfigExclusive(dir, dateStr, value) {
   const serialized = JSON.stringify(value, null, 2) + '\n';
-  for (let n = 1; ; n++) {
-    const filename = `routing-${dateStr}-${n}.json`;
-    const configPath = path.join(dir, filename);
-    let fd;
-    try {
-      fd = fs.openSync(configPath, 'wx');
-    } catch (err) {
-      if (err.code === 'EEXIST') continue;
-      throw err;
-    }
+  const tmpPath = path.join(
+    dir,
+    `.routing-${dateStr}.tmp-${process.pid}-${crypto.randomBytes(8).toString('hex')}`
+  );
+  let claimed = null;
+  try {
+    const fd = fs.openSync(tmpPath, 'wx');
     try {
       fs.writeSync(fd, serialized);
       fs.fsyncSync(fd);
     } finally {
       fs.closeSync(fd);
     }
-    return { filename, configPath };
+    for (let n = 1; claimed === null; n++) {
+      const filename = `routing-${dateStr}-${n}.json`;
+      const configPath = path.join(dir, filename);
+      try {
+        fs.linkSync(tmpPath, configPath);
+        claimed = { filename, configPath };
+      } catch (err) {
+        if (err.code !== 'EEXIST') throw err;
+      }
+    }
+  } catch (err) {
+    // Nothing was linked, so the temp is unreachable except through this
+    // name. If even removing it fails it is a genuine leftover, and the
+    // orphan report has to say so rather than let it drop off the record.
+    err.orphanFiles = removeTempFile(tmpPath);
+    throw err;
   }
+  // The dated name now holds these exact bytes; the temp is a second link
+  // to them that nothing else refers to.
+  removeTempFile(tmpPath);
+  return claimed;
 }
 
 // Migrates the active revision stepwise toward CURRENT_ROUTING_REVISION —
@@ -631,7 +665,9 @@ function revise(treeRoot) {
       revision += 1;
     }
   } catch (err) {
-    const orphans = steps.map((s) => s.file);
+    // Dated files already written, plus anything a failed write could not
+    // clean up — §11 requires the orphan report to name whatever survives.
+    const orphans = steps.map((s) => s.file).concat(err.orphanFiles || []);
     throw new Error(
       `routing: revise failed at revision ${revision}: ${err.message} — active.json still points at ` +
         `"${activeFile}", which stays authoritative` +
@@ -819,6 +855,7 @@ module.exports = {
   reviewFor,
   validateRoutingConfig,
   buildDefaultConfig,
+  buildRevision1Config,
   CURRENT_ROUTING_REVISION,
   MIGRATIONS,
   DATED_CONFIG_RE,
