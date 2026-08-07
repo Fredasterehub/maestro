@@ -871,11 +871,64 @@ function patchIdOf(repo, patch) {
   return out === '' ? null : out.split(/\s+/)[0];
 }
 
+// The landing repository itself must be clean at close time: a close proves
+// the landing branch's history against the gate record's identity, and that
+// proof is silent about anything sitting uncommitted in the worktree — an
+// uncommitted change is neither reviewed, nor gated, nor landed by any commit
+// this proof inspects, so its presence must refuse rather than pass through
+// unremarked. The `dirty` fence in validateArtifactIdentity (route.js) sits
+// upstream, at review-reservation and gate time, over the WORK worktree; this
+// is the same fence re-asserted over the LANDING repository at close time,
+// which no earlier check ever inspects.
+function requireCleanLandingRepo(repo) {
+  const status = gitOut(repo, ['status', '--porcelain'], 'landing repository cleanliness');
+  if (status !== '') {
+    const paths = status
+      .split('\n')
+      .filter((line) => line !== '')
+      .map((line) => line.slice(3))
+      .slice(0, 5)
+      .join(', ');
+    throw new Error(
+      `mission: close refused — landing repository "${repo}" has an uncommitted change (${paths}); the landed result cannot be proven against a repository whose working tree does not match its own HEAD`
+    );
+  }
+}
+
+// Commit containment is a one-way proof by itself: "the reviewed commit is an
+// ancestor of the landing branch" is equally true when the landing branch's
+// tip is a later, never-reviewed descendant of the reviewed commit — the
+// reviewed commit still rides along inside it, but so does everything added
+// after it. What closes the gap without breaking the two shapes this mission
+// actually lands with is checking WHERE the reviewed commit sits relative to
+// the landing branch's own tip, not merely whether it is reachable from it:
+//   - a fast-forward / direct landing: the branch tip IS the reviewed commit
+//   - a no-ff merge of exactly the reviewed head: the reviewed commit is one
+//     of the tip's OWN parents
+// A rebase-then-gate flow needs no special case here — the rebase produces a
+// new commit object, which is re-gated and becomes the identity's OWN
+// source_head, so it is the "reviewed commit" this check is applied to, not
+// an ancestor of it. What it refuses: a landing tip whose parents are some
+// other, unreviewed descendant of the reviewed commit — exactly the 4.2c
+// shape, where a second commit rode the work branch to the merge after the
+// gate ran.
+function verifyLandedAtTip(repo, head, landing) {
+  if (landing.head === head) return;
+  const parentsOut = gitOut(repo, ['show', '-s', '--format=%P', landing.head], 'landing head parents');
+  const parents = parentsOut === '' ? [] : parentsOut.split(/\s+/);
+  if (parents.includes(head)) return;
+  throw new Error(
+    `mission: close refused — ${landing.branch} head ${landing.head} contains the reviewed commit ${head} but does not land it directly (its parent(s): ${parents.join(', ') || 'none'}); content beyond the reviewed identity rode along unreviewed`
+  );
+}
+
 // Post-merge proof that the landed result is the reviewed result (§7 chain):
 // an ordinary merge is proven by commit containment — the exact reviewed
-// commit is an ancestor of the landing branch; a squash merge, whose landed
-// commit is a different object by construction, is proven by patch identity
-// over the canonical patch. Nothing weaker closes.
+// commit is an ancestor of the landing branch, and (verifyLandedAtTip) sits
+// directly at the landing branch's own tip so nothing unreviewed rides along
+// with it; a squash merge, whose landed commit is a different object by
+// construction, is proven by patch identity over the canonical patch. Nothing
+// weaker closes.
 //
 // Known limits, stated rather than implied: the repository itself is
 // caller-located (--repo) — no earlier record names a repository yet, so the
@@ -888,6 +941,7 @@ function patchIdOf(repo, patch) {
 // head and tree are re-derived against real git objects, the digest is not.
 function proveLanding(repo, identity) {
   requireLandingRepo(repo);
+  requireCleanLandingRepo(repo);
   const head = identity.source_head;
 
   if (git(repo, ['rev-parse', '--verify', '--quiet', `${head}^{commit}`]).status !== 0) {
@@ -919,6 +973,7 @@ function proveLanding(repo, identity) {
 
   const contained = git(repo, ['merge-base', '--is-ancestor', head, landing.head]);
   if (contained.status === 0) {
+    verifyLandedAtTip(repo, head, landing);
     return { method: 'commit-containment', branch: landing.branch, landed_head: landing.head, repository };
   }
   if (contained.status !== 1) {
