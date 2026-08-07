@@ -131,7 +131,9 @@ routing a same-family review just fails later; route it correctly at dispatch.
 
 Live routing (including which seats are currently degraded) is data, not this
 table: `routing.js active <treeRoot>` (and `routing.js review-for <treeRoot>
-<author_family>` for the routed reviewer). When codex or gemini probes are down,
+<author_family> [class] [author_model] [--json]` for the routed reviewer —
+class-aware, and `--json` returns the full resolution bundle with its
+independence label). When codex or gemini probes are down,
 degraded tables substitute same-family Claude seats — and every substituted
 dispatch's envelope carries a one-sentence decorrelation-cost notice in
 `risks`, so nobody mistakes a degraded review chain for a full one.
