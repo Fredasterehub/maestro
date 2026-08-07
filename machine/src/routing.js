@@ -56,7 +56,12 @@ function sha256Of(buf) {
 // Maestro's closed roster as a dated bet: which model sits in which seat.
 // Every seat mirrors its agent definition's frontmatter, so a seat here is
 // the dated record of that pairing, not a competing source of truth.
-function buildDefaultConfig(dateStr) {
+//
+// This is the historical revision-1 baseline, kept verbatim: MIGRATIONS
+// entries transform it forward, and buildDefaultConfig derives the current
+// schema from it, so migrated trees and fresh trees can never diverge on
+// shipped content.
+function buildRevision1Config(dateStr) {
   return {
     schema_version: SCHEMA_VERSION,
     calibrated: dateStr,
@@ -137,6 +142,119 @@ function buildDefaultConfig(dateStr) {
   };
 }
 
+// --- migrations --------------------------------------------------------------
+
+// MIGRATIONS[n] transforms revision n+1's config into revision n+2's — a
+// plain ordered array, not a migration engine. Each entry is deterministic
+// (no clocks, no environment), pure (clones its input), idempotent at its
+// own boundary (running it on its own output changes nothing), and its
+// output must pass validateRoutingConfig before revise will write it.
+
+// r1 -> r2: split the Sol seat by class, wherever Sol is named. The single
+// executor-sol / reviewer-sol profiles become per-class seats mirroring
+// their agent-file frontmatter; the old names stay in the seat table as
+// migration aliases (alias_of), which are never routable — review rows
+// repoint to the expert successors, and degraded substitution maps carry
+// the split so every live successor keeps the substitute the old seat had.
+function migrateSolSplit(config) {
+  const out = JSON.parse(JSON.stringify(config));
+  // Shaped refusals over raw TypeErrors: MIGRATIONS is called directly
+  // (not only through revise), and §11 wants each migration independently
+  // testable — a structurally incomplete source names its missing piece.
+  if (!isPlainObject(out.seats)) {
+    throw new Error('r1->r2 migration: config has no seats table — not a revision-1 shape');
+  }
+  for (const required of ['executor-sol', 'reviewer-sol']) {
+    if (!isPlainObject(out.seats[required])) {
+      throw new Error(`r1->r2 migration: config has no seats["${required}"] to split — not a revision-1 shape`);
+    }
+  }
+  if (!isPlainObject(out.review_routing)) {
+    throw new Error('r1->r2 migration: config has no review_routing table — not a revision-1 shape');
+  }
+  for (const family of FAMILIES) {
+    if (!Array.isArray(out.review_routing[family])) {
+      throw new Error(`r1->r2 migration: review_routing.${family} is not an array — not a revision-1 shape`);
+    }
+  }
+  if (!isPlainObject(out.degraded)) {
+    throw new Error('r1->r2 migration: config has no degraded table — not a revision-1 shape');
+  }
+
+  const added = {
+    'executor-sol-expert': { model: 'gpt-5.6-sol', family: 'gpt', effort: 'medium', host: 'sonnet-5', host_effort: 'medium' },
+    'executor-sol-apex': { model: 'gpt-5.6-sol', family: 'gpt', effort: 'high', host: 'sonnet-5', host_effort: 'high' },
+    // scope: 'scoped' survives the split: it is a property of the seat's
+    // meaning (diff-scoped review), not of the profile being re-tiered.
+    'reviewer-sol-expert-rev': { model: 'gpt-5.6-sol', family: 'gpt', effort: 'medium', host: 'sonnet-5', host_effort: 'medium', scope: 'scoped' },
+    'reviewer-sol-apex-rev': { model: 'gpt-5.6-sol', family: 'gpt', effort: 'high', host: 'sonnet-5', host_effort: 'high', scope: 'scoped' },
+  };
+  for (const [name, seat] of Object.entries(added)) {
+    out.seats[name] = seat;
+  }
+  out.seats['executor-sol'].alias_of = 'executor-sol-expert';
+  out.seats['reviewer-sol'].alias_of = 'reviewer-sol-expert-rev';
+
+  const repoint = (list) => list.map((seat) => (seat === 'reviewer-sol' ? 'reviewer-sol-expert-rev' : seat));
+  for (const family of FAMILIES) {
+    out.review_routing[family] = repoint(out.review_routing[family]);
+  }
+  // Successors of an alias in substitution-map positions: an old name used
+  // as a target repoints to its expert successor; an old name used as a
+  // key fans out to every successor, each inheriting the old substitute —
+  // no live seat is left without the substitute its predecessor had, and
+  // no alias stays named anywhere a seat name resolves.
+  const SPLIT_KEYS = {
+    'executor-sol': ['executor-sol-expert', 'executor-sol-apex'],
+    'reviewer-sol': ['reviewer-sol-expert-rev', 'reviewer-sol-apex-rev'],
+  };
+  const repointTarget = (target) =>
+    target === 'executor-sol' ? 'executor-sol-expert' : target === 'reviewer-sol' ? 'reviewer-sol-expert-rev' : target;
+  for (const table of Object.values(out.degraded)) {
+    if (!isPlainObject(table)) continue;
+    if (isPlainObject(table.seats)) {
+      const split = {};
+      for (const [from, to] of Object.entries(table.seats)) {
+        for (const key of SPLIT_KEYS[from] || [from]) {
+          split[key] = repointTarget(to);
+        }
+      }
+      table.seats = split;
+    }
+    if (isPlainObject(table.review_routing)) {
+      for (const family of FAMILIES) {
+        if (Array.isArray(table.review_routing[family])) {
+          table.review_routing[family] = repoint(table.review_routing[family]);
+        }
+      }
+    }
+  }
+
+  out.revision = 2;
+  return out;
+}
+
+const MIGRATIONS = [migrateSolSplit];
+
+// The revision of the highest migration actually shipped — each slice that
+// pushes a MIGRATIONS entry raises this in the same commit, by construction.
+// The mission's end state is revision 6; pinning that number early would
+// stamp init'd trees above their content and freeze them out of every later
+// migration (the already-current no-op would fire forever).
+const CURRENT_ROUTING_REVISION = 1 + MIGRATIONS.length;
+
+// The current schema is the revision-1 baseline pushed through every
+// shipped migration — init derives it rather than hand-maintaining a second
+// table, so a fresh tree carries exactly the content its revision label
+// claims and migrated trees can never diverge from init'd ones.
+function buildDefaultConfig(dateStr) {
+  let config = buildRevision1Config(dateStr);
+  for (const migrate of MIGRATIONS) {
+    config = migrate(config);
+  }
+  return config;
+}
+
 // --- read boundary -----------------------------------------------------------
 
 function checkReviewRouting(table, label, seats, errors) {
@@ -153,6 +271,10 @@ function checkReviewRouting(table, label, seats, errors) {
     for (const seatName of list) {
       if (!Object.prototype.hasOwnProperty.call(seats, seatName)) {
         errors.push(`${label}.${family} names unknown seat "${seatName}"`);
+      } else if (isPlainObject(seats[seatName]) && 'alias_of' in seats[seatName]) {
+        // Alias seats exist only so old names keep resolving across a
+        // migration — routing a review to one would dodge the profile split.
+        errors.push(`${label}.${family} names alias seat "${seatName}", which is never routable`);
       }
     }
   }
@@ -170,7 +292,38 @@ function validateRoutingConfig(config) {
   if (!isPlainObject(config.seats)) errors.push('seats must be an object');
   if (!isPlainObject(config.bans)) errors.push('bans must be an object');
   const seats = isPlainObject(config.seats) ? config.seats : {};
+  // alias_of is a migration pointer: it must name a real seat that is not
+  // itself an alias, so alias resolution is always a single hop. No read
+  // path resolves an alias — a stored name that turns out to be one gets
+  // refusal-by-absence, deliberately, since aliases exist only so old
+  // configs keep validating across a migration.
+  for (const [seatName, seat] of Object.entries(seats)) {
+    if (!isPlainObject(seat) || !('alias_of' in seat)) continue;
+    const target = seat.alias_of;
+    if (typeof target !== 'string' || target === '') {
+      errors.push(`seats.${seatName}.alias_of must be a non-empty seat-name string`);
+    } else if (!Object.prototype.hasOwnProperty.call(seats, target)) {
+      errors.push(`seats.${seatName}.alias_of names unknown seat "${target}"`);
+    } else if (isPlainObject(seats[target]) && 'alias_of' in seats[target]) {
+      errors.push(`seats.${seatName}.alias_of names "${target}", which is itself an alias`);
+    }
+  }
   checkReviewRouting(config.review_routing, 'review_routing', seats, errors);
+  // A tiers block arrives at a later revision; where one is present, its
+  // candidates are routable seats by definition — an alias there is the
+  // same defect as an alias in a review row.
+  if (isPlainObject(config.tiers) && isPlainObject(config.tiers.classes)) {
+    for (const [className, klass] of Object.entries(config.tiers.classes)) {
+      if (!isPlainObject(klass) || !Array.isArray(klass.candidates)) continue;
+      for (const candidate of klass.candidates) {
+        if (!isPlainObject(candidate) || typeof candidate.seat !== 'string') continue;
+        const seat = seats[candidate.seat];
+        if (isPlainObject(seat) && 'alias_of' in seat) {
+          errors.push(`tiers.classes.${className} names alias seat "${candidate.seat}", which is never routable`);
+        }
+      }
+    }
+  }
   if (!isPlainObject(config.degraded)) {
     errors.push('degraded must be an object');
   } else {
@@ -192,15 +345,20 @@ function validateRoutingConfig(config) {
         for (const [from, to] of Object.entries(table.seats)) {
           if (typeof to !== 'string' || !Object.prototype.hasOwnProperty.call(seats, to)) {
             errors.push(`degraded.${modeName}.seats maps "${from}" to unknown seat "${to}"`);
+          } else if (isPlainObject(seats[to]) && 'alias_of' in seats[to]) {
+            // A substitution landing on an alias is routing an alias by a
+            // different door — a live seat would resolve onto a seat that
+            // is itself never routable.
+            errors.push(`degraded.${modeName}.seats maps "${from}" to alias seat "${to}", which is never routable`);
           }
         }
       }
-    }
-    // Only the preflight-driven modes feed composeReviewRouting, so only
-    // those must additionally carry a review_routing override.
-    for (const [, modeName] of PROVIDER_MODES) {
-      const table = config.degraded[modeName];
-      if (isPlainObject(table)) {
+      // Preflight-driven modes feed composeReviewRouting, so their
+      // review_routing override is mandatory; any other degraded table
+      // that carries one is checked to the same standard — a hand-shaped
+      // degraded table is a read-boundary risk like any other.
+      const preflightDriven = PROVIDER_MODES.some(([, name]) => name === modeName);
+      if (preflightDriven || Object.prototype.hasOwnProperty.call(table, 'review_routing')) {
         checkReviewRouting(table.review_routing, `degraded.${modeName}.review_routing`, seats, errors);
       }
     }
@@ -395,6 +553,164 @@ function init(treeRoot) {
   return { active_config: filename, digest };
 }
 
+// Best-effort removal of a temp only this writer can name — it never races
+// another writer. Returns the basenames it could not remove, so a caller
+// that is already reporting orphans can name them too.
+function removeTempFile(tmpPath) {
+  try {
+    fs.rmSync(tmpPath, { force: true });
+    return [];
+  } catch (err) {
+    return [path.basename(tmpPath)];
+  }
+}
+
+// Writes a dated config at the first free routing-YYYY-MM-DD-N.json name
+// for the day. The bytes land in an unpredictable dot-prefixed temp first
+// and the dated name is claimed with linkSync, which is both atomic and
+// EEXIST-exclusive: immutability rests on the filesystem, not on a
+// check-then-write, and a concurrent writer that picked the same N loses
+// with EEXIST and moves to the next. Creating the file at its final name
+// and writing into it would claim the name just as exclusively but would
+// leave a truncated file permanently occupying an immutable name whenever
+// the write failed; linking a fully written temp means a dated name only
+// ever appears complete, and a failed write consumes no dated name at all.
+// Byte format matches atomic-json's writeJson exactly, so equal content
+// always hashes to an equal digest regardless of which path wrote it.
+// Rollback/re-upgrade cycles therefore accumulate byte-identical dated
+// files under successive N — the growth immutability demands, by design.
+function writeDatedConfigExclusive(dir, dateStr, value) {
+  const serialized = JSON.stringify(value, null, 2) + '\n';
+  const tmpPath = path.join(
+    dir,
+    `.routing-${dateStr}.tmp-${process.pid}-${crypto.randomBytes(8).toString('hex')}`
+  );
+  let claimed = null;
+  try {
+    const fd = fs.openSync(tmpPath, 'wx');
+    try {
+      fs.writeSync(fd, serialized);
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+    for (let n = 1; claimed === null; n++) {
+      const filename = `routing-${dateStr}-${n}.json`;
+      const configPath = path.join(dir, filename);
+      try {
+        fs.linkSync(tmpPath, configPath);
+        claimed = { filename, configPath };
+      } catch (err) {
+        if (err.code !== 'EEXIST') throw err;
+      }
+    }
+  } catch (err) {
+    // Nothing was linked, so the temp is unreachable except through this
+    // name. If even removing it fails it is a genuine leftover, and the
+    // orphan report has to say so rather than let it drop off the record.
+    err.orphanFiles = removeTempFile(tmpPath);
+    throw err;
+  }
+  // The dated name now holds these exact bytes; the temp is a second link
+  // to them that nothing else refers to.
+  removeTempFile(tmpPath);
+  return claimed;
+}
+
+// Migrates the active revision stepwise toward CURRENT_ROUTING_REVISION —
+// skipped intermediates are impossible because each step applies exactly one
+// MIGRATIONS entry and writes one dated file. active.json is repointed
+// exactly once, at the end, so a failure mid-sequence leaves the
+// not-yet-repointed active config authoritative and reports any orphan
+// files already written. Rollback is repointing active.json at an older
+// dated file; a re-upgrade afterwards re-runs the remaining migrations from
+// whatever revision the pointer names.
+function revise(treeRoot) {
+  const { config, activeFile } = loadRouting(treeRoot);
+  const from = config.revision;
+  if (from === CURRENT_ROUTING_REVISION) {
+    return {
+      noop: true,
+      message: `already at revision ${CURRENT_ROUTING_REVISION} (${activeFile}) — nothing to migrate`,
+    };
+  }
+  if (from < 1 || from > CURRENT_ROUTING_REVISION) {
+    throw new Error(
+      `routing: active config "${activeFile}" records revision ${from}, outside the known range ` +
+        `1..${CURRENT_ROUTING_REVISION} — refusing to migrate a malformed source revision`
+    );
+  }
+
+  const dir = routingDir(treeRoot);
+  const dateStr = new Date().toISOString().slice(0, 10);
+  const steps = [];
+  let current = config;
+  let revision = from;
+  try {
+    while (revision < CURRENT_ROUTING_REVISION && MIGRATIONS[revision - 1]) {
+      const next = MIGRATIONS[revision - 1](JSON.parse(JSON.stringify(current)));
+      if (next.revision !== revision + 1) {
+        throw new Error(`migration from revision ${revision} labeled its output ${next.revision}, expected ${revision + 1}`);
+      }
+      const { ok, errors } = validateRoutingConfig(next);
+      if (!ok) {
+        throw new Error(`migration to revision ${revision + 1} produced an invalid config: ${errors.join('; ')}`);
+      }
+      const { filename, configPath } = writeDatedConfigExclusive(dir, dateStr, next);
+      // Digest from the exact bytes on disk, same discipline as init: the
+      // pointer will certify the file as-written, not the in-memory value.
+      const digest = sha256Of(fs.readFileSync(configPath));
+      steps.push({ file: filename, revision: revision + 1, digest });
+      current = next;
+      revision += 1;
+    }
+  } catch (err) {
+    // Dated files already written, plus anything a failed write could not
+    // clean up — §11 requires the orphan report to name whatever survives.
+    const orphans = steps.map((s) => s.file).concat(err.orphanFiles || []);
+    throw new Error(
+      `routing: revise failed at revision ${revision}: ${err.message} — active.json still points at ` +
+        `"${activeFile}", which stays authoritative` +
+        (orphans.length > 0 ? `; orphan dated file(s) written but never activated: ${orphans.join(', ')}` : '')
+    );
+  }
+
+  if (steps.length === 0) {
+    return {
+      noop: true,
+      message:
+        `no migration is shipped from revision ${from} yet — active config ${activeFile} stays ` +
+        `authoritative (current is ${CURRENT_ROUTING_REVISION})`,
+    };
+  }
+
+  const last = steps[steps.length - 1];
+  try {
+    writeJson(path.join(dir, ACTIVE_BASENAME), {
+      schema_version: SCHEMA_VERSION,
+      active_config: last.file,
+      digest: last.digest,
+    });
+  } catch (err) {
+    // A failed repoint leaves the old pointer intact — the invariant holds —
+    // but the dated files already written deserve the same orphan report a
+    // mid-loop failure produces.
+    throw new Error(
+      `routing: revise migrated to revision ${last.revision} but repointing ${ACTIVE_BASENAME} failed: ${err.message} — ` +
+        `active.json still points at "${activeFile}", which stays authoritative; orphan dated file(s) written but never ` +
+        `activated: ${steps.map((s) => s.file).join(', ')}`
+    );
+  }
+  return {
+    from,
+    to: last.revision,
+    current: last.revision === CURRENT_ROUTING_REVISION,
+    steps,
+    active_config: last.file,
+    digest: last.digest,
+  };
+}
+
 function reviewFor(treeRoot, authorFamily) {
   if (!FAMILIES.includes(authorFamily)) {
     throw new Error(`routing: author family must be one of ${FAMILIES.join(', ')} (got "${authorFamily}")`);
@@ -418,6 +734,7 @@ const HELP = `routing.js — maestro seat routing (sole writer of routing/*)
 
 usage:
   routing.js init <treeRoot>
+  routing.js revise <treeRoot>
   routing.js active <treeRoot>
   routing.js review-for <treeRoot> <author_family>
 
@@ -425,10 +742,19 @@ commands:
   init        writes the dated immutable default config
               routing/routing-YYYY-MM-DD-1.json (seat table, review-routing
               rules, bans, codex_down/gemini_down/fable-unavailable degraded
-              tables) and the digest pointer routing/active.json. Refuses
-              when a pointer or the dated file already exists — dated
-              configs are immutable; routing changes by adding a new dated
-              file and repointing.
+              tables) at the current schema revision, plus the digest
+              pointer routing/active.json. Refuses when a pointer or the
+              dated file already exists — dated configs are immutable;
+              routing changes by adding a new dated file and repointing.
+  revise      migrates the active config stepwise toward the current
+              revision: one shipped migration and one new dated immutable
+              file per step, active.json repointed exactly once at the end.
+              Already-current is an explicit no-op; a malformed source
+              revision is refused; a failure mid-sequence leaves active.json
+              untouched (the active config stays authoritative) and reports
+              any orphan dated files. Rollback is repointing active.json at
+              an older dated file; revise afterwards re-runs the remaining
+              migrations.
   active      loads the dated config through the digest-verified pointer
               (refusing digest mismatch, symlinked target, or malformed
               basename), applies the degraded sub-tables keyed off
@@ -448,7 +774,7 @@ commands:
 Exits 0 on success; every refusal prints to stderr and exits 1.
 `;
 
-const COMMAND_ARITY = { init: 0, active: 0, 'review-for': 1 };
+const COMMAND_ARITY = { init: 0, revise: 0, active: 0, 'review-for': 1 };
 
 function parseArgv(argv) {
   if (argv.includes('--help') || argv.includes('-h')) {
@@ -490,6 +816,13 @@ function main(argv) {
     const { command, treeRoot, args } = parsed;
     if (command === 'init') {
       process.stdout.write(JSON.stringify(init(treeRoot), null, 2) + '\n');
+    } else if (command === 'revise') {
+      const result = revise(treeRoot);
+      if (result.noop) {
+        process.stdout.write(`routing.js: ${result.message}\n`);
+      } else {
+        process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+      }
     } else if (command === 'active') {
       const effective = effectiveRouting(treeRoot);
       delete effective.base_review_routing; // internal comparison surface, not part of the printed contract
@@ -516,11 +849,15 @@ if (require.main === module) {
 
 module.exports = {
   init,
+  revise,
   loadRouting,
   effectiveRouting,
   reviewFor,
   validateRoutingConfig,
   buildDefaultConfig,
+  buildRevision1Config,
+  CURRENT_ROUTING_REVISION,
+  MIGRATIONS,
   DATED_CONFIG_RE,
   ACTIVE_BASENAME,
   ROUTING_DIRNAME,

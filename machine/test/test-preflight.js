@@ -211,7 +211,7 @@ function assertModelsShape(models, label) {
   const effective = effectiveRouting(root);
   assert.strictEqual(effective.preflight_recorded, true);
   assert.deepStrictEqual(effective.degraded_modes, ['codex_down']);
-  assert.strictEqual(effective.seat_substitutions['executor-sol'], 'executor-claude');
+  assert.strictEqual(effective.seat_substitutions['executor-sol-expert'], 'executor-claude');
 }
 
 // Unscaffolded tree: a usage error, exit 1.

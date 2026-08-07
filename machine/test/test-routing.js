@@ -7,7 +7,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
 const SRC = path.join(__dirname, '..', 'src', 'routing.js');
-const { DATED_CONFIG_RE } = require(SRC);
+const { DATED_CONFIG_RE, CURRENT_ROUTING_REVISION, buildRevision1Config } = require(SRC);
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-routing-'));
 process.on('exit', () => fs.rmSync(tmp, { recursive: true, force: true }));
@@ -47,11 +47,16 @@ function setPreflight(root, perProvider) {
   assert.strictEqual(pointer.digest, init.digest);
 
   const config = JSON.parse(fs.readFileSync(path.join(root, 'routing', init.active_config), 'utf8'));
-  assert.strictEqual(config.revision, 1);
+  // Literals, not the module's own constant, so this can actually fail:
+  // the highest shipped migration is r1->r2, so the current revision is 2
+  // and init stamps exactly that — never a label above or below the
+  // content. Each slice that ships a migration raises both literals.
+  assert.strictEqual(CURRENT_ROUTING_REVISION, 2);
+  assert.strictEqual(config.revision, 2);
   assert.deepStrictEqual(config.review_routing, {
-    claude: ['reviewer-sol', 'reviewer-gemini'],
+    claude: ['reviewer-sol-expert-rev', 'reviewer-gemini'],
     gpt: ['reviewer-claude', 'reviewer-gemini'],
-    gemini: ['reviewer-claude', 'reviewer-sol'],
+    gemini: ['reviewer-claude', 'reviewer-sol-expert-rev'],
   });
   assert.deepStrictEqual(config.bans, {
     haiku: 'never',
@@ -59,7 +64,7 @@ function setPreflight(root, perProvider) {
     review_floor_scale_down: 'never',
     runtime_agent_creation: 'never',
   });
-  assert.strictEqual(config.degraded.codex_down.seats['executor-sol'], 'executor-claude');
+  assert.strictEqual(config.degraded.codex_down.seats['executor-sol-expert'], 'executor-claude');
   assert.strictEqual(config.degraded.gemini_down.seats['executor-gemini'], 'executor-claude');
 
   // Convergence protocol seats: convergence (Fable, both moments) and its
@@ -100,7 +105,7 @@ function setPreflight(root, perProvider) {
   assert.deepStrictEqual(effective.degraded_modes, []);
   assert.deepStrictEqual(effective.seat_substitutions, {});
   assert.deepStrictEqual(effective.notices, []);
-  assert.deepStrictEqual(effective.review_routing.claude, ['reviewer-sol', 'reviewer-gemini']);
+  assert.deepStrictEqual(effective.review_routing.claude, ['reviewer-sol-expert-rev', 'reviewer-gemini']);
   assert.ok(effective.seats['executor-sol'], 'seat table rides along');
   assert.strictEqual(effective.bans.review_floor_scale_down, 'never');
   assert.ok(!('base_review_routing' in effective), 'internal comparison surface is not printed');
@@ -161,7 +166,7 @@ function setPreflight(root, perProvider) {
 {
   const { root } = initTree('review-clean');
   setPreflight(root, { codex: { routing: 'present' }, gemini: { routing: 'present' } });
-  assert.strictEqual(run(['review-for', root, 'claude']).stdout.trim(), 'reviewer-sol');
+  assert.strictEqual(run(['review-for', root, 'claude']).stdout.trim(), 'reviewer-sol-expert-rev');
   assert.strictEqual(run(['review-for', root, 'gpt']).stdout.trim(), 'reviewer-claude');
   assert.strictEqual(run(['review-for', root, 'gemini']).stdout.trim(), 'reviewer-claude');
 
@@ -181,9 +186,13 @@ function setPreflight(root, perProvider) {
   const active = JSON.parse(run(['active', root]).stdout);
   assert.strictEqual(active.preflight_recorded, true);
   assert.deepStrictEqual(active.degraded_modes, ['codex_down']);
+  // The Sol split carries the codex_down substitutes onto the live
+  // successors; the alias names key nothing, since nothing routes them.
   assert.deepStrictEqual(active.seat_substitutions, {
-    'executor-sol': 'executor-claude',
-    'reviewer-sol': 'reviewer-claude',
+    'executor-sol-expert': 'executor-claude',
+    'executor-sol-apex': 'executor-claude',
+    'reviewer-sol-expert-rev': 'reviewer-claude',
+    'reviewer-sol-apex-rev': 'reviewer-claude',
     'plan-counterpart': 'reviewer-gemini',
   });
   assert.strictEqual(active.notices.length, 1);
@@ -208,7 +217,7 @@ function setPreflight(root, perProvider) {
 
   const active = JSON.parse(run(['active', root]).stdout);
   assert.deepStrictEqual(active.degraded_modes, ['gemini_down'], 'unknown routing token routes as absent');
-  assert.strictEqual(run(['review-for', root, 'claude']).stdout.trim(), 'reviewer-sol');
+  assert.strictEqual(run(['review-for', root, 'claude']).stdout.trim(), 'reviewer-sol-expert-rev');
   assert.strictEqual(run(['review-for', root, 'gpt']).stdout.trim(), 'reviewer-claude');
   assert.strictEqual(run(['review-for', root, 'gemini']).stdout.trim(), 'reviewer-claude');
 }
@@ -238,6 +247,82 @@ function setPreflight(root, perProvider) {
   // gemini_down — the composed substitution must land on the live seat,
   // never the dead intermediate.
   assert.strictEqual(active.seat_substitutions['plan-counterpart'], 'reviewer-claude');
+}
+
+// --- revise: a failed dated-config write consumes no immutable name ----------
+//
+// The failure is imposed from outside the process (RLIMIT_FSIZE of 0, with
+// SIGXFSZ ignored so the write returns EFBIG instead of killing node), so
+// this exercises whatever write path the code uses rather than asserting a
+// shape. §11: a partially written migration leaves the not-yet-repointed
+// active config authoritative AND reports the orphan file — a corrupt file
+// stranded at an immutable dated name, absent from the report, breaks both
+// the immutable-set invariant and the rollback procedure that walks it.
+{
+  function shq(s) {
+    return `'${String(s).replace(/'/g, `'\\''`)}'`;
+  }
+  function underWriteFailure(argv) {
+    const cmd = `ulimit -f 0; trap '' XFSZ; exec ${[process.execPath, ...argv].map(shq).join(' ')}`;
+    return spawnSync('bash', ['-c', cmd], { encoding: 'utf8' });
+  }
+
+  const probeRoot = freshTree('write-failure-probe');
+  const probe = underWriteFailure(['-e', 'require("fs").writeFileSync(process.argv[1], "x")', path.join(probeRoot, 'p.txt')]);
+  const imposable = probe.status !== 0 && /EFBIG/.test(probe.stderr);
+
+  if (!imposable) {
+    console.log('test-routing: SKIP failed-write orphan case (RLIMIT_FSIZE not imposable here)');
+  } else {
+    // A revision-1 tree, built the way init builds one but at the historical
+    // revision, so `revise` has exactly one migration to run and write.
+    const root = freshTree('revise-write-failure');
+    const dir = path.join(root, 'routing');
+    fs.mkdirSync(dir, { recursive: true });
+    const sourceFile = 'routing-2026-07-31-1.json';
+    const sourcePath = path.join(dir, sourceFile);
+    fs.writeFileSync(sourcePath, JSON.stringify(buildRevision1Config('2026-07-31'), null, 2) + '\n');
+    const digest =
+      'sha256:' + require('node:crypto').createHash('sha256').update(fs.readFileSync(sourcePath)).digest('hex');
+    fs.writeFileSync(
+      path.join(dir, 'active.json'),
+      JSON.stringify({ schema_version: 1, active_config: sourceFile, digest }, null, 2) + '\n'
+    );
+
+    const r = underWriteFailure([SRC, 'revise', root]);
+    assert.strictEqual(r.status, 1, `revise must fail under an imposed write failure: ${r.stdout}${r.stderr}`);
+    assert.match(r.stderr, /revise failed at revision 1/);
+    assert.match(r.stderr, /stays authoritative/);
+
+    const after = fs.readdirSync(dir).sort();
+    const dated = after.filter((f) => DATED_CONFIG_RE.test(f));
+    assert.deepStrictEqual(
+      dated,
+      [sourceFile],
+      `a failed write must consume no dated immutable name; directory held ${after.join(', ')}`
+    );
+    for (const f of after) {
+      if (f === 'active.json' || f === sourceFile) continue;
+      assert.ok(r.stderr.includes(f), `leftover ${f} must be named in the orphan report: ${r.stderr}`);
+    }
+
+    // The pointer never moved and the tree still loads: the pre-migration
+    // config stays authoritative, which is the other half of the invariant.
+    const pointer = JSON.parse(fs.readFileSync(path.join(dir, 'active.json'), 'utf8'));
+    assert.strictEqual(pointer.active_config, sourceFile);
+    const active = run(['active', root]);
+    assert.strictEqual(active.status, 0, active.stderr);
+    assert.strictEqual(JSON.parse(active.stdout).revision, 1);
+
+    // With the limit lifted the same tree migrates cleanly — the failed
+    // attempt left no wreckage in the way of the name it would have used.
+    const retry = run(['revise', root]);
+    assert.strictEqual(retry.status, 0, retry.stderr);
+    const result = JSON.parse(retry.stdout);
+    assert.strictEqual(result.from, 1);
+    assert.strictEqual(result.to, CURRENT_ROUTING_REVISION);
+    assert.match(result.active_config, DATED_CONFIG_RE);
+  }
 }
 
 // --- CLI hygiene -------------------------------------------------------------
