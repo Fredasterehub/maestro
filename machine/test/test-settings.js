@@ -316,13 +316,41 @@ function clampFor(clamps, key) {
     'unknown nested value clamps to default and is reported'
   );
 
-  // Missing parent entirely: every sibling reports its default.
+  // Missing parent entirely: every sibling reports its own scalar default
+  // clamp — the same shape a present-but-empty parent produces (no
+  // object-valued "to" special case for the absent-parent path).
   const root2 = freshTree('lanes-hand-edit-absent');
   fs.writeFileSync(path.join(root2, 'settings.json'), JSON.stringify({ delegation: 'balanced' }) + '\n');
   const r2 = run(['read', root2]);
   const { settings: s2, clamps: c2 } = JSON.parse(r2.stdout);
   assert.deepStrictEqual(s2.provider_lanes, { gpt: 'auto', gemini: 'auto' });
-  assert.ok(clampFor(c2, 'provider_lanes').some((c) => c.rule === 'default'));
+  assert.deepStrictEqual(clampFor(c2, 'provider_lanes.gpt')[0], { key: 'provider_lanes.gpt', to: 'auto', rule: 'default' });
+  assert.deepStrictEqual(clampFor(c2, 'provider_lanes.gemini')[0], { key: 'provider_lanes.gemini', to: 'auto', rule: 'default' });
+  assert.strictEqual(clampFor(c2, 'provider_lanes').length, 0, 'no whole-object clamp — only the per-sibling scalar ones');
+}
+
+{
+  // A lane write must not disturb any other top-level knob.
+  const root = freshTree('lanes-leave-siblings');
+  const seed = run(
+    ['write', root],
+    JSON.stringify({ delegation: 'balanced', fleet_ceiling: 3, landing: 'pr', escalation: 'advise_me', plan_rigor: 'full', degraded_review: 'hold', upgrade_degraded_review: 'before-close' })
+  );
+  assert.strictEqual(seed.status, 0, seed.stderr);
+
+  const laneWrite = run(['write', root], JSON.stringify({ provider_lanes: { gpt: 'operator-down' } }));
+  assert.strictEqual(laneWrite.status, 0, laneWrite.stderr);
+  const doc = diskDoc(root);
+  assert.strictEqual(doc.delegation, 'balanced');
+  assert.strictEqual(doc.fleet_ceiling, 3);
+  assert.strictEqual(doc.landing, 'pr');
+  assert.strictEqual(doc.escalation, 'advise_me');
+  assert.strictEqual(doc.plan_rigor, 'full');
+  assert.strictEqual(doc.degraded_review, 'hold');
+  assert.strictEqual(doc.upgrade_degraded_review, 'before-close');
+  assert.strictEqual(doc.review_floor, 'cross-family');
+  assert.strictEqual(doc.cross_family_when_available, true);
+  assert.deepStrictEqual(doc.provider_lanes, { gpt: 'operator-down', gemini: 'auto' }, 'the lane patch itself still lands correctly');
 }
 
 // --- cross_family_when_available: locked exactly like review_floor ----------

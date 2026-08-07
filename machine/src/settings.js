@@ -3,15 +3,18 @@
 // maestro machine layer — schema-clamped settings (sole writer of
 // settings.json).
 //
-// The knob set is CLOSED: five adjustable knobs plus one locked key. The
-// write path fails closed — an unknown key, a value outside an enum, a
-// non-integer ceiling, or any attempt to change the locked review_floor
-// refuses the whole write. The read path clamps forward — a hand-edited
-// file (which bypasses this module entirely) is re-clamped on every read,
-// with each correction reported through the clamps channel, so a bad
-// hand-edit can never leak into effective settings. Deleted-not-falsed: a
-// hand-edited review_floor value is discarded and the locked value
-// re-applied; the bad value itself never lands anywhere.
+// The knob set is CLOSED: eight adjustable knobs (one of them, provider_lanes,
+// nested) plus two locked keys. The write path fails closed — an unknown
+// top-level key, an unknown provider_lanes key, a value outside an enum, a
+// non-integer ceiling, or any attempt to change a locked key (review_floor,
+// cross_family_when_available) refuses the whole write. The read path
+// clamps forward — a hand-edited file (which bypasses this module entirely)
+// is re-clamped on every read, with each correction reported through the
+// clamps channel, so a bad hand-edit can never leak into effective
+// settings. Deleted-not-falsed: a hand-edited locked value is discarded and
+// the locked value re-applied; the bad value itself never lands anywhere.
+// provider_lanes deep-merges on write: a patch touching one lane never
+// erases its sibling, which keeps its current value or documented default.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -106,35 +109,35 @@ function clampDoc(input) {
     }
 
     if (rule.kind === 'nested') {
-      const nestedDefaults = () => {
+      if (present && !isPlainObject(value)) {
+        // Explicitly present but the wrong shape entirely: nothing in it can
+        // be salvaged sub-key by sub-key, so the whole nested value falls
+        // back to defaults as one correction.
         const defaults = {};
         for (const [subKey, subRule] of Object.entries(rule.keys)) defaults[subKey] = subRule.default;
-        return defaults;
-      };
+        settings[key] = defaults;
+        clamps.push({ key, from: value, to: defaults, rule: 'invalid-type' });
+        continue;
+      }
 
-      if (!present) {
-        settings[key] = nestedDefaults();
-        clamps.push({ key, from: undefined, to: settings[key], rule: 'default' });
-        continue;
-      }
-      if (!isPlainObject(value)) {
-        settings[key] = nestedDefaults();
-        clamps.push({ key, from: value, to: settings[key], rule: 'invalid-type' });
-        continue;
-      }
+      // Absent is treated as an empty object: every sub-key below is then
+      // simply "not present", which already reports its own scalar default
+      // clamp — the same shape a present-but-empty parent produces, so an
+      // absent parent is not special-cased into a second clamp shape.
+      const source = present ? value : {};
 
       // Unknown provider keys are dropped, never carried forward, exactly
       // as unknown top-level keys are.
-      for (const subKey of Object.keys(value)) {
+      for (const subKey of Object.keys(source)) {
         if (!Object.prototype.hasOwnProperty.call(rule.keys, subKey)) {
-          clamps.push({ key: `${key}.${subKey}`, from: value[subKey], to: null, rule: 'unknown' });
+          clamps.push({ key: `${key}.${subKey}`, from: source[subKey], to: null, rule: 'unknown' });
         }
       }
 
       const nested = {};
       for (const [subKey, subRule] of Object.entries(rule.keys)) {
-        const subPresent = Object.prototype.hasOwnProperty.call(value, subKey) && value[subKey] !== undefined;
-        const subValue = value[subKey];
+        const subPresent = Object.prototype.hasOwnProperty.call(source, subKey) && source[subKey] !== undefined;
+        const subValue = source[subKey];
         if (!subPresent) {
           nested[subKey] = subRule.default;
           clamps.push({ key: `${key}.${subKey}`, from: undefined, to: subRule.default, rule: 'default' });
@@ -333,11 +336,15 @@ commands:
           and missing keys fill from defaults (rule "default"); the file
           itself is not modified.
   write   stdin: a patch touching any subset of the knobs. Fails closed:
-          unknown keys, out-of-enum values, non-integer fleet_ceiling, or a
-          review_floor change refuse the whole write (exit 1, nothing
-          written). An integer merely out of range is clamped to the floor
-          or ceiling and reported. Prints { settings, clamps } for exactly
-          what landed on disk.
+          unknown top-level keys, out-of-enum values, non-integer
+          fleet_ceiling, an unknown provider_lanes key, an unknown
+          provider_lanes nested value, or a change to a locked key
+          (review_floor, cross_family_when_available) refuse the whole
+          write (exit 1, nothing written). An integer merely out of range
+          is clamped to the floor or ceiling and reported. A provider_lanes
+          patch deep-merges: an untouched lane keeps its current value (or
+          documented default if the parent was absent). Prints
+          { settings, clamps } for exactly what landed on disk.
 
 Exits 0 on success; refusals print to stderr and exit 1.
 `;
@@ -409,4 +416,5 @@ module.exports = {
   SCHEMA,
   SETTINGS_BASENAME,
   REVIEW_FLOOR_LOCKED_VALUE,
+  CROSS_FAMILY_WHEN_AVAILABLE_LOCKED_VALUE,
 };
