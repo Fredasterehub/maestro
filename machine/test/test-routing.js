@@ -7,7 +7,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
 const SRC = path.join(__dirname, '..', 'src', 'routing.js');
-const { DATED_CONFIG_RE } = require(SRC);
+const { DATED_CONFIG_RE, CURRENT_ROUTING_REVISION } = require(SRC);
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-routing-'));
 process.on('exit', () => fs.rmSync(tmp, { recursive: true, force: true }));
@@ -47,11 +47,13 @@ function setPreflight(root, perProvider) {
   assert.strictEqual(pointer.digest, init.digest);
 
   const config = JSON.parse(fs.readFileSync(path.join(root, 'routing', init.active_config), 'utf8'));
-  assert.strictEqual(config.revision, 1);
+  // init writes the current schema at the current revision — never a
+  // modern schema mislabeled revision 1.
+  assert.strictEqual(config.revision, CURRENT_ROUTING_REVISION);
   assert.deepStrictEqual(config.review_routing, {
-    claude: ['reviewer-sol', 'reviewer-gemini'],
+    claude: ['reviewer-sol-expert-rev', 'reviewer-gemini'],
     gpt: ['reviewer-claude', 'reviewer-gemini'],
-    gemini: ['reviewer-claude', 'reviewer-sol'],
+    gemini: ['reviewer-claude', 'reviewer-sol-expert-rev'],
   });
   assert.deepStrictEqual(config.bans, {
     haiku: 'never',
@@ -100,7 +102,7 @@ function setPreflight(root, perProvider) {
   assert.deepStrictEqual(effective.degraded_modes, []);
   assert.deepStrictEqual(effective.seat_substitutions, {});
   assert.deepStrictEqual(effective.notices, []);
-  assert.deepStrictEqual(effective.review_routing.claude, ['reviewer-sol', 'reviewer-gemini']);
+  assert.deepStrictEqual(effective.review_routing.claude, ['reviewer-sol-expert-rev', 'reviewer-gemini']);
   assert.ok(effective.seats['executor-sol'], 'seat table rides along');
   assert.strictEqual(effective.bans.review_floor_scale_down, 'never');
   assert.ok(!('base_review_routing' in effective), 'internal comparison surface is not printed');
@@ -161,7 +163,7 @@ function setPreflight(root, perProvider) {
 {
   const { root } = initTree('review-clean');
   setPreflight(root, { codex: { routing: 'present' }, gemini: { routing: 'present' } });
-  assert.strictEqual(run(['review-for', root, 'claude']).stdout.trim(), 'reviewer-sol');
+  assert.strictEqual(run(['review-for', root, 'claude']).stdout.trim(), 'reviewer-sol-expert-rev');
   assert.strictEqual(run(['review-for', root, 'gpt']).stdout.trim(), 'reviewer-claude');
   assert.strictEqual(run(['review-for', root, 'gemini']).stdout.trim(), 'reviewer-claude');
 
@@ -208,7 +210,7 @@ function setPreflight(root, perProvider) {
 
   const active = JSON.parse(run(['active', root]).stdout);
   assert.deepStrictEqual(active.degraded_modes, ['gemini_down'], 'unknown routing token routes as absent');
-  assert.strictEqual(run(['review-for', root, 'claude']).stdout.trim(), 'reviewer-sol');
+  assert.strictEqual(run(['review-for', root, 'claude']).stdout.trim(), 'reviewer-sol-expert-rev');
   assert.strictEqual(run(['review-for', root, 'gpt']).stdout.trim(), 'reviewer-claude');
   assert.strictEqual(run(['review-for', root, 'gemini']).stdout.trim(), 'reviewer-claude');
 }
