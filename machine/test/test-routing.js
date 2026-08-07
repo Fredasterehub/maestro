@@ -446,6 +446,73 @@ function setPreflight(root, perProvider) {
   assert.match(unpaired.stderr, /no pairing for author model "haiku"/);
 }
 
+// --- the qualification bound refuses scale-down, never relabels it -----------
+{
+  // The mission's own live lane state: gpt operator-down, gemini up. This
+  // is the configuration whose round-one behaviour — expert and apex
+  // claude work resolving reviewer-gemini labeled cross-family — violated
+  // the review-floor ban and disproved the N3/N4 deferral's bound.
+  const { root } = initTree('qualification-bound');
+  setPreflight(root, { codex: { routing: 'present' }, gemini: { routing: 'present' } });
+  fs.writeFileSync(
+    path.join(root, 'settings.json'),
+    JSON.stringify({ provider_lanes: { gpt: 'operator-down' } }) + '\n'
+  );
+
+  const standard = JSON.parse(run(['review-for', root, 'claude', 'standard', '--json']).stdout);
+  assert.strictEqual(standard.seat, 'reviewer-gemini', 'gemini keeps its remaining standard-and-below reviewer scope');
+  assert.strictEqual(standard.independence, 'cross-family');
+
+  const expert = JSON.parse(run(['review-for', root, 'claude', 'expert', '--json']).stdout);
+  assert.strictEqual(expert.seat, 'reviewer-degraded-sonnet', 'expert claude work skips the unqualified gemini reviewer and falls to the degraded path');
+  assert.strictEqual(expert.independence, 'degraded-path');
+
+  const apex = JSON.parse(run(['review-for', root, 'claude', 'apex', '--json']).stdout);
+  assert.strictEqual(apex.seat, 'reviewer-degraded-opus-apex', 'apex falls to the heavy-model degraded pairing, never a scaled-down cross-family claim');
+  assert.strictEqual(apex.independence, 'degraded-path');
+
+  // gpt- and gemini-authored work stays on the always-on claude floor at
+  // every class: reviewer-claude carries the apex bound until r4 splits
+  // the claude ladder, because the degraded path is claude-scoped.
+  assert.strictEqual(run(['review-for', root, 'gpt', 'apex']).stdout.trim(), 'reviewer-claude');
+  assert.strictEqual(run(['review-for', root, 'gemini', 'expert']).stdout.trim(), 'reviewer-claude');
+}
+
+// --- apex never scales down onto the expert review rung ----------------------
+{
+  // gpt lane up, gemini down: the only cross-family candidate for claude
+  // work is the expert rung, whose bound is expert — apex refuses it and
+  // degrades rather than resolve below its floor. r4's class-keyed ladders
+  // will route this to reviewer-sol-apex-rev instead.
+  const { root } = initTree('apex-floor');
+  setPreflight(root, { codex: { routing: 'present' }, gemini: { routing: 'absent' } });
+  assert.strictEqual(run(['review-for', root, 'claude', 'expert']).stdout.trim(), 'reviewer-sol-expert-rev');
+  const apex = JSON.parse(run(['review-for', root, 'claude', 'apex', '--json']).stdout);
+  assert.strictEqual(apex.seat, 'reviewer-degraded-opus-apex');
+  assert.strictEqual(apex.independence, 'degraded-path');
+}
+
+// --- the qualification table is validated, and inseparable from degraded_review ----
+{
+  const uncovered = buildDefaultConfig('2026-08-07');
+  delete uncovered.review_qualification['reviewer-gemini'];
+  const r1 = validateRoutingConfig(uncovered);
+  assert.strictEqual(r1.ok, false, 'a routed reviewer seat without a qualification bound must fail validation');
+  assert.ok(r1.errors.some((e) => /"reviewer-gemini" with no review_qualification entry/.test(e)), r1.errors.join('; '));
+
+  const badBound = buildDefaultConfig('2026-08-07');
+  badBound.review_qualification['reviewer-gemini'] = 'ultra';
+  const r2 = validateRoutingConfig(badBound);
+  assert.strictEqual(r2.ok, false, 'a bound outside the closed class vocabulary must fail validation');
+  assert.ok(r2.errors.some((e) => /review_qualification\.reviewer-gemini must be one of/.test(e)), r2.errors.join('; '));
+
+  const stripped = buildDefaultConfig('2026-08-07');
+  delete stripped.review_qualification;
+  const r3 = validateRoutingConfig(stripped);
+  assert.strictEqual(r3.ok, false, 'the two r3 blocks are one contract — neither fence can be stripped alone');
+  assert.ok(r3.errors.some((e) => /arrive together in the r2->r3 migration/.test(e)), r3.errors.join('; '));
+}
+
 // --- revise: a failed dated-config write consumes no immutable name ----------
 //
 // The failure is imposed from outside the process (RLIMIT_FSIZE of 0, with

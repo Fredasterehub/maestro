@@ -273,7 +273,11 @@ const DEGRADED_REVIEW_FALLBACK_NOTICE =
 // apex included, with its tier-scaled preferred reviewer by author model —
 // no ceiling field exists and no class holds by default. Row order within
 // apex is preference order: the fable-authored pairing is the canonical
-// apex authorship and is what an authorship-blind caller gets.
+// apex authorship and is what an authorship-blind caller gets. The
+// review_qualification table arrives in the same migration: the two blocks
+// are one contract (what the degraded path is, and when a cross-family
+// candidate must yield to it), and validation refuses a config carrying
+// one without the other.
 function migrateDegradedReview(config) {
   const out = JSON.parse(JSON.stringify(config));
   for (const table of ['seats', 'review_routing', 'degraded']) {
@@ -310,6 +314,23 @@ function migrateDegradedReview(config) {
       apex: { 'fable-5': 'reviewer-degraded-opus-apex', 'opus-5': 'reviewer-degraded-fable-apex' },
     },
   };
+  // Each cross-family reviewer's qualification bound — the highest class it
+  // may review (design §6.1; plan amendment "the N3/N4 deferral bound was
+  // false"). bans.review_floor_scale_down is a ban, not a schedule, so the
+  // bound ships with r3 rather than waiting for r4's class-keyed ladders,
+  // which supersede this narrower form. reviewer-gemini is standard-and-
+  // below by the 2026-08-07 operator restriction; reviewer-sol-expert-rev
+  // is the expert-review rung, so apex work never scales down onto it;
+  // reviewer-claude carries apex because until r4 splits the claude ladder
+  // it is the entire always-on floor for non-claude authors (§6.2), and
+  // bounding it lower would push gpt/gemini-authored work at a degraded
+  // path that is claude-scoped by design.
+  out.review_qualification = {
+    'reviewer-claude': 'apex',
+    'reviewer-sol-expert-rev': 'expert',
+    'reviewer-sol-apex-rev': 'apex',
+    'reviewer-gemini': 'standard',
+  };
   out.revision = 3;
   return out;
 }
@@ -337,7 +358,7 @@ function buildDefaultConfig(dateStr) {
 
 // --- read boundary -----------------------------------------------------------
 
-function checkReviewRouting(table, label, seats, degradedRowSeats, errors) {
+function checkReviewRouting(table, label, seats, degradedRowSeats, qualification, errors) {
   if (!isPlainObject(table)) {
     errors.push(`${label} must be an object`);
     return;
@@ -377,6 +398,12 @@ function checkReviewRouting(table, label, seats, degradedRowSeats, errors) {
       // is refused by name as well.
       if (degradedRowSeats.has(seatName) || seatName.startsWith('reviewer-degraded-')) {
         errors.push(`${label}.${family} names degraded reviewer seat "${seatName}", which never appears in a cross-family row`);
+      }
+      // Where the config carries the qualification table (r3+), every seat
+      // a row can route must carry a bound — an unbounded routed reviewer
+      // would fail the review-floor ban open at resolution time.
+      if (qualification !== null && !Object.prototype.hasOwnProperty.call(qualification, seatName)) {
+        errors.push(`${label}.${family} names seat "${seatName}" with no review_qualification entry — a routed reviewer without a qualification bound would fail the review-floor ban open`);
       }
     }
   }
@@ -478,10 +505,37 @@ function validateRoutingConfig(config) {
       }
     }
   }
-  checkReviewRouting(config.review_routing, 'review_routing', seats, degradedRowSeats, errors);
-  // The block arrives with the r2->r3 migration; configs at earlier
-  // revisions (including rolled-back ones) carry none and stay valid.
-  if (Object.prototype.hasOwnProperty.call(config, 'degraded_review')) {
+  // degraded_review and review_qualification arrive together in the r2->r3
+  // migration and are one contract — what the degraded path is, and when a
+  // cross-family candidate must yield to it. Configs at earlier revisions
+  // (including rolled-back ones) carry neither and stay valid; a config
+  // carrying one without the other is hand-shaped and refused, so neither
+  // fence can be stripped alone.
+  const hasDegradedReview = Object.prototype.hasOwnProperty.call(config, 'degraded_review');
+  const hasQualification = Object.prototype.hasOwnProperty.call(config, 'review_qualification');
+  if (hasDegradedReview !== hasQualification) {
+    errors.push('degraded_review and review_qualification arrive together in the r2->r3 migration — a config carrying one without the other is refused');
+  }
+  let qualification = null;
+  if (hasQualification) {
+    if (!isPlainObject(config.review_qualification)) {
+      errors.push('review_qualification must be an object mapping reviewer seats to the highest class each may review');
+    } else {
+      qualification = config.review_qualification;
+      for (const [seatName, bound] of Object.entries(qualification)) {
+        if (!Object.prototype.hasOwnProperty.call(seats, seatName)) {
+          errors.push(`review_qualification names unknown seat "${seatName}"`);
+        } else if (isPlainObject(seats[seatName]) && 'alias_of' in seats[seatName]) {
+          errors.push(`review_qualification names alias seat "${seatName}", which is never routable`);
+        }
+        if (!BRIEF_TIER_VALUES.has(bound)) {
+          errors.push(`review_qualification.${seatName} must be one of ${[...BRIEF_TIER_VALUES].join(', ')} (got ${JSON.stringify(bound)})`);
+        }
+      }
+    }
+  }
+  checkReviewRouting(config.review_routing, 'review_routing', seats, degradedRowSeats, qualification, errors);
+  if (hasDegradedReview) {
     checkDegradedReviewBlock(config.degraded_review, seats, errors);
   }
   // A tiers block arrives at a later revision; where one is present, its
@@ -534,7 +588,7 @@ function validateRoutingConfig(config) {
       // degraded table is a read-boundary risk like any other.
       const preflightDriven = PROVIDER_MODES.some(([, name]) => name === modeName);
       if (preflightDriven || Object.prototype.hasOwnProperty.call(table, 'review_routing')) {
-        checkReviewRouting(table.review_routing, `degraded.${modeName}.review_routing`, seats, degradedRowSeats, errors);
+        checkReviewRouting(table.review_routing, `degraded.${modeName}.review_routing`, seats, degradedRowSeats, qualification, errors);
       }
     }
   }
@@ -741,6 +795,7 @@ function effectiveRouting(treeRoot) {
     review_routing: composeReviewRouting(config, modes),
     bans: config.bans,
     degraded_review: isPlainObject(config.degraded_review) ? config.degraded_review : null,
+    review_qualification: isPlainObject(config.review_qualification) ? config.review_qualification : null,
     capability,
     base_review_routing: config.review_routing,
     // Read in the same settings snapshot as provider_lanes, so one
@@ -971,6 +1026,19 @@ function refuseLaundering(independence, reviewerFamily, authorFamily) {
   }
 }
 
+// The closed class vocabulary in ascending capability order — its own
+// declaration order in validators.js. A qualification bound names the
+// highest class a reviewer seat may review; recon and mechanical share
+// standard-review (design §6), so a "standard" bound covers all three.
+const CLASS_ORDER = [...BRIEF_TIER_VALUES];
+
+// True only when the bound is a known class at or above the task class: an
+// absent or malformed bound is never rounded up, so a seat the table does
+// not cover fails closed out of the cross-family path.
+function classWithinBound(taskClass, bound) {
+  return CLASS_ORDER.indexOf(taskClass) <= CLASS_ORDER.indexOf(bound);
+}
+
 // A candidate is capability-unavailable only on a recorded claim: preflight
 // wrote a models map for its provider, that map tracks the seat's exact
 // model, and the entry is not "present" (unknown routes as unavailable and
@@ -1022,27 +1090,39 @@ function reviewFor(treeRoot, authorFamily, taskClass, authorModel) {
     routing_digest: effective.active_digest,
   };
 
-  // CLASS-BLIND UNTIL r4 (recorded deferral: the plan amendment
-  // "class-keyed cross-family review is r4's content, not r3's" at the end
-  // of execution-plan.md). review_routing is not class-keyed at r3, so this
-  // loop consults the author family's row alone and taskClass never narrows
-  // it: an apex resolution can be labeled cross-family here without its
-  // class floor having been checked (review finding N3), and gemini's
-  // expert/apex reviewer disqualification has no data to consult (N4).
-  // r4's class-keyed rows close both; until they land, the exposure is
-  // bounded by data, not by this code — the gpt lane is operator-down and
-  // gemini is reviewer-restricted for this mission, so no live resolution
-  // reaches a cross-family reviewer at all.
+  // Class-aware through the qualification bound (r3; the plan amendment
+  // "the N3/N4 deferral bound was false" at the end of execution-plan.md).
+  // review_routing rows are still not class-keyed at r3 — r4's class-keyed
+  // ladders own that and supersede this narrower form — but every seat a
+  // row can route carries a review_qualification bound, and a candidate
+  // whose bound the task class exceeds is refused from this path rather
+  // than the floor scaled down: bans.review_floor_scale_down is a ban, not
+  // a schedule. Expert and apex claude-authored work with no qualified
+  // cross-family reviewer therefore falls to the explicit degraded
+  // transition below, which is the outcome step 4b's gate fixtures
+  // predict. Configs from before the table (r1/r2) carry no bounds and no
+  // filter — honest to what their revision's law actually was.
+  const qualification = effective.review_qualification;
   for (const candidate of effective.review_routing[authorFamily]) {
     const resolved = Object.prototype.hasOwnProperty.call(subs, candidate) ? subs[candidate] : candidate;
     const seat = seats[resolved];
     if (!isPlainObject(seat) || 'alias_of' in seat) continue; // never routable; validation refuses configs that ship this
     if (capabilityUnavailable(seat, effective.capability)) continue;
+    // Family establishment precedes every later filter: a resolved seat
+    // whose family cannot be established refuses outright (N5) instead of
+    // slipping into the qualification skip below and resolving as a
+    // lawful-looking degraded transition.
+    if (typeof seat.family !== 'string' || seat.family === '') {
+      refuseLaundering('cross-family', seat.family, authorFamily);
+    }
     // Post-substitution family re-check: a candidate whose resolved seat
     // lands in the author's own family can never serve the cross-family
     // path. It is dropped here; the explicit degraded transition below is
     // the only door through which this work meets a same-family reviewer.
     if (seat.family === authorFamily) continue;
+    // The qualification refusal: post-substitution, so a substitute seat is
+    // held to the same bound the row seat would have been.
+    if (qualification !== null && !classWithinBound(taskClass, qualification[resolved])) continue;
     const bundle = {
       seat: resolved,
       requested_seat: candidate,
@@ -1178,12 +1258,15 @@ commands:
               no recorded preflight applies no probe-driven degradation),
               and prints the effective routing JSON: seats,
               seat_substitutions, review_routing, bans, degraded_modes,
-              notices, provider_lanes, capability, degraded_review.
+              notices, provider_lanes, capability, degraded_review,
+              review_qualification.
   review-for  resolves the reviewer for work authored by <author_family>
               (claude | gpt | gemini) at [class] (recon | mechanical |
-              standard | expert | apex; defaults to standard), author-aware:
-              lane-or-capability-unavailable candidates and candidates of
-              the author's own effective family are dropped, the first
+              standard | expert | apex; defaults to standard), author- and
+              class-aware: lane-or-capability-unavailable candidates,
+              candidates of the author's own effective family, and
+              candidates whose review_qualification bound the class exceeds
+              (the review floor is never scaled down) are dropped, the first
               remaining cross-family candidate wins, and otherwise the
               resolution falls to the explicit degraded path — tier-scaled
               through every class, apex included, labeled independence
