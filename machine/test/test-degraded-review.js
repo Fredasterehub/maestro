@@ -318,13 +318,12 @@ const BRIEF = {
 
   for (const exp of expectations) {
     const label = `${exp.klass}${exp.authorModel ? ` (author ${exp.authorModel})` : ''}`;
-    // Resolving does not throw under this tree's fixtures. This is NOT a
-    // test of "never held for preferred-model unavailability" — nothing here
-    // ever makes the preferred partner unavailable, since routing.js has no
-    // such signal for a Claude model (Claude is the runtime; no probe
-    // represents it) — it is the same doesNotThrow (E) and (B)/(C) already
-    // establish for this tree, restated so the fallback-field reads below
-    // are against a bundle this file actually produced.
+    // A plain call, not wrapped in assert.doesNotThrow: nothing here ever
+    // makes the preferred partner unavailable (routing.js has no such signal
+    // for a Claude model — Claude is the runtime; no probe represents it),
+    // so an assertion phrased as "never throws for preferred-model
+    // unavailability" would prove nothing about that claim. What this loop
+    // actually needs is a real bundle to read the fallback field off, below.
     const bundle = reviewFor(root, 'claude', exp.klass, exp.authorModel);
     assert.strictEqual(bundle.independence, 'degraded-path');
     // The bundle's static fallback field, checked against the design's table
