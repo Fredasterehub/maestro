@@ -354,4 +354,4 @@ if (require.main === module) {
   main(process.argv.slice(2));
 }
 
-module.exports = { run, PROBE_TIMEOUT_MS };
+module.exports = { run, PROBE_TIMEOUT_MS, PROVIDER_MODEL_IDS };
