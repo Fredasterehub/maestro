@@ -66,6 +66,34 @@ function pairFrom(observed) {
   return { routing: observed === 'present' ? 'present' : 'absent', observed };
 }
 
+// Design §11.1: exact model x effort capability, per provider. Keys are the
+// model ids this repository's own roster already names for that provider
+// (design §6.1/§11.1) — used only as map keys, never as evidence of status.
+// `status` is 'present'/'absent' only when a current authenticated
+// discovery surface this repository already supports actually reported it;
+// it is never inferred from a model name, from the provider CLI being
+// installed or authenticated, or from this very roster. No such per-model
+// discovery surface exists in this repository today (the codex/gemini/
+// antigravity probes above measure CLI presence and, for codex, login
+// status — never a model catalog), so every entry below stays 'unknown'
+// with no proven efforts until one is added; that is a passing, honest
+// result for this step, not a gap. `unknown` extends the same tri-state
+// discipline as the routing/observed pair: it routes as unavailable but is
+// never rewritten to 'absent' or 'present'.
+const PROVIDER_MODEL_IDS = {
+  codex: ['gpt-5.6-luna', 'gpt-5.6-terra', 'gpt-5.6-sol'],
+  gemini: ['gemini-3.1-pro-preview'],
+  antigravity: [],
+};
+
+function buildModelsMap(providerKey) {
+  const models = {};
+  for (const modelId of PROVIDER_MODEL_IDS[providerKey] || []) {
+    models[modelId] = { status: 'unknown', efforts: [] };
+  }
+  return models;
+}
+
 function probeNode() {
   const version = execProbe('node', ['--version']);
   const observed = observePresence(version);
@@ -75,20 +103,26 @@ function probeNode() {
 function probeCodex() {
   const version = execProbe('codex', ['--version']);
   const versionObserved = observePresence(version);
+  const models = buildModelsMap('codex');
   if (versionObserved !== 'present') {
     // auth: null means NOT COMPUTED — the auth check never ran, which is a
     // different recorded fact from "ran and failed".
-    return { ...pairFrom(versionObserved), version: null, checks: { version, auth: null } };
+    return { ...pairFrom(versionObserved), version: null, checks: { version, auth: null }, models };
   }
   const auth = execProbe('codex', ['login', 'status']);
   const observed = observeSemantic(auth);
-  return { ...pairFrom(observed), version: version.firstLine, checks: { version, auth } };
+  return { ...pairFrom(observed), version: version.firstLine, checks: { version, auth }, models };
 }
 
 function probeGemini() {
   const version = execProbe('gemini', ['--version']);
   const observed = observePresence(version);
-  return { ...pairFrom(observed), version: observed === 'present' ? version.firstLine : null, checks: { version } };
+  return {
+    ...pairFrom(observed),
+    version: observed === 'present' ? version.firstLine : null,
+    checks: { version },
+    models: buildModelsMap('gemini'),
+  };
 }
 
 // Antigravity is its own capability pair, probed the same presence-only way
@@ -97,7 +131,12 @@ function probeGemini() {
 function probeAntigravity() {
   const version = execProbe('antigravity', ['--version']);
   const observed = observePresence(version);
-  return { ...pairFrom(observed), version: observed === 'present' ? version.firstLine : null, checks: { version } };
+  return {
+    ...pairFrom(observed),
+    version: observed === 'present' ? version.firstLine : null,
+    checks: { version },
+    models: buildModelsMap('antigravity'),
+  };
 }
 
 function probeGit(projectDir) {
@@ -142,11 +181,13 @@ function run(treeRoot) {
     node: probeNode(),
     providers: { codex, gemini, antigravity },
     // The bare routing surface routing.js keys degraded modes off — the
-    // same pairs as providers.*, without the probe detail.
+    // same pairs as providers.*, without the probe detail, plus the exact
+    // model x effort map (design §11.1) so a future consumer never has to
+    // distinguish "no map" from "empty map" for any probed provider.
     per_provider: {
-      codex: { routing: codex.routing, observed: codex.observed },
-      gemini: { routing: gemini.routing, observed: gemini.observed },
-      antigravity: { routing: antigravity.routing, observed: antigravity.observed },
+      codex: { routing: codex.routing, observed: codex.observed, models: codex.models },
+      gemini: { routing: gemini.routing, observed: gemini.observed, models: gemini.models },
+      antigravity: { routing: antigravity.routing, observed: antigravity.observed, models: antigravity.models },
     },
     // The project is the tree root's parent.
     git: probeGit(path.dirname(root)),
@@ -191,6 +232,17 @@ function describe(name, cap, extra) {
   return `  ${name.padEnd(7)} ${measured}${extra ? ` — ${extra}` : ''}\n`;
 }
 
+// One line per tracked model id, e.g. "gpt-5.6-luna:unknown[]" — printed
+// even when every entry is unknown, so the exact-capability shape is visible
+// in the human-readable summary the same way it is in state.json, and an
+// empty map (a provider with no tracked model id) prints its own explicit
+// marker rather than silently vanishing.
+function describeModels(models) {
+  const entries = Object.entries(models);
+  if (entries.length === 0) return '(no tracked models)';
+  return entries.map(([id, m]) => `${id}:${m.status}[${m.efforts.join(',')}]`).join(', ');
+}
+
 function renderSummary(block) {
   let out = `preflight @ ${block.checked_ts}\n`;
   out += describe('node', block.node, block.node.version);
@@ -204,6 +256,7 @@ function renderSummary(block) {
           ? 'CLI present, not authenticated'
           : 'CLI present, auth check inconclusive';
   out += describe('codex', codex, codexExtra);
+  out += `    models: ${describeModels(codex.models)}\n`;
   const antigravity = block.providers.antigravity;
   // The gemini seat's routing prefers antigravity over the gemini CLI when
   // antigravity's routing token reads "present" — recorded here so the
@@ -216,7 +269,9 @@ function renderSummary(block) {
     .filter((part) => part !== null)
     .join(', ');
   out += describe('gemini', block.providers.gemini, geminiExtra === '' ? null : geminiExtra);
+  out += `    models: ${describeModels(block.providers.gemini.models)}\n`;
   out += describe('antigravity', antigravity, antigravity.version);
+  out += `    models: ${describeModels(antigravity.models)}\n`;
   out += describe('git', block.git, block.git.observed === 'present' ? 'inside a work tree' : null);
   out += describe('gh', block.gh, block.gh.observed === 'present' ? 'authenticated' : null);
   return out;
@@ -245,11 +300,25 @@ observed: present|absent|unknown }: a probe that errors unexpectedly
 (timeout, signal, crash) is observed "unknown" and routes as absent —
 degraded, but never silently rounded down to a measured absence.
 
+codex, gemini, and antigravity additionally carry an exact model x effort
+capability map: models: { <model-id>: { status: present|absent|unknown,
+efforts: [...] } }, one entry per model id this repository's own roster
+tracks for that provider (empty map for a provider with no tracked model
+id — never absent as a key, so a consumer never has to tell "no map" apart
+from "empty map"). status is present/absent only when a current
+authenticated discovery surface this repository already supports actually
+reported it — never inferred from a model name, an installed CLI, or the
+roster itself. No such per-model discovery surface exists in this repository
+today, so every entry ships "unknown" with efforts: [] — unknown extends the
+same tri-state discipline as routing/observed: it routes as unavailable but
+is never rewritten to "absent" or "present".
+
 Writes state.json.preflight { checked_ts, node,
-providers: { codex, gemini, antigravity },
-per_provider (the bare routing pairs routing.js keys degraded modes off),
-git, gh } and appends one ledger record of kind "preflight" (this script is
-the sole writer of both). Prints a human-readable summary.
+providers: { codex, gemini, antigravity } (each with checks, version, and
+models), per_provider (the bare routing pairs routing.js keys degraded modes
+off, plus models), git, gh } and appends one ledger record of kind
+"preflight" (this script is the sole writer of both). Prints a
+human-readable summary, including each tracked model's status and efforts.
 
 Exit 0 always when the tree exists — preflight reports, it does not gate.
 Exit 1 only for usage errors or a missing/unscaffolded tree.

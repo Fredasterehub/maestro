@@ -75,10 +75,21 @@ function assertPair(cap, routing, observed, label) {
   assert.strictEqual(cap.observed, observed, `${label} observed`);
 }
 
+// Model-shape assertions, applied to any provider's capability record:
+// every entry is an object with a tri-state status that is never rounded
+// to "present" without discovery, and efforts is always an array.
+function assertModelsShape(models, label) {
+  assert.ok(models !== null && typeof models === 'object' && !Array.isArray(models), `${label} models must be an object`);
+  for (const [modelId, entry] of Object.entries(models)) {
+    assert.ok(['present', 'absent', 'unknown'].includes(entry.status), `${label}.${modelId} status must be tri-state`);
+    assert.ok(Array.isArray(entry.efforts), `${label}.${modelId} efforts must always be an array`);
+  }
+}
+
 // Case A: codex/gemini/antigravity/git/gh all off PATH — measured absence
 // everywhere.
 {
-  const { block } = runPreflight({ path: nodeDir, vars: {} });
+  const { cli, block } = runPreflight({ path: nodeDir, vars: {} });
   assertPair(block.node, 'present', 'present', 'A node');
   assertPair(block.providers.codex, 'absent', 'absent', 'A codex');
   assert.strictEqual(block.providers.codex.checks.auth, null, 'A: auth never ran, so it is null (NOT COMPUTED)');
@@ -87,6 +98,38 @@ function assertPair(cap, routing, observed, label) {
   assertPair(block.git, 'absent', 'absent', 'A git');
   assertPair(block.gh, 'absent', 'absent', 'A gh');
   assert.match(block.checked_ts, /^\d{4}-\d{2}-\d{2}T.*Z$/);
+
+  // Exact model x effort shape (design §11.1): present for every probed
+  // provider (codex, gemini, antigravity), in both the detailed record and
+  // the bare per_provider record, and never "no map" even when a provider
+  // has no tracked model id.
+  for (const providerKey of ['codex', 'gemini', 'antigravity']) {
+    assertModelsShape(block.providers[providerKey].models, `A providers.${providerKey}`);
+    assertModelsShape(block.per_provider[providerKey].models, `A per_provider.${providerKey}`);
+    assert.deepStrictEqual(
+      block.per_provider[providerKey].models,
+      block.providers[providerKey].models,
+      `A per_provider.${providerKey}.models mirrors providers.${providerKey}.models`
+    );
+  }
+  assert.ok(
+    Object.keys(block.providers.codex.models).length > 0,
+    'A codex tracks at least one model id'
+  );
+
+  // An absent provider (codex here) yields model entries that are never
+  // "present" — no authenticated discovery surface exists in this repo
+  // today for any provider, so codex's entries stay "unknown", not
+  // fabricated from the CLI being absent.
+  for (const entry of Object.values(block.providers.codex.models)) {
+    assert.notStrictEqual(entry.status, 'present', 'A codex model status is never present without discovery');
+    assert.strictEqual(entry.status, 'unknown', 'A codex model status stays unknown, never rounded to absent/present');
+    assert.deepStrictEqual(entry.efforts, [], 'A codex model efforts is an empty array, not fabricated');
+  }
+
+  // unknown survives into the printed summary too, never silently rounded.
+  assert.match(cli.stdout, /gpt-5\.6-luna:unknown\[\]/, 'A: unknown status renders in the summary');
+  assert.match(cli.stdout, /models: \(no tracked models\)/, 'A: antigravity has no tracked model id today');
 }
 
 // Case B: all three fake CLIs healthy and authenticated — measured presence,
@@ -103,6 +146,17 @@ function assertPair(cap, routing, observed, label) {
   assert.match(cli.stdout, /codex\s+present/);
   assert.match(cli.stdout, /gemini\s+present.*prefers antigravity/, 'B: preference recorded on the gemini line');
   assert.match(cli.stdout, /antigravity\s+present/);
+
+  // A present provider still carries only "unknown" model entries: CLI
+  // presence/auth is not a model-level discovery surface, so status is
+  // never inferred from it — through a full run and through the summary.
+  for (const providerKey of ['codex', 'gemini', 'antigravity']) {
+    assertModelsShape(block.providers[providerKey].models, `B providers.${providerKey}`);
+    for (const entry of Object.values(block.providers[providerKey].models)) {
+      assert.strictEqual(entry.status, 'unknown', `B ${providerKey} model status stays unknown despite CLI presence`);
+    }
+  }
+  assert.match(cli.stdout, /gpt-5\.6-sol:unknown\[\]/, 'B: unknown status renders in the summary even when codex is present');
 }
 
 // Case B2: gemini present, antigravity absent — no preference is recorded,
