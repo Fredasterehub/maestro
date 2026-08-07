@@ -1705,6 +1705,56 @@ const mxGateSeq = fx.runGreenGate(root, 'mx', 'tests', mxRepo);
   assert.match(r.stderr, /is the first for review route \d+ and claims to supersede seq 0/);
 }
 
+// --- close: overturn evidence may not skip the identity binding by omission --
+// gate.js always records the identity fields, so a green gate that carries
+// none of them in a stream where every lawful gate does is a hand-append, and
+// omission would otherwise be the cheapest way past "the evidence must be
+// about the artifact the finding judged". Bounded exactly as the gate check is.
+{
+  openM('mevo');
+  const repo = fx.newWorkRepo(tmp);
+  const identity = fx.artifactIdentity(repo);
+  const chain = fx.reserveChain(root, 'mevo', identity);
+  const revise = fx.recordReview(root, 'mevo', {
+    review_route_seq: chain.reviewSeq,
+    review_dispatch_seq: chain.reviewSeq,
+    verdict: 'revise',
+    artifact_identity: identity,
+  });
+  assert.strictEqual(revise.status, 0, revise.stderr);
+  const reviseSeq = JSON.parse(revise.stdout).ledger_seq;
+  const blindSeq = appendRaw('gate', 'mevo', {
+    gate_id: 'tests',
+    cmd: ['true'],
+    exit_code: 0,
+    mission_id: 'mevo',
+  }).seq;
+  assert.ok(blindSeq > reviseSeq, 'the blind gate postdates the finding, so only the omission is under test');
+
+  // the writer refuses it
+  const overturn = {
+    review_route_seq: chain.reviewSeq,
+    review_dispatch_seq: chain.reviewSeq,
+    verdict: 'approve',
+    artifact_identity: identity,
+    supersedes_seq: reviseSeq,
+    reason: 'answered by a gate that names no artifact',
+    evidence_seq: blindSeq,
+  };
+  const refused = fx.recordReview(root, 'mevo', overturn);
+  assert.strictEqual(refused.status, 1, 'an identity-less gate is not overturn evidence');
+  assert.match(refused.stderr, /carries no artifact identity although this stream's gate records have carried one since seq \d+/);
+
+  // and so does close, when the same record is appended past the writer
+  appendRaw('review-outcome', 'mevo', { mission_id: 'mevo', ...overturn });
+  const gateSeq = fx.runGreenGate(root, 'mevo', 'tests', repo);
+  fx.land(repo, 'merge');
+  const r = fx.runClose(root, 'mevo', repo, fx.closeInputOf(chain, gateSeq));
+  assert.strictEqual(r.status, 1, 'close re-derives the same bound');
+  assert.match(r.stderr, /carries no artifact identity although this stream's gate records have carried one since seq \d+/);
+  assert.strictEqual(stateOf().missions.mevo.status, 'open');
+}
+
 // --- close: a dishonest green under another name is as unanswered as a red ---
 {
   openM('mhon');

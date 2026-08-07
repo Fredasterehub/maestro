@@ -405,6 +405,29 @@ const REASON_CEILING = 200;
 // close-side re-derivation of the same chain (the writer can be bypassed by a
 // hand-append, so the weaker copy would be the one that mattered), and the
 // route-superseded escape a standing revise on another route is cleared by.
+
+// Whether a gate record carries the §7 identity fields at all. gate.js always
+// writes them, so a record without either is either older than the field or a
+// hand-append; the seq of the first one that carries them is what bounds the
+// tolerance extended to the former.
+function identityCarryingGate(record) {
+  return (
+    Object.prototype.hasOwnProperty.call(record, 'artifact_identity') ||
+    Object.prototype.hasOwnProperty.call(record, 'identity_check')
+  );
+}
+
+function firstIdentityCarryingGateSeq(records) {
+  let first = null;
+  for (const record of records) {
+    if (!isPlainObject(record) || record.kind !== 'gate') continue;
+    if (!Number.isSafeInteger(record.seq) || record.seq < 0) continue;
+    if (!identityCarryingGate(record)) continue;
+    if (first === null || record.seq < first) first = record.seq;
+  }
+  return first;
+}
+
 function checkOverturnEvidence(records, missionId, evidenceSeq, answered, who, what) {
   const answeredSeq = answered.seq;
   if (!Number.isSafeInteger(evidenceSeq) || evidenceSeq < 0) {
@@ -433,8 +456,19 @@ function checkOverturnEvidence(records, missionId, evidenceSeq, answered, who, w
     );
   }
   // A gate record from before identities were carried names no artifact and
-  // claims nothing either way (the same tolerance checkGateIdentity extends);
-  // one that does name an artifact must name the judged one.
+  // claims nothing either way — the same tolerance checkGateIdentity extends,
+  // and the same BOUND: once any gate record in this stream carries the
+  // fields, a later field-less one is an omission, not a legacy record, and
+  // omission would otherwise be the cheapest way to skip this binding
+  // entirely. A record that does name an artifact must name the judged one.
+  if (!identityCarryingGate(evidence)) {
+    const firstCarrying = firstIdentityCarryingGateSeq(records);
+    if (firstCarrying !== null && evidence.seq > firstCarrying) {
+      throw new Error(
+        `mission: ${who} refused — ${what} cites gate record ${evidenceSeq}, which carries no artifact identity although this stream's gate records have carried one since seq ${firstCarrying}; an omission is not a legacy record`
+      );
+    }
+  }
   if (isPlainObject(evidence.artifact_identity) && isPlainObject(answered.artifact_identity)) {
     const differ = IDENTITY_FIELDS.filter(
       (field) => evidence.artifact_identity[field] !== answered.artifact_identity[field]
@@ -995,21 +1029,8 @@ function reviewedIdentityOf(reviewRoute, reviewRouteSeq) {
 // the run — the same rule check-honesty applies, so close and the audit agree
 // on the same record.
 function checkGateIdentity(gate, reviewedIdentity, gateSeq, records) {
-  const hasIdentity = Object.prototype.hasOwnProperty.call(gate, 'artifact_identity');
-  const hasCheck = Object.prototype.hasOwnProperty.call(gate, 'identity_check');
-  if (!hasIdentity && !hasCheck) {
-    let firstCarrying = null;
-    for (const record of records) {
-      if (!isPlainObject(record) || record.kind !== 'gate') continue;
-      if (!Number.isSafeInteger(record.seq) || record.seq < 0) continue;
-      if (
-        !Object.prototype.hasOwnProperty.call(record, 'artifact_identity') &&
-        !Object.prototype.hasOwnProperty.call(record, 'identity_check')
-      ) {
-        continue;
-      }
-      if (firstCarrying === null || record.seq < firstCarrying) firstCarrying = record.seq;
-    }
+  if (!identityCarryingGate(gate)) {
+    const firstCarrying = firstIdentityCarryingGateSeq(records);
     if (firstCarrying !== null && gate.seq > firstCarrying) {
       throw new Error(
         `mission: close refused — gate record at seq ${gateSeq} carries no artifact identity although this stream's gate records have carried one since seq ${firstCarrying}; an omission is not a legacy record`
