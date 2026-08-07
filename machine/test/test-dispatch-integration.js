@@ -7,16 +7,15 @@
 // coverage on top of test-route.js's unit-level shape/refusal tests, not a
 // replacement for them.
 //
-// Three pieces of the documented flow are NOT tested here because they are
-// not yet real at this base (see the plan correction appended to
-// execution-plan.md from this step's consult):
-//   - roster.js register does not accept route_seq and appends nothing to
-//     the ledger, so the four-way ledger order (route, registration, review
-//     route, review) is provable only for its route/review-route/review
-//     half; registration's position is timestamp evidence read from
-//     roster.json, not a refusal the machine performs — nothing in
-//     roster.js consults a route, so nothing there could refuse one out of
-//     order.
+// The four-way ledger order (author route, roster dispatch, review route,
+// review) was deferred out of Slice 2d because roster.js appended nothing to
+// the ledger then, so a roster record was not nameable at all. Slice 7a makes
+// that record exist, and the deferred assertion lands below — all four found
+// by scanning ledger.jsonl and chained through their own cross references,
+// never through the objects the writers returned.
+//
+// Two pieces of the documented flow are still NOT tested here because they are
+// not yet real at this base:
 //   - mission.js close is being rewritten in a parallel step and does not
 //     yet compare artifact identities at close; only reserve-review's own
 //     refusals (below) are tested here, not close's.
@@ -197,17 +196,17 @@ function reviewInput(missionId, authorRoute, identity, overrides) {
   assert.strictEqual(authorRoute.kind, 'route');
   assert.strictEqual(authorRoute.phase, 'author');
 
-  // 4-5: spawn (simulated), then roster registration. roster.js register
-  // carries no route_seq yet (Slice 2c) and appends nothing to the ledger
-  // (Slice 7a), so nothing in the machine could refuse a register call that
-  // arrived before the route — the timestamp check below is evidence this
-  // test's own calls landed in the documented order, never a proof that an
-  // out-of-order call would be refused.
+  // 4-5: spawn (simulated), then roster registration naming the route it was
+  // spawned under. Since Slice 7a that reference is resolved, not merely
+  // stored: register sources the dispatch record from the route record, so a
+  // registration arriving before its route is refused outright rather than
+  // just timestamped oddly.
   const authorReg = run(ROSTER, ['register', root], {
     seat: 'executor-sol-expert',
     task_id: `${m}-author`,
     family: 'gpt',
     mission_id: m,
+    route_seq: authorRoute.seq,
   });
   assert.strictEqual(authorReg.status, 0, authorReg.stderr);
   const authorEntry = JSON.parse(authorReg.stdout);
@@ -222,7 +221,11 @@ function reviewInput(missionId, authorRoute, identity, overrides) {
   const identity = artifactIdentity(worktree);
   assert.strictEqual(identity.dirty, false);
 
-  const reviewRoute = reserveReview(root, reviewInput(m, authorRoute, identity));
+  const authorDispatchSeq = ledger(root).find((r) => r.kind === 'dispatch' && r.task_id === `${m}-author`).seq;
+  const reviewRoute = reserveReview(
+    root,
+    reviewInput(m, authorRoute, identity, { author_dispatch_seq: authorDispatchSeq })
+  );
   assert.strictEqual(reviewRoute.kind, 'route');
   assert.strictEqual(reviewRoute.phase, 'review');
   assert.deepStrictEqual(reviewRoute.artifact_identity, identity);
@@ -234,6 +237,7 @@ function reviewInput(missionId, authorRoute, identity, overrides) {
     task_id: `${m}-review`,
     family: 'claude',
     mission_id: m,
+    route_seq: reviewRoute.seq,
   });
   assert.strictEqual(reviewReg.status, 0, reviewReg.stderr);
   const reviewEntry = JSON.parse(reviewReg.stdout);
@@ -272,6 +276,60 @@ function reviewInput(missionId, authorRoute, identity, overrides) {
     new Date(reviewRosterEntry.spawned_ts).getTime() >= new Date(authorRosterEntry.spawned_ts).getTime(),
     'the review dispatch registers no earlier than the author dispatch'
   );
+
+  // 7: the reviewer's verdict, the last of the four records.
+  const reviewDispatchSeq = ledger(root).find((r) => r.kind === 'dispatch' && r.task_id === `${m}-review`).seq;
+  const verdict = run(MISSION, ['record-review', root, m], {
+    review_route_seq: reviewRoute.seq,
+    review_dispatch_seq: reviewDispatchSeq,
+    verdict: 'approve',
+    artifact_identity: identity,
+  });
+  assert.strictEqual(verdict.status, 0, verdict.stderr);
+
+  // === the four-way ledger order (deferred here from Slice 2d) =============
+  // Author route -> roster dispatch -> review route -> review, every one of
+  // them located by scanning ledger.jsonl and chained to the previous one
+  // through the reference the RECORD carries, never through a seq still held
+  // in a local from a writer's return value. A version of this assertion that
+  // read the returned objects would be checking the order this test made its
+  // own calls in, which no reordering of the machine could ever falsify.
+  const disk = ledger(root);
+  const one = disk.find((r) => r.kind === 'route' && r.phase === 'author' && r.mission_id === m);
+  assert.ok(one, '1: the author route is on the ledger');
+
+  const two = disk.find((r) => r.kind === 'dispatch' && r.phase === 'author' && r.route_seq === one.seq);
+  assert.ok(two, '2: the roster dispatch names the author route it was spawned under');
+  assert.strictEqual(two.task_id, `${m}-author`);
+  assert.strictEqual(two.seat, one.resolved_seat, 'the dispatch record is sourced from that route');
+  assert.strictEqual(two.family, one.author_family);
+  assert.strictEqual(two.class, one.task_class);
+
+  const three = disk.find((r) => r.kind === 'route' && r.phase === 'review' && r.author_route_seq === one.seq);
+  assert.ok(three, '3: the review route names the author route');
+  assert.strictEqual(three.author_dispatch_seq, two.seq, 'and names the dispatch that produced what it reviews');
+
+  const four = disk.find((r) => r.kind === 'review-outcome' && r.review_route_seq === three.seq);
+  assert.ok(four, '4: the verdict names the review route');
+
+  const chain = [one, two, three, four];
+  for (let i = 1; i < chain.length; i++) {
+    assert.ok(
+      chain[i].seq > chain[i - 1].seq,
+      `on disk, record ${i + 1} (${chain[i].kind}) must follow record ${i} (${chain[i - 1].kind}) — got seq ${chain[i].seq} after ${chain[i - 1].seq}`
+    );
+    assert.ok(
+      new Date(chain[i].ts).getTime() >= new Date(chain[i - 1].ts).getTime(),
+      `on disk, record ${i + 1} (${chain[i].kind}) must be timestamped at or after record ${i}`
+    );
+  }
+
+  // The review dispatch sits inside that order too, after the review route it
+  // was spawned under and before the verdict it produced.
+  const reviewDispatch = disk.find((r) => r.kind === 'dispatch' && r.route_seq === three.seq);
+  assert.ok(reviewDispatch && reviewDispatch.phase === 'review');
+  assert.ok(reviewDispatch.seq > three.seq && reviewDispatch.seq < four.seq);
+  assert.strictEqual(four.review_dispatch_seq, reviewDispatch.seq);
 }
 
 // === recovery: both topologies reconstruct from disk alone ==================
