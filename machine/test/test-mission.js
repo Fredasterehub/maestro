@@ -1268,6 +1268,193 @@ const mxGateSeq = fx.runGreenGate(root, 'mx', 'tests', mxRepo);
   assert.strictEqual(stateOf().missions.mtwo.status, 'open');
 }
 
+// --- close: a standing revise is not escaped by a second MISSION either ------
+// The mtwo attack one boundary further out. A route belongs to a mission, an
+// artifact does not, and mission ids cost one `mission open` with a valid
+// brief: leave the revise standing where it is, open a second mission, reserve
+// a chain binding the byte-identical identity, record a first (so ritual-free)
+// approve there, gate, land, and close THAT mission. Every call lawful, nothing
+// forged — and the finding is still on the ledger, unanswered.
+{
+  openM('mvictim');
+  const repo = fx.newWorkRepo(tmp);
+  const identity = fx.artifactIdentity(repo);
+  const victim = fx.reserveChain(root, 'mvictim', identity);
+  const revise = fx.recordReview(root, 'mvictim', {
+    review_route_seq: victim.reviewSeq,
+    review_dispatch_seq: victim.reviewSeq,
+    verdict: 'revise',
+    artifact_identity: identity,
+  });
+  assert.strictEqual(revise.status, 0, revise.stderr);
+  const reviseSeq = JSON.parse(revise.stdout).ledger_seq;
+
+  openM('mclean');
+  const clean = fx.reserveChain(root, 'mclean', identity);
+  const approve = fx.recordReview(root, 'mclean', {
+    review_route_seq: clean.reviewSeq,
+    review_dispatch_seq: clean.reviewSeq,
+    verdict: 'approve',
+    artifact_identity: identity,
+  });
+  assert.strictEqual(approve.status, 0, 'a first verdict in a fresh mission is legal at the writer');
+  const gateSeq = fx.runGreenGate(root, 'mclean', 'tests', repo);
+  fx.land(repo, 'merge');
+
+  const r = fx.runClose(root, 'mclean', repo, fx.closeInputOf(clean, gateSeq));
+  assert.strictEqual(r.status, 1, 'a second mission on the same artifact must not overturn a revise');
+  assert.match(
+    r.stderr,
+    new RegExp(`mission "mvictim" carries a standing revise \\(seq ${reviseSeq}\\) on its review route ${victim.reviewSeq}`)
+  );
+  assert.match(r.stderr, /never by opening a second mission on the byte-identical artifact/);
+  assert.strictEqual(stateOf().missions.mclean.status, 'open');
+  assert.strictEqual(stateOf().missions.mvictim.status, 'open');
+}
+
+// --- close: a foreign revise that WAS answered does not block ----------------
+// The other half of the cross-mission rule, and the half that decides whether
+// it is a fence or a wall. A finding recorded in another mission is honoured
+// there: answered on its own route, or by superseding that route with recorded
+// evidence, or dissolved because the artifact changed. Each of the three must
+// let a second mission on that artifact close.
+{
+  // (a) answered on its own route, by a superseding verdict with evidence
+  openM('mfroute');
+  const repoA = fx.newWorkRepo(tmp);
+  const idA = fx.artifactIdentity(repoA);
+  const foreignA = fx.reserveChain(root, 'mfroute', idA);
+  const reviseA = fx.recordReview(root, 'mfroute', {
+    review_route_seq: foreignA.reviewSeq,
+    review_dispatch_seq: foreignA.reviewSeq,
+    verdict: 'revise',
+    artifact_identity: idA,
+  });
+  assert.strictEqual(reviseA.status, 0, reviseA.stderr);
+  const evidenceA = fx.runGreenGate(root, 'mfroute', 'tests', repoA);
+  const answeredA = fx.recordReview(root, 'mfroute', {
+    review_route_seq: foreignA.reviewSeq,
+    review_dispatch_seq: foreignA.reviewSeq,
+    verdict: 'approve',
+    artifact_identity: idA,
+    supersedes_seq: JSON.parse(reviseA.stdout).ledger_seq,
+    reason: 'finding answered by a recorded gate run',
+    evidence_seq: evidenceA,
+  });
+  assert.strictEqual(answeredA.status, 0, answeredA.stderr);
+
+  openM('mfroute2');
+  const chainA = fx.reserveChain(root, 'mfroute2', idA);
+  fx.recordApprove(root, 'mfroute2', chainA, idA);
+  const gateA = fx.runGreenGate(root, 'mfroute2', 'tests', repoA);
+  fx.land(repoA, 'merge');
+  let r = fx.runClose(root, 'mfroute2', repoA, fx.closeInputOf(chainA, gateA));
+  assert.strictEqual(r.status, 0, `a foreign revise answered on its own route must not block: ${r.stderr}`);
+  assert.strictEqual(stateOf().missions.mfroute2.status, 'done');
+
+  // (b) answered by superseding the foreign route, with evidence held to the
+  // same standard and scoped to the mission that recorded the finding
+  openM('mfsup');
+  const repoB = fx.newWorkRepo(tmp);
+  const idB = fx.artifactIdentity(repoB);
+  const foreignB = fx.reserveChain(root, 'mfsup', idB);
+  const reviseB = fx.recordReview(root, 'mfsup', {
+    review_route_seq: foreignB.reviewSeq,
+    review_dispatch_seq: foreignB.reviewSeq,
+    verdict: 'revise',
+    artifact_identity: idB,
+  });
+  assert.strictEqual(reviseB.status, 0, reviseB.stderr);
+  const evidenceB = fx.runGreenGate(root, 'mfsup', 'tests', repoB);
+  assert.ok(evidenceB > JSON.parse(reviseB.stdout).ledger_seq, 'the evidence postdates the finding');
+  supersede(root, {
+    mission_id: 'mfsup',
+    predecessor_route_seq: foreignB.reviewSeq,
+    transition: 'same-class-provider-reroute',
+    reason: 'quality',
+    evidence_seq: evidenceB,
+    replacement: fx.reviewRouteInput('mfsup', foreignB.authorSeq, foreignB.authorSeq, idB),
+  });
+
+  openM('mfsup2');
+  const chainB = fx.reserveChain(root, 'mfsup2', idB);
+  fx.recordApprove(root, 'mfsup2', chainB, idB);
+  const gateB = fx.runGreenGate(root, 'mfsup2', 'tests', repoB);
+  fx.land(repoB, 'merge');
+  r = fx.runClose(root, 'mfsup2', repoB, fx.closeInputOf(chainB, gateB));
+  assert.strictEqual(r.status, 0, `a superseded foreign route must not block: ${r.stderr}`);
+  assert.strictEqual(stateOf().missions.mfsup2.status, 'done');
+
+  // (c) dissolved: the author changed the artifact, so the foreign finding is
+  // no longer about the work being closed
+  openM('mfold');
+  const repoC = fx.newWorkRepo(tmp);
+  const rejected = fx.artifactIdentity(repoC);
+  const foreignC = fx.reserveChain(root, 'mfold', rejected);
+  const reviseC = fx.recordReview(root, 'mfold', {
+    review_route_seq: foreignC.reviewSeq,
+    review_dispatch_seq: foreignC.reviewSeq,
+    verdict: 'revise',
+    artifact_identity: rejected,
+  });
+  assert.strictEqual(reviseC.status, 0, reviseC.stderr);
+
+  fs.writeFileSync(path.join(repoC, 'fix.txt'), 'the foreign finding, repaired\n');
+  for (const args of [['add', '-A'], ['commit', '-q', '-m', 'repair the foreign finding']]) {
+    const g = spawnSync('git', ['-C', repoC, ...args], { encoding: 'utf8' });
+    assert.strictEqual(g.status, 0, g.stderr);
+  }
+  const repaired = fx.artifactIdentity(repoC);
+  assert.notStrictEqual(repaired.source_tree, rejected.source_tree, 'the repair is a different artifact');
+
+  openM('mfnew');
+  const chainC = fx.reserveChain(root, 'mfnew', repaired);
+  fx.recordApprove(root, 'mfnew', chainC, repaired);
+  const gateC = fx.runGreenGate(root, 'mfnew', 'tests', repoC);
+  fx.land(repoC, 'merge');
+  r = fx.runClose(root, 'mfnew', repoC, fx.closeInputOf(chainC, gateC));
+  assert.strictEqual(r.status, 0, `a foreign revise on other bytes must not block: ${r.stderr}`);
+  assert.strictEqual(stateOf().missions.mfnew.status, 'done');
+}
+
+// --- close: a foreign verdict chain ABOUT THIS ARTIFACT is re-derived too ----
+// Foreign chains are read only where they name the artifact being closed — but
+// where they do, the same chain rule applies, so a bare overturn hand-appended
+// in another mission is no more an answer than one appended here.
+{
+  openM('mfbare');
+  const repo = fx.newWorkRepo(tmp);
+  const identity = fx.artifactIdentity(repo);
+  const foreign = fx.reserveChain(root, 'mfbare', identity);
+  const revise = fx.recordReview(root, 'mfbare', {
+    review_route_seq: foreign.reviewSeq,
+    review_dispatch_seq: foreign.reviewSeq,
+    verdict: 'revise',
+    artifact_identity: identity,
+  });
+  assert.strictEqual(revise.status, 0, revise.stderr);
+  appendRaw('review-outcome', 'mfbare', {
+    mission_id: 'mfbare',
+    review_route_seq: foreign.reviewSeq,
+    review_dispatch_seq: foreign.reviewSeq,
+    verdict: 'approve',
+    artifact_identity: identity,
+    supersedes_seq: null,
+    reason: null,
+    evidence_seq: null,
+  });
+
+  openM('mfbare2');
+  const chain = fx.reserveChain(root, 'mfbare2', identity);
+  fx.recordApprove(root, 'mfbare2', chain, identity);
+  const gateSeq = fx.runGreenGate(root, 'mfbare2', 'tests', repo);
+  fx.land(repo, 'merge');
+  const r = fx.runClose(root, 'mfbare2', repo, fx.closeInputOf(chain, gateSeq));
+  assert.strictEqual(r.status, 1, 'a bare foreign overturn on this artifact must not close');
+  assert.match(r.stderr, /answered, never silently replaced/);
+  assert.strictEqual(stateOf().missions.mfbare2.status, 'open');
+}
+
 // --- close: superseding the rejecting route answers it, with the same evidence
 {
   const openSeq = openM('mroute');

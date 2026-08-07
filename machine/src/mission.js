@@ -49,10 +49,12 @@
 // — a revise that vanished is how a mission would quietly close on a rejected
 // review — and close requires the standing recorded verdict for its review
 // route to be an approve against the same identity every other stage names,
-// AND no standing revise anywhere in this mission against that same identity.
-// The unit of that law is the artifact, not the route: a finding against an
+// AND no standing revise anywhere in this LEDGER — any mission's review route,
+// not just this mission's — against that same identity. The unit of that law is
+// the artifact, not the route and not the mission: a finding against an
 // artifact is answered by evidence or by changing the artifact, never by
-// reviewing the byte-identical artifact again somewhere quieter.
+// reviewing the byte-identical artifact again somewhere quieter, and neither a
+// second route nor a second mission is quiet enough.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -1036,93 +1038,166 @@ function checkGateIdentity(gate, reviewedIdentity, gateSeq, records) {
   }
 }
 
-// Every verdict this mission recorded, grouped by the review route it names
-// and ordered by seq, with each route's replacement chain re-derived here
-// rather than trusted to the writer — the writer can be bypassed by a
-// hand-append, so the close-side copy is the one that matters, and it is the
-// same rule: a verdict that replaces the standing one on its route names it,
-// says why, and cites recorded contradictory repository evidence. The first
-// verdict on a route supersedes nothing and must claim nothing, or a close
-// record would name a supersession that never happened.
+// Every verdict in this LEDGER, grouped by the mission and the review route it
+// names, each group ordered by seq. The grouping spans missions on purpose:
+// what a verdict binds is an artifact, and an artifact belongs to no mission.
+// Mission ids are free to mint (openMission refuses only a duplicate id), so a
+// scan that saw the closing mission's routes alone would be walked around by
+// opening a second mission on the byte-identical work — the same attack as the
+// second review route, one level up.
 //
-// Grouped for EVERY route, not just the cited one: what a verdict binds is an
-// artifact, and the caller chooses which route to cite.
-function standingVerdictsOf(records, missionId, citedRouteSeq) {
-  const byRoute = new Map();
+// The one cross-mission refusal here is misattribution: a verdict claiming
+// another mission while naming the route this close cites is not evidence of
+// anything, whichever mission it belongs to.
+function verdictsByMissionRoute(records, missionId, citedRouteSeq) {
+  const byMission = new Map();
   for (const record of records) {
     if (!isPlainObject(record) || record.kind !== 'review-outcome') continue;
     if (!Number.isSafeInteger(record.seq) || record.seq < 0) continue;
-    if (record.mission_id !== missionId) {
-      if (record.review_route_seq === citedRouteSeq) {
-        throw new Error(
-          `mission: close refused — review-outcome at seq ${record.seq} names this mission's review route ${citedRouteSeq} but claims mission ${JSON.stringify(record.mission_id)}; a verdict that misattributes its mission is not evidence`
-        );
-      }
-      continue;
+    if (record.mission_id !== missionId && record.review_route_seq === citedRouteSeq) {
+      throw new Error(
+        `mission: close refused — review-outcome at seq ${record.seq} names this mission's review route ${citedRouteSeq} but claims mission ${JSON.stringify(record.mission_id)}; a verdict that misattributes its mission is not evidence`
+      );
+    }
+    let byRoute = byMission.get(record.mission_id);
+    if (byRoute === undefined) {
+      byRoute = new Map();
+      byMission.set(record.mission_id, byRoute);
     }
     const held = byRoute.get(record.review_route_seq);
     if (held === undefined) byRoute.set(record.review_route_seq, [record]);
     else held.push(record);
   }
-
-  for (const outcomes of byRoute.values()) {
-    outcomes.sort((a, b) => a.seq - b.seq);
-    const first = outcomes[0];
-    if (
-      first.supersedes_seq !== null &&
-      first.supersedes_seq !== undefined
-    ) {
-      throw new Error(
-        `mission: close refused — the verdict at seq ${first.seq} is the first for review route ${first.review_route_seq} and claims to supersede seq ${first.supersedes_seq}; there was nothing before it to answer`
-      );
-    }
-    for (let i = 1; i < outcomes.length; i++) {
-      const replacer = outcomes[i];
-      const replaced = outcomes[i - 1];
-      if (replacer.supersedes_seq !== replaced.seq || !isNonEmptyString(replacer.reason)) {
-        throw new Error(
-          `mission: close refused — the verdict at seq ${replacer.seq} replaces the verdict at seq ${replaced.seq} without naming it with a reason and recorded evidence; a recorded verdict is answered, never silently replaced`
-        );
-      }
-      checkOverturnEvidence(
-        records,
-        missionId,
-        replacer.evidence_seq,
-        replaced,
-        'close',
-        `the verdict at seq ${replacer.seq}, replacing the verdict at seq ${replaced.seq},`
-      );
-    }
+  for (const byRoute of byMission.values()) {
+    for (const outcomes of byRoute.values()) outcomes.sort((a, b) => a.seq - b.seq);
   }
-  return byRoute;
+  return byMission;
 }
 
-// §8 correction 19, enforced against the artifact rather than the route.
+// One review route's replacement chain, re-derived here rather than trusted to
+// the writer — the writer can be bypassed by a hand-append, so the close-side
+// copy is the one that matters, and it is the same rule: a verdict that
+// replaces the standing one on its route names it, says why, and cites a gate
+// record answering the verdict it replaces. The first verdict on a route
+// supersedes nothing and must claim nothing, or a close record would name a
+// supersession that never happened.
 //
-// Re-deriving the replacement chain per review route closes the quiet append
+// ownerMissionId is the mission whose route this is — this mission's, or a
+// foreign one's when the chain being re-derived belongs to another mission's
+// route. The evidence a chain cites is always scoped to the mission that
+// recorded the chain, so a foreign chain is answered with foreign evidence and
+// never with ours.
+function requireAnsweredChain(records, ownerMissionId, outcomes) {
+  const first = outcomes[0];
+  if (first.supersedes_seq !== null && first.supersedes_seq !== undefined) {
+    throw new Error(
+      `mission: close refused — the verdict at seq ${first.seq} is the first for review route ${first.review_route_seq} and claims to supersede seq ${first.supersedes_seq}; there was nothing before it to answer`
+    );
+  }
+  for (let i = 1; i < outcomes.length; i++) {
+    const replacer = outcomes[i];
+    const replaced = outcomes[i - 1];
+    if (replacer.supersedes_seq !== replaced.seq || !isNonEmptyString(replacer.reason)) {
+      throw new Error(
+        `mission: close refused — the verdict at seq ${replacer.seq} replaces the verdict at seq ${replaced.seq} without naming it with a reason and recorded evidence; a recorded verdict is answered, never silently replaced`
+      );
+    }
+    checkOverturnEvidence(
+      records,
+      ownerMissionId,
+      replacer.evidence_seq,
+      replaced,
+      'close',
+      `the verdict at seq ${replacer.seq}, replacing the verdict at seq ${replaced.seq},`
+    );
+  }
+}
+
+// Returns { own, byMission }: this mission's routes (every chain re-derived,
+// so a defect anywhere in this mission's verdict stream refuses the close),
+// and every mission's routes for the artifact-scoped scan below. Foreign
+// chains are NOT re-derived here — another mission's malformed verdict stream
+// is not this close's business until it names this close's artifact, and
+// re-deriving them all would make one mission's mess unclosable elsewhere.
+function standingVerdictsOf(records, missionId, citedRouteSeq) {
+  const byMission = verdictsByMissionRoute(records, missionId, citedRouteSeq);
+  const own = byMission.get(missionId) === undefined ? new Map() : byMission.get(missionId);
+  for (const outcomes of own.values()) requireAnsweredChain(records, missionId, outcomes);
+  return { own, byMission };
+}
+
+// Whether two recorded identities name the same artifact.
+function namesSameArtifact(recorded, identity) {
+  return !IDENTITY_FIELDS.some((field) => recorded[field] !== identity[field]);
+}
+
+// The one escape a standing revise has outside its own verdict chain:
+// `route.js supersede` naming that route, in the mission that recorded it,
+// whose evidence_seq is held to the SAME standard as a superseding verdict's —
+// otherwise superseding the route would be the cheaper way round, which is
+// exactly the shape being closed. Unanswered, `refusal()` builds the message.
+function requireReviseAnswered(records, ownerMissionId, routeSeq, last, label, refusal) {
+  const superseded = records.find(
+    (r) =>
+      isPlainObject(r) &&
+      r.kind === 'route-superseded' &&
+      r.mission_id === ownerMissionId &&
+      r.predecessor_route_seq === routeSeq
+  );
+  if (superseded === undefined) {
+    throw new Error(refusal());
+  }
+  checkOverturnEvidence(
+    records,
+    ownerMissionId,
+    superseded.evidence_seq,
+    last,
+    'close',
+    `the supersession of ${label} (seq ${superseded.seq}), which answers the standing revise at seq ${last.seq},`
+  );
+}
+
+// §8 correction 19, enforced against the artifact rather than the route — and
+// now rather than the mission, which is the same law one boundary further out.
+//
+// Re-deriving the replacement chain per review route closed the quiet append
 // and nothing else: reserving a SECOND review route on the same author
 // dispatch, naming the byte-identical artifact, and recording a first (so
-// ritual-free) approve there overturns a standing revise with two lawful CLI
-// calls. Nothing about the artifact changed between the two verdicts — by
-// construction, since a verdict must name the identity its route bound — so
-// the earlier finding still stands and the mission closes with it recorded and
-// unanswered.
+// ritual-free) approve there overturned a standing revise with two lawful CLI
+// calls. Scoping the scan to every route of this mission closed that. But a
+// route belongs to a mission and an identity does not, and mission ids cost
+// one `mission open` with a valid brief: open a second mission, reserve a
+// chain binding the byte-identical identity, approve there (first verdict, so
+// ritual-free), close THAT mission. The victim stays open forever and nothing
+// flags it; the work lands with the finding unanswered.
 //
 // The rule is therefore: no verdict standing at "revise" against the identity
-// being closed, anywhere in this mission. It is answered in one of three ways,
-// each of which leaves a record:
+// being closed, anywhere in this LEDGER, in any mission. It is answered in one
+// of three ways, each of which leaves a record, and each of which is honoured
+// in the mission that recorded the finding:
 //   - a superseding verdict on its own route, carrying evidence (above);
 //   - `route.js supersede` naming that route, whose evidence_seq is held to
-//     the SAME standard here — otherwise superseding the route would be the
-//     cheaper way round, which is exactly the shape being closed; or
+//     the same standard; or
 //   - the author changes the artifact, so the new review round names a
 //     different identity and the old finding is no longer about this work.
-// The third is what keeps a genuine second round legal, and it is also the
-// limit of the rule: nothing on the record can tell a real repair from a
-// whitespace commit made to earn a fresh identity. What the rule does buy is
-// that overturning a finding on UNCHANGED work always costs a recorded gate.
-function requireNoStandingRevise(records, missionId, byRoute, identity, citedRouteSeq) {
-  for (const [routeSeq, outcomes] of byRoute) {
+// The third is what keeps a genuine second round legal. A foreign revise that
+// was answered any of those three ways does not block: foreign chains are
+// re-derived with the identical rule, under their own mission's id, so a
+// foreign mission that did the work of answering its finding is believed
+// exactly as this one would be.
+//
+// Refusing on a foreign mission's revise is fail-closed in the direction this
+// design prefers: two verdicts naming the byte-identical artifact are about the
+// same work by construction, never a coincidence.
+//
+// The limit of the rule is the third escape. `namesSameArtifact` decides what
+// "the artifact changed" means, and it is content, not head (see T2 below), so
+// an empty commit cannot buy a fresh identity — but a one-character
+// reformatting commit genuinely changes the tree, and nothing on the record can
+// tell that from a repair. What the rule does buy is that overturning a finding
+// on UNCHANGED bytes always costs a recorded gate run and a stated reason.
+function requireNoStandingRevise(records, missionId, verdicts, identity, citedRouteSeq) {
+  for (const [routeSeq, outcomes] of verdicts.own) {
     const last = outcomes[outcomes.length - 1];
     if (last.verdict !== 'revise') continue;
     if (!isPlainObject(last.artifact_identity)) {
@@ -1130,30 +1205,46 @@ function requireNoStandingRevise(records, missionId, byRoute, identity, citedRou
         `mission: close refused — the standing verdict for review route ${routeSeq} (seq ${last.seq}) is a revise naming no artifact; a finding that cannot be matched to an artifact cannot be shown answered`
       );
     }
-    if (IDENTITY_FIELDS.some((field) => last.artifact_identity[field] !== identity[field])) continue;
-
-    const superseded = records.find(
-      (r) =>
-        isPlainObject(r) &&
-        r.kind === 'route-superseded' &&
-        r.mission_id === missionId &&
-        r.predecessor_route_seq === routeSeq
-    );
-    if (superseded === undefined) {
-      throw new Error(
+    if (!namesSameArtifact(last.artifact_identity, identity)) continue;
+    requireReviseAnswered(
+      records,
+      missionId,
+      routeSeq,
+      last,
+      `review route ${routeSeq}`,
+      () =>
         `mission: close refused — review route ${routeSeq} carries a standing revise (seq ${last.seq}) against the very artifact being closed${
           routeSeq === citedRouteSeq ? '' : `, and route ${citedRouteSeq} is being cited instead`
         }; a finding is answered on its own route or by superseding that route with recorded evidence, never by reviewing the byte-identical artifact again elsewhere`
+    );
+  }
+
+  // Foreign missions, scoped to this artifact. A route whose verdicts never
+  // name this identity is another mission's business entirely and is not read;
+  // one that does name it is re-derived by the same chain rule, so a defect in
+  // a foreign chain ABOUT THIS WORK refuses the close rather than passing
+  // quietly — and a foreign mess about other work never reaches this close.
+  for (const [foreignId, byRoute] of verdicts.byMission) {
+    if (foreignId === missionId) continue;
+    for (const [routeSeq, outcomes] of byRoute) {
+      const aboutThisWork = outcomes.some(
+        (o) => isPlainObject(o.artifact_identity) && namesSameArtifact(o.artifact_identity, identity)
+      );
+      if (!aboutThisWork) continue;
+      requireAnsweredChain(records, foreignId, outcomes);
+      const last = outcomes[outcomes.length - 1];
+      if (last.verdict !== 'revise') continue;
+      if (!isPlainObject(last.artifact_identity) || !namesSameArtifact(last.artifact_identity, identity)) continue;
+      requireReviseAnswered(
+        records,
+        foreignId,
+        routeSeq,
+        last,
+        `mission ${JSON.stringify(foreignId)}'s review route ${routeSeq}`,
+        () =>
+          `mission: close refused — mission ${JSON.stringify(foreignId)} carries a standing revise (seq ${last.seq}) on its review route ${routeSeq} against the very artifact being closed; a finding is answered in the mission that recorded it — on its own route, or by superseding that route with recorded evidence — never by opening a second mission on the byte-identical artifact and approving there`
       );
     }
-    checkOverturnEvidence(
-      records,
-      missionId,
-      superseded.evidence_seq,
-      last,
-      'close',
-      `the supersession of review route ${routeSeq} (seq ${superseded.seq}), which answers the standing revise at seq ${last.seq},`
-    );
   }
 }
 
@@ -1200,8 +1291,8 @@ function deriveCloseFacts(records, missionId, input) {
   // The recorded verdict (§17): the standing verdict for this review route
   // must be an approve, for the very dispatch being credited, against the
   // same identity every other stage names.
-  const standing = standingVerdictsOf(records, missionId, input.review_route_seq);
-  const outcomes = standing.get(input.review_route_seq);
+  const verdicts = standingVerdictsOf(records, missionId, input.review_route_seq);
+  const outcomes = verdicts.own.get(input.review_route_seq);
   if (outcomes === undefined) {
     throw new Error(
       `mission: close refused — no review-outcome record names review route ${input.review_route_seq}; a close needs a recorded verdict, not a narrated one`
@@ -1226,7 +1317,7 @@ function deriveCloseFacts(records, missionId, input) {
       `mission: close refused — the recorded approve (seq ${outcome.seq}) names a different artifact than the review route bound: field(s) ${verdictDrift.join(', ')} differ`
     );
   }
-  requireNoStandingRevise(records, missionId, standing, identity, input.review_route_seq);
+  requireNoStandingRevise(records, missionId, verdicts, identity, input.review_route_seq);
 
   // Gate evidence: kind, mission, real exit 0, latest-by-seq for its gate_id
   // (check-honesty's law — a stale success can never paper over a later
