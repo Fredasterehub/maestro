@@ -1424,6 +1424,126 @@ const mxGateSeq = fx.runGreenGate(root, 'mx', 'tests', mxRepo);
   assert.strictEqual(stateOf().missions.mforeignc.status, 'done');
 }
 
+// --- close: the two foreign-scan guards are pinned INDEPENDENTLY, not only ---
+// --- as a pair -----------------------------------------------------------
+// A single-outcome foreign revise (above) cannot tell the two
+// `carriesFullIdentity` calls apart — whichever one stays strict blocks the
+// same record, so loosening either alone still passes that fixture. Each
+// guard gets its own two-outcome chain here, engineered so only ONE guard's
+// looseness can change the outcome.
+
+// Guard 1 alone — the `aboutThisWork` scan. The standing (last) outcome is
+// deliberately unreadable (`{}`) and irrelevant; what matters is an EARLIER
+// outcome on the same route carrying a partial identity that matches this
+// work, and a malformed link between the two (no `supersedes_seq`). Under
+// the committed guard the route is invisible — `aboutThisWork` is false, so
+// the malformed chain is never even inspected — and close succeeds. Loosen
+// only this guard and the partial outcome makes the route visible, so its
+// malformed supersession chain surfaces and refuses the close, whatever
+// guard 2 does.
+{
+  openM('mforeignv1a');
+  const repo = fx.newWorkRepo(tmp);
+  const identity = fx.artifactIdentity(repo);
+  const victim = fx.reserveChain(root, 'mforeignv1a', identity);
+  const partial = {
+    source_head: identity.source_head,
+    source_tree: identity.source_tree,
+    dirty: identity.dirty,
+  };
+  const outcome1 = appendRaw('review-outcome', 'mforeignv1a', {
+    mission_id: 'mforeignv1a',
+    review_route_seq: victim.reviewSeq,
+    review_dispatch_seq: victim.reviewSeq,
+    verdict: 'revise',
+    artifact_identity: partial,
+    supersedes_seq: null,
+    reason: null,
+    evidence_seq: null,
+  });
+  // Malformed on purpose: claims no supersession, so requireAnsweredChain
+  // throws on it the moment the route is inspected at all.
+  appendRaw('review-outcome', 'mforeignv1a', {
+    mission_id: 'mforeignv1a',
+    review_route_seq: victim.reviewSeq,
+    review_dispatch_seq: victim.reviewSeq,
+    verdict: 'revise',
+    artifact_identity: {},
+    supersedes_seq: null,
+    reason: null,
+    evidence_seq: null,
+  });
+  assert.ok(outcome1.seq >= 0);
+
+  openM('mforeignv1c');
+  const clean1 = fx.reserveChain(root, 'mforeignv1c', identity);
+  const approve1 = fx.recordReview(root, 'mforeignv1c', {
+    review_route_seq: clean1.reviewSeq,
+    review_dispatch_seq: clean1.reviewSeq,
+    verdict: 'approve',
+    artifact_identity: identity,
+  });
+  assert.strictEqual(approve1.status, 0, approve1.stderr);
+  const gateSeq1 = fx.runGreenGate(root, 'mforeignv1c', 'tests', repo);
+  fx.land(repo, 'merge');
+  const r1 = fx.runClose(root, 'mforeignv1c', repo, fx.closeInputOf(clean1, gateSeq1));
+  assert.strictEqual(r1.status, 0, `a partial earlier outcome must leave the route unseen: ${r1.stderr}`);
+  assert.strictEqual(stateOf().missions.mforeignv1c.status, 'done');
+}
+
+// Guard 2 alone — the standing-verdict check. Outcome 1 carries the FULL,
+// matching identity, so `aboutThisWork` is true whatever guard 1 does — this
+// isolates guard 2. Outcome 2 properly supersedes outcome 1 (a real green
+// gate in the foreign mission answers it, so the chain itself is
+// well-formed), but outcome 2's OWN identity is partial. Under the committed
+// guard the standing verdict is unreadable and skipped, so close succeeds;
+// loosen only this guard and it matches on the shared tree, blocking.
+{
+  openM('mforeignv2a');
+  const repo = fx.newWorkRepo(tmp);
+  const identity = fx.artifactIdentity(repo);
+  const victim = fx.reserveChain(root, 'mforeignv2a', identity);
+  const revise = fx.recordReview(root, 'mforeignv2a', {
+    review_route_seq: victim.reviewSeq,
+    review_dispatch_seq: victim.reviewSeq,
+    verdict: 'revise',
+    artifact_identity: identity,
+  });
+  assert.strictEqual(revise.status, 0, revise.stderr);
+  const reviseSeq = JSON.parse(revise.stdout).ledger_seq;
+  const answeringGateSeq = fx.runGreenGate(root, 'mforeignv2a', 'tests', repo);
+  const partial = {
+    source_head: identity.source_head,
+    source_tree: identity.source_tree,
+    dirty: identity.dirty,
+  };
+  appendRaw('review-outcome', 'mforeignv2a', {
+    mission_id: 'mforeignv2a',
+    review_route_seq: victim.reviewSeq,
+    review_dispatch_seq: victim.reviewSeq,
+    verdict: 'revise',
+    artifact_identity: partial,
+    supersedes_seq: reviseSeq,
+    reason: 'answering the first revise with a fresh green gate',
+    evidence_seq: answeringGateSeq,
+  });
+
+  openM('mforeignv2c');
+  const clean2 = fx.reserveChain(root, 'mforeignv2c', identity);
+  const approve2 = fx.recordReview(root, 'mforeignv2c', {
+    review_route_seq: clean2.reviewSeq,
+    review_dispatch_seq: clean2.reviewSeq,
+    verdict: 'approve',
+    artifact_identity: identity,
+  });
+  assert.strictEqual(approve2.status, 0, approve2.stderr);
+  const gateSeq2 = fx.runGreenGate(root, 'mforeignv2c', 'tests', repo);
+  fx.land(repo, 'merge');
+  const r2 = fx.runClose(root, 'mforeignv2c', repo, fx.closeInputOf(clean2, gateSeq2));
+  assert.strictEqual(r2.status, 0, `a partial standing verdict must not block: ${r2.stderr}`);
+  assert.strictEqual(stateOf().missions.mforeignv2c.status, 'done');
+}
+
 // --- close: a foreign revise that WAS answered does not block ----------------
 // The other half of the cross-mission rule, and the half that decides whether
 // it is a fence or a wall. A finding recorded in another mission is honoured
