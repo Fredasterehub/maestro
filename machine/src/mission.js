@@ -428,6 +428,13 @@ function recordConsult(treeRoot, missionId, input) {
 // A field matches only on a value actually recorded on BOTH records: under a
 // disjunction, two absences agreeing would make an empty identity match
 // everything, which is the opposite of what this is for.
+//
+// This predicate answers "the same work", and only the checks that ask that
+// question use it. The comparisons that ask "the same identity record" —
+// a verdict against the identity its route bound, the final gate against the
+// artifact being closed, the pre-lock/locked drift guard — stay field by
+// field over all four, and must: those are chain links, where anything but an
+// exact match means the chain is broken, not that the work moved.
 const CONTENT_IDENTITY_FIELDS = ['source_tree', 'patch_digest'];
 
 function namesSameArtifact(recorded, identity) {
