@@ -372,6 +372,41 @@ function setPreflight(root, perProvider) {
   assert.ok(errors.some((e) => /"reviewer-degraded-opus", which never appears in a cross-family row/.test(e)), errors.join('; '));
 }
 
+// --- the degraded path is scoped to claude-authored work ---------------------
+{
+  // A gpt author whose effective row empties must refuse, never receive a
+  // Claude reviewer under a notice asserting a shared family it does not
+  // share — a false record is worse than a refusal.
+  const root = customTree('non-claude-degraded', (config) => {
+    config.degraded.codex_down.review_routing.gpt = [];
+  });
+  setPreflight(root, { codex: { routing: 'absent' }, gemini: { routing: 'present' } });
+  const r = run(['review-for', root, 'gpt']);
+  assert.strictEqual(r.status, 1, 'a non-claude author must never fall into the claude-scoped degraded path');
+  assert.match(r.stderr, /scoped to claude-authored work/);
+}
+
+// --- degraded pairing by author model, and bundle shape symmetry -------------
+{
+  const { root } = initTree('author-model');
+  setPreflight(root, {}); // both providers route as absent
+  const opus = run(['review-for', root, 'claude', 'apex', 'opus-5', '--json']);
+  assert.strictEqual(opus.status, 0, opus.stderr);
+  const opusBundle = JSON.parse(opus.stdout);
+  assert.strictEqual(opusBundle.seat, 'reviewer-degraded-fable-apex', 'the opus-authored apex pairing is resolvable from the CLI, not only the row-order default');
+  assert.strictEqual(opusBundle.author_model, 'opus-5');
+  assert.strictEqual(opusBundle.fallback.model, 'opus-5');
+
+  // Same substitution fields as the cross-family path: consumers never
+  // branch on independence to learn which fields exist.
+  assert.strictEqual(opusBundle.requested_seat, opusBundle.seat);
+  assert.strictEqual(opusBundle.substituted, false);
+
+  const unpaired = run(['review-for', root, 'claude', 'apex', 'haiku', '--json']);
+  assert.strictEqual(unpaired.status, 1, 'an unpaired author model is refused, never silently defaulted');
+  assert.match(unpaired.stderr, /no pairing for author model "haiku"/);
+}
+
 // --- revise: a failed dated-config write consumes no immutable name ----------
 //
 // The failure is imposed from outside the process (RLIMIT_FSIZE of 0, with

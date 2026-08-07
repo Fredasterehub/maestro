@@ -1019,6 +1019,17 @@ function reviewFor(treeRoot, authorFamily, taskClass, authorModel) {
     routing_digest: effective.active_digest,
   };
 
+  // CLASS-BLIND UNTIL r4 (recorded deferral: the plan amendment
+  // "class-keyed cross-family review is r4's content, not r3's" at the end
+  // of execution-plan.md). review_routing is not class-keyed at r3, so this
+  // loop consults the author family's row alone and taskClass never narrows
+  // it: an apex resolution can be labeled cross-family here without its
+  // class floor having been checked (review finding N3), and gemini's
+  // expert/apex reviewer disqualification has no data to consult (N4).
+  // r4's class-keyed rows close both; until they land, the exposure is
+  // bounded by data, not by this code — the gpt lane is operator-down and
+  // gemini is reviewer-restricted for this mission, so no live resolution
+  // reaches a cross-family reviewer at all.
   for (const candidate of effective.review_routing[authorFamily]) {
     const resolved = Object.prototype.hasOwnProperty.call(subs, candidate) ? subs[candidate] : candidate;
     const seat = seats[resolved];
@@ -1046,7 +1057,20 @@ function reviewFor(treeRoot, authorFamily, taskClass, authorModel) {
   }
 
   // No cross-family candidate survives: the explicit degraded transition —
-  // relabeled, never a quiet mapping onto a same-family seat.
+  // relabeled, never a quiet mapping onto a same-family seat. The design
+  // (§8) scopes that transition to claude-authored work: the claude
+  // reviewer row is the always-on floor for gpt- and gemini-authored work
+  // (§6.2), so reaching this point as a non-claude author means the
+  // routing table itself is malformed — resolving a Claude reviewer here
+  // would record a notice asserting author and reviewer share a family,
+  // which would be false. Refuse rather than write a false record.
+  if (authorFamily !== 'claude') {
+    throw new Error(
+      `routing: no cross-family reviewer is effectively available for ${authorFamily}-authored ${taskClass} ` +
+        'work, and the degraded path is scoped to claude-authored work — the claude reviewer row is the ' +
+        'always-on floor for non-claude authors, so this state is a malformed routing table, not a degraded one'
+    );
+  }
   if (effective.degraded_review_posture === 'hold') {
     throw new Error(
       `routing: no cross-family reviewer is effectively available for ${authorFamily}-authored ${taskClass} ` +
@@ -1082,6 +1106,13 @@ function reviewFor(treeRoot, authorFamily, taskClass, authorModel) {
   const seat = seats[seatName];
   const bundle = {
     seat: seatName,
+    // Same shape as the cross-family bundle (plan §7 wants substitution
+    // status in the review-phase route record): the degraded seat is
+    // selected directly from its row, so it is its own requested seat and
+    // nothing was substituted — consumers never branch on independence to
+    // learn which fields exist.
+    requested_seat: seatName,
+    substituted: false,
     family: seat.family,
     model: seat.model,
     effort: typeof seat.effort === 'string' ? seat.effort : null,
@@ -1116,7 +1147,7 @@ usage:
   routing.js init <treeRoot>
   routing.js revise <treeRoot>
   routing.js active <treeRoot>
-  routing.js review-for <treeRoot> <author_family> [class] [--json]
+  routing.js review-for <treeRoot> <author_family> [class] [author_model] [--json]
 
 commands:
   init        writes the dated immutable default config
@@ -1155,17 +1186,23 @@ commands:
               through every class, apex included, labeled independence
               "degraded-path" and never "cross-family" — unless settings
               degraded_review is "hold" (operator-selected, never the
-              default), which refuses instead. Default output prints the
-              seat name, with each applicable notice on stderr when the
-              choice was rerouted; --json prints the full resolution bundle
-              (seat, family, model, effort, independence, class,
-              routing_config, routing_digest, notices, and on the degraded
-              path the author_model pairing key and same-model fallback).
+              default), which refuses instead. [author_model] selects the
+              degraded row's pairing by the model that authored the work
+              (the apex row pairs fable-5 and opus-5); omitted, the row's
+              first pairing — the class's canonical authorship — applies,
+              and the bundle's author_model field names the key actually
+              used. Default output prints the seat name, with each
+              applicable notice on stderr when the choice was rerouted;
+              --json prints the full resolution bundle (seat,
+              requested_seat, substituted, family, model, effort,
+              independence, class, routing_config, routing_digest, notices,
+              and on the degraded path the author_model pairing key and
+              same-model fallback).
 
 Exits 0 on success; every refusal prints to stderr and exits 1.
 `;
 
-const COMMAND_ARITY = { init: [0, 0], revise: [0, 0], active: [0, 0], 'review-for': [1, 2] };
+const COMMAND_ARITY = { init: [0, 0], revise: [0, 0], active: [0, 0], 'review-for': [1, 3] };
 
 function parseArgv(argv) {
   if (argv.includes('--help') || argv.includes('-h')) {
@@ -1225,7 +1262,9 @@ function main(argv) {
     } else if (command === 'review-for') {
       // Class defaults to standard for the back-compat one-line form; the
       // bundle's own class field always names what was actually resolved.
-      const bundle = reviewFor(treeRoot, args[0], args[1] === undefined ? 'standard' : args[1]);
+      // The author model rides through so every degraded row pairing is
+      // resolvable from the CLI, not only the row's first entry.
+      const bundle = reviewFor(treeRoot, args[0], args[1] === undefined ? 'standard' : args[1], args[2]);
       if (parsed.json) {
         process.stdout.write(JSON.stringify(bundle, null, 2) + '\n');
       } else {
