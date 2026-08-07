@@ -1148,6 +1148,8 @@ const mxGateSeq = fx.runGreenGate(root, 'mx', 'tests', mxRepo);
   assert.strictEqual(first.status, 0, first.stderr);
   const reviseSeq = JSON.parse(first.stdout).ledger_seq;
   const evidenceSeq = fx.runGreenGate(root, 'mshape', 'tests', repo);
+  // a gate of this mission, recorded after the finding, but run on other work
+  const otherGateSeq = fx.runGreenGate(root, 'mshape', 'tests', fx.newWorkRepo(tmp));
   const before = ledgerOf().records.length;
 
   const answer = (overrides) =>
@@ -1177,8 +1179,13 @@ const mxGateSeq = fx.runGreenGate(root, 'mx', 'tests', mxRepo);
     assert.match(r.stderr, /"reason" must be a non-empty single-line string of at most 200 characters/);
   }
 
+  // a true fact about other work contradicts nothing here
+  let r = answer({ evidence_seq: otherGateSeq });
+  assert.strictEqual(r.status, 1, 'a gate on another artifact is not evidence about this one');
+  assert.match(r.stderr, /tested a different artifact than the verdict it answers/);
+
   // the evidence must resolve to exactly one record of THIS mission
-  let r = answer({ evidence_seq: 999999 });
+  r = answer({ evidence_seq: 999999 });
   assert.strictEqual(r.status, 1);
   assert.match(r.stderr, /names no ledger record in "evidence_seq" 999999/);
 

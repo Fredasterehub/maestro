@@ -391,7 +391,10 @@ const REASON_CEILING = 200;
 //       finding, and a finding is never its own refutation;
 //   (2) this mission's; and
 //   (3) LATER than the record it answers — a fact that already existed when
-//       the finding was written cannot be what contradicts it.
+//       the finding was written cannot be what contradicts it; and
+//   (4) about the same artifact the answered verdict judged, where the gate
+//       record names one — a green gate on some other commit is a true fact
+//       that contradicts nothing here.
 // The gate's own exit code is deliberately not constrained: a red gate is
 // exactly the contradictory evidence that overturns an approve, just as a
 // green one is what answers a revise.
@@ -400,7 +403,8 @@ const REASON_CEILING = 200;
 // close-side re-derivation of the same chain (the writer can be bypassed by a
 // hand-append, so the weaker copy would be the one that mattered), and the
 // route-superseded escape a standing revise on another route is cleared by.
-function checkOverturnEvidence(records, missionId, evidenceSeq, answeredSeq, who, what) {
+function checkOverturnEvidence(records, missionId, evidenceSeq, answered, who, what) {
+  const answeredSeq = answered.seq;
   if (!Number.isSafeInteger(evidenceSeq) || evidenceSeq < 0) {
     throw new Error(`mission: ${who} refused — ${what} carries no evidence_seq naming a ledger record`);
   }
@@ -425,6 +429,19 @@ function checkOverturnEvidence(records, missionId, evidenceSeq, answeredSeq, who
     throw new Error(
       `mission: ${who} refused — ${what} cites gate record ${evidenceSeq}, which does not postdate the verdict at seq ${answeredSeq} it answers; a fact recorded before the finding cannot be what contradicts it`
     );
+  }
+  // A gate record from before identities were carried names no artifact and
+  // claims nothing either way (the same tolerance checkGateIdentity extends);
+  // one that does name an artifact must name the judged one.
+  if (isPlainObject(evidence.artifact_identity) && isPlainObject(answered.artifact_identity)) {
+    const differ = IDENTITY_FIELDS.filter(
+      (field) => evidence.artifact_identity[field] !== answered.artifact_identity[field]
+    );
+    if (differ.length > 0) {
+      throw new Error(
+        `mission: ${who} refused — ${what} cites gate record ${evidenceSeq}, which tested a different artifact than the verdict it answers: field(s) ${differ.join(', ')} differ; a gate on other work contradicts nothing here`
+      );
+    }
   }
   return evidence;
 }
@@ -549,7 +566,7 @@ function recordReview(treeRoot, missionId, input) {
         records,
         missionId,
         input.evidence_seq,
-        standing.seq,
+        standing,
         'record-review',
         `the ${input.verdict} replacing the verdict at seq ${standing.seq}`
       );
@@ -1071,7 +1088,7 @@ function standingVerdictsOf(records, missionId, citedRouteSeq) {
         records,
         missionId,
         replacer.evidence_seq,
-        replaced.seq,
+        replaced,
         'close',
         `the verdict at seq ${replacer.seq}, replacing the verdict at seq ${replaced.seq},`
       );
@@ -1133,7 +1150,7 @@ function requireNoStandingRevise(records, missionId, byRoute, identity, citedRou
       records,
       missionId,
       superseded.evidence_seq,
-      last.seq,
+      last,
       'close',
       `the supersession of review route ${routeSeq} (seq ${superseded.seq}), which answers the standing revise at seq ${last.seq},`
     );
