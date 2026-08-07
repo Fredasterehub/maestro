@@ -175,15 +175,32 @@ brief is worded:
 |---|---|---|---|
 | `scout` | Sonnet 5 (claude) | Codebase recon, file/symbol location; artifact = findings file | — |
 | `researcher` | Sonnet 5 (claude) | Docs-first deep research; artifact = citation-anchored note | — |
-| `planner` | Opus 5 (claude) | Goal → validated briefs + acceptance criteria | — |
+| `planner` | Fable 5 low (claude), fallback Opus 5 high | Goal → validated briefs + acceptance criteria | — |
 | `context-keeper` | Opus 5 (claude) | Per-mission memory; mailbox consults, verdict + file:line anchor | — |
-| `executor-sol` | Sonnet 5 hosting GPT-5.6-Sol (gpt) | Default implementer | — |
-| `executor-claude` | Opus 5 (claude) | UI/creative work; degraded-mode substitute; TDD where tests exist | — |
+| `executor-claude-mech` | Sonnet 5 low (claude) | Mechanical class: exact, enumerated, command-verifiable edits, no delegated judgment | — |
+| `executor-claude-standard` | Sonnet 5 high (claude) | Standard class: bounded features/fixes on established patterns, local blast radius | — |
+| `executor-claude` | Opus 5 high (claude) | UI/creative work; degraded-mode substitute; TDD where tests exist | — |
+| `executor-fable-low` | Fable 5 low (claude), fallback Opus 5 high | Expert-class escalation only, reached after opus expert work is defeated — never first-dispatched | — |
+| `executor-fable` | Fable 5 high (claude), fallback Opus 5 high | Apex class: foundational ambiguity, external-contract blast radius, destructive reversibility, hard fences | — |
 | `executor-gemini` | Sonnet 5 hosting Gemini 3.1 Pro (gemini) | Large-context and rotation implementation | — |
-| `reviewer-claude` | Sonnet 5 (claude) | — | gpt- and gemini-authored work |
-| `reviewer-sol` | Sonnet 5 hosting Sol (gpt) | — | claude- and gemini-authored work |
+| `executor-luna` | Sonnet 5 low hosting GPT-5.6-Luna (gpt) — dormant until the gpt lane is effective | Mechanical class, gpt ladder | — |
+| `executor-terra` | Sonnet 5 medium hosting GPT-5.6-Terra (gpt) — dormant until the gpt lane is effective | Standard class, gpt ladder | — |
+| `executor-sol-expert` | Sonnet 5 medium hosting GPT-5.6-Sol (gpt) — dormant until the gpt lane is effective | Expert class, gpt ladder; profile-split successor of the `executor-sol` alias below | — |
+| `executor-sol-apex` | Sonnet 5 high hosting GPT-5.6-Sol (gpt) — dormant until the gpt lane is effective | Apex class, gpt ladder | — |
+| `executor-sol` | — | Alias of `executor-sol-expert` since the r1→r2 Sol split. No read path resolves an alias — it is never routable. | — |
+| `reviewer-claude` | Sonnet 5 (claude) | — | recon/mechanical/standard-class gpt- and gemini-authored work |
+| `reviewer-claude-expert` | Opus 5 high (claude) | — | expert-class gpt- and gemini-authored work |
+| `reviewer-claude-apex` | Fable 5 low (claude), fallback Opus 5 high | — | apex-class gpt- and gemini-authored work |
 | `reviewer-gemini` | Sonnet 5 hosting Gemini (gemini) | — | claude- and gpt-authored work |
-| `convergence` | Fable 5 high hosting Sol (claude+gpt); Opus 5 high on the Fable side when Fable is unavailable | Both convergence moments: ladder step 2 (two-seat consensus on a disputed judgment) and direction-setting plans | — |
+| `reviewer-terra` | Sonnet 5 medium hosting GPT-5.6-Terra (gpt) — dormant until the gpt lane is effective | — | recon/mechanical/standard-class claude- and gemini-authored work |
+| `reviewer-sol-expert-rev` | Sonnet 5 medium hosting GPT-5.6-Sol (gpt) — dormant until the gpt lane is effective | — | expert-class claude- and gemini-authored work; profile-split successor of the `reviewer-sol` alias below |
+| `reviewer-sol-apex-rev` | Sonnet 5 high hosting GPT-5.6-Sol (gpt) — dormant until the gpt lane is effective | — | apex-class claude- and gemini-authored work |
+| `reviewer-sol` | — | Alias of `reviewer-sol-expert-rev` since the r1→r2 Sol split. No read path resolves an alias — it is never routable. | — |
+| `reviewer-degraded-opus` | Opus 5 medium (claude) | — | degraded path only: sonnet-authored recon/mechanical/standard work, when no cross-family reviewer is effectively available |
+| `reviewer-degraded-sonnet` | Sonnet 5 high (claude) | — | degraded path only: opus-authored expert work |
+| `reviewer-degraded-opus-apex` | Opus 5 high (claude) | — | degraded path only: fable-authored apex work (preferred heavy-model pairing) |
+| `reviewer-degraded-fable-apex` | Fable 5 low (claude), fallback Opus 5 high | — | degraded path only: opus-authored apex work (preferred heavy-model pairing) |
+| `convergence` | Fable 5 low (claude), fallback Opus 5 high; dispatches Sol or Gemini directly for the second family | Both convergence moments: ladder step 2 (two-seat consensus on a disputed judgment) and direction-setting plans | — |
 | `plan-counterpart` | Sonnet 5 high hosting Sol (gpt) | The plan moment's second family: challenges a plan at standard rigor, drafts a rival plan at full. Spawned by `convergence`, not by the liaison | — |
 | `crystallizer` | Sonnet 5 (claude) | Sealed corpus → bounded artifact the liaison may read | — |
 | `handoff-recorder` | Sonnet 5 (claude) | One stop, one record; runs the stop writer only | — |
