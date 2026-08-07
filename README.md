@@ -7,7 +7,7 @@
 ### He runs the work. You keep the decisions.
 
 A Claude Code plugin that stops your session from doing the work itself. It
-dispatches sixteen agents — fifteen workers and the butler — writes each of them a brief,
+dispatches thirty-three agents — thirty-two workers and the butler — writes each of them a brief,
 dispatches the work into isolated worktrees, has it signed off by a rival family,
 records everything that happened, and interrupts you only when the decision is
 genuinely yours.
@@ -15,7 +15,7 @@ genuinely yours.
 <p>
 <img src="https://img.shields.io/badge/license-MIT-2A2536?style=flat-square&labelColor=0A0911" alt="MIT licensed">
 <img src="https://img.shields.io/badge/Claude%20Code-plugin-2A2536?style=flat-square&labelColor=0A0911" alt="Claude Code plugin">
-<img src="https://img.shields.io/badge/16-agents-AD7051?style=flat-square&labelColor=0A0911" alt="16 agents">
+<img src="https://img.shields.io/badge/33-agents-AD7051?style=flat-square&labelColor=0A0911" alt="33 agents">
 <img src="https://img.shields.io/badge/the%20record-open-AD7051?style=flat-square&labelColor=0A0911" alt="The record is open">
 </p>
 
@@ -43,10 +43,12 @@ Then Oscar took the post.
 
 ## What he actually does
 
-**The roster.** Sixteen agents, filled the day you install him, never improvised
-mid-mission. (Closed roster: three implementer families, three reviewers, a
-planner, two convergence agents, and the support group — scout, researcher,
-context-keeper, crystallizer, handoff-recorder, fleet-medic.)
+**The roster.** Thirty-three agents, filled the day you install him, never
+improvised mid-mission. (Closed roster: three implementer families — claude
+and gpt scaled across task classes, gemini a single seat — a matching
+reviewer ladder per family, a planner, two convergence agents, and the
+support group — scout, researcher, context-keeper, crystallizer,
+handoff-recorder, fleet-medic.)
 
 **The record.** "Tests pass" is not a sentence. It is a stamped entry with an exit
 code. Not in the record? It didn't happen. (`.maestro/ledger.jsonl`, append-only,
@@ -78,10 +80,14 @@ one answer, or bring you both positions verbatim.
 
 | Role | Agent | What it does |
 |---|---|---|
-| The default implementer | `executor-sol-expert` (`executor-sol` is now an alias of it and does not route) | GPT-5.6-Sol via Codex CLI, the expert rung of the gpt ladder — `executor-luna`/`executor-terra`/`executor-sol-apex` cover mechanical/standard/apex. |
-| The specialist | `executor-claude` | Opus 5. Called in for interface and creative work. |
+| The gpt implementer ladder | `executor-luna` · `executor-terra` · `executor-sol-expert` · `executor-sol-apex` | GPT-5.6 (Luna/Terra/Sol) via Codex CLI, one rung per task class — mechanical, standard, expert, apex. (`executor-sol` is now an alias of `executor-sol-expert` and does not route.) |
+| The specialist | `executor-claude` | Opus 5. Interface and creative work, and the same-family substitute when the gpt lane is down. |
+| The claude implementer ladder | `executor-claude-mech` · `executor-claude-standard` · `executor-fable-low` · `executor-fable` | Sonnet 5 (mechanical, standard) and Fable 5 (expert escalation, apex), class-scaled alongside the specialist. |
 | The wide-context worker | `executor-gemini` | Gemini 3.1 Pro. Large context, and the rotation agent. |
-| The reviewers | `reviewer-claude` · `reviewer-sol-expert-rev` · `reviewer-gemini` | Never from the family that wrote the code. (`reviewer-sol` is now an alias of `reviewer-sol-expert-rev` and does not route.) |
+| The reviewers, for gpt/gemini work | `reviewer-claude` · `reviewer-claude-expert` · `reviewer-claude-apex` | Never from the family that wrote the code; class-scaled recon/standard through expert/apex. |
+| The reviewers, for claude/gemini work | `reviewer-terra` · `reviewer-sol-expert-rev` · `reviewer-sol-apex-rev` | GPT-5.6 via Codex CLI, class-scaled. (`reviewer-sol` is now an alias of `reviewer-sol-expert-rev` and does not route.) |
+| The reviewer, for claude/gpt work | `reviewer-gemini` | Gemini 3.1 Pro. |
+| The degraded-path reviewers | `reviewer-degraded-opus` · `reviewer-degraded-sonnet` · `reviewer-degraded-opus-apex` · `reviewer-degraded-fable-apex` | Same-family, fresh-context fallback used only when no cross-family reviewer is effectively available — always labeled, never counted as cross-family. |
 | The planner | `planner` | Turns "fix everything" into numbered briefs with acceptance criteria. |
 | The convergence pair | `convergence` · `plan-counterpart` | Two uninvolved families, one closed room. Two passes. One answer. |
 | The context-keeper | `context-keeper` | Holds what you meant, not just what you said. |
