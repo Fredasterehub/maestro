@@ -91,11 +91,22 @@ function friction(overrides) {
 {
   const tree = makeTree();
   const rates = computeRates(tree);
+  // Every kind in the closed vocabulary is present at zero — including the
+  // tiered-dispatch kinds (§16.4), which have no writer yet: a kind absent
+  // from the aggregate reads as "never happened here", which is a different
+  // claim from "nothing records this".
   assert.deepStrictEqual(rates.by_kind, {
     'ladder-engaged': 0,
     'seat-degraded': 0,
     'worker-died': 0,
     'revise-verdict': 0,
+    'profile-escalated': 0,
+    'review-reservation-lost': 0,
+    'runtime-profile-mismatch': 0,
+    'provider-rerouted': 0,
+    'quota-rerouted': 0,
+    'safety-refusal-rerouted': 0,
+    'runtime-retried': 0,
   });
   assert.deepStrictEqual(rates.by_mission, {});
   assert.deepStrictEqual(rates.revise_verdict_by_mission, {});
@@ -112,6 +123,11 @@ function friction(overrides) {
   recordFriction(tree, friction({ kind: 'seat-degraded', mission_id: 'm2', seat: 'reviewer-gemini', detail: 'gemini down; claude substitute' }));
   recordFriction(tree, friction({ kind: 'worker-died', mission_id: 'm2', seat: 'executor-sol', detail: 'seat died mid-task; re-dispatched' }));
   recordFriction(tree, friction({ kind: 'revise-verdict', mission_id: 'm3', detail: 'single revise round' }));
+  // Two of the tiered-dispatch kinds, aggregating like any other: one quality
+  // escalation and one infrastructure reroute, counted apart because §9 lets
+  // only the first consume the mission's escalation budget.
+  recordFriction(tree, friction({ kind: 'profile-escalated', mission_id: 'm1', seat: 'executor-fable-low', detail: 'expert work escalated within class after the opus seat' }));
+  recordFriction(tree, friction({ kind: 'provider-rerouted', mission_id: 'm2', seat: 'executor-sol-expert', detail: 'codex lane down mid-task; rerouted in class' }));
 
   const rates = computeRates(tree);
   assert.deepStrictEqual(rates.by_kind, {
@@ -119,13 +135,22 @@ function friction(overrides) {
     'seat-degraded': 1,
     'worker-died': 1,
     'revise-verdict': 3,
+    'profile-escalated': 1,
+    'review-reservation-lost': 0,
+    'runtime-profile-mismatch': 0,
+    'provider-rerouted': 1,
+    'quota-rerouted': 0,
+    'safety-refusal-rerouted': 0,
+    'runtime-retried': 0,
   });
-  assert.strictEqual(rates.by_mission.m1.total, 3);
+  assert.strictEqual(rates.by_mission.m1.total, 4);
   assert.strictEqual(rates.by_mission.m1['revise-verdict'], 2);
   assert.strictEqual(rates.by_mission.m1['ladder-engaged'], 1);
-  assert.strictEqual(rates.by_mission.m2.total, 2);
+  assert.strictEqual(rates.by_mission.m1['profile-escalated'], 1);
+  assert.strictEqual(rates.by_mission.m2.total, 3);
   assert.strictEqual(rates.by_mission.m2['seat-degraded'], 1);
   assert.strictEqual(rates.by_mission.m2['worker-died'], 1);
+  assert.strictEqual(rates.by_mission.m2['provider-rerouted'], 1);
   assert.strictEqual(rates.by_mission.m3.total, 1);
   assert.deepStrictEqual(rates.revise_verdict_by_mission, { m1: 2, m2: 0, m3: 1 });
   assert.strictEqual(rates.ladder_engaged_total, 1);
