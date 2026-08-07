@@ -320,6 +320,20 @@ function migrateDegradedReview(config) {
     'reviewer-degraded-opus-apex': { model: 'opus-5', family: 'claude', effort: 'high' },
     'reviewer-degraded-fable-apex': { model: 'fable-5', family: 'claude', effort: 'low' },
   });
+  // battery D10: rows map each class to a bare seat-name string per author
+  // model — a shape the closed degraded_review block (checkDegradedReviewBlock
+  // below) permits no third field on, so a placement here carries no
+  // `status: "estimated"` marker the way tiers.classes candidates do (§13,
+  // design §4/§6). That is not the same vocabulary silently dropped: every
+  // bundle reviewFor resolves off this table — cross-family or degraded —
+  // already carries `evidence_level: "unknown"` (design §16.2's
+  // profile-outcome vocabulary), which is the honesty `status: "estimated"`
+  // exists for, stated at the point the caller actually reads it rather than
+  // in the row's own shape. Reconciled here rather than widening rows to
+  // { seat, status } objects: that would touch this block's validator, every
+  // reviewFor degraded-path read (`row[modelKey]`), and every fixture
+  // constructing a row literal, for a marker the resolved bundle already
+  // carries under its own name.
   out.degraded_review = {
     notice: DEGRADED_REVIEW_NOTICE,
     fallback_notice: DEGRADED_REVIEW_FALLBACK_NOTICE,
