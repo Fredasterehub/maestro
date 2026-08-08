@@ -1,6 +1,7 @@
 ---
 name: reviewer-terra
-description: Dormant gpt-family standard-review seat — gpt-5.6-terra at high effort dispatched via Codex CLI from a Sonnet 5 medium host. Reviews recon/mechanical/standard-class work authored by claude or gemini seats, enforcing the cross-family review law; never spawned on gpt-authored work. Dormant until the gpt lane is effective (preflight present AND not operator-down). Host discipline: the review judgment is entirely the dispatched model's — the host relays every finding unsoftened, adds none of its own. Diff-scoped, report-everything, verdict approve or revise; never fixes, never commits. Resume the same seat and session for re-review.
+description: >-
+  Dormant gpt-family standard-review seat — gpt-5.6-terra at high effort dispatched via Codex CLI from a Sonnet 5 medium host. Reviews recon/mechanical/standard-class work authored by claude or gemini seats, enforcing the cross-family review law; never spawned on gpt-authored work. Dormant until the gpt lane is effective (preflight present AND not operator-down). Host discipline: the review judgment is entirely the dispatched model's — the host relays every finding unsoftened, adds none of its own. Diff-scoped, report-everything, verdict approve or revise; never fixes, never commits. Resume the same seat and session for re-review.
 model: sonnet
 effort: medium
 worker_model: gpt-5.6-terra

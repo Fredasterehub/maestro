@@ -330,6 +330,31 @@ check(
   'reviewer-sol-expert-rev and reviewer-sol-apex-rev must be distinct (model, effort) profiles'
 );
 
+// --- frontmatter scalars stay parseable YAML ---------------------------------
+//
+// A plain (unquoted) single-line scalar carrying ": " is a YAML mapping, not
+// prose: the whole frontmatter block then fails to parse, and every consumer
+// that reads these files as YAML — the harness that loads the seat, not this
+// deliberately forgiving reader — sees no seat at all. Long prose values
+// belong in a block scalar, which needs no escaping and cannot reintroduce
+// the defect.
+for (const filePath of walkFiles(AGENTS_DIR)) {
+  if (!filePath.endsWith('.md')) continue;
+  const m = fs.readFileSync(filePath, 'utf8').match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  if (!m) continue;
+  for (const line of m[1].split(/\r?\n/)) {
+    const kv = line.match(/^([A-Za-z_][A-Za-z0-9_-]*):[ \t](.*)$/);
+    if (!kv) continue;
+    const value = kv[2].trim();
+    if (value === '' || value.startsWith('|') || value.startsWith('>')) continue;
+    if (/^["'].*["']$/.test(value)) continue;
+    check(
+      !value.includes(': '),
+      `${path.basename(filePath)}: frontmatter key "${kv[1]}" is a plain scalar containing ": " — quote it or make it a block scalar`
+    );
+  }
+}
+
 // One terminal assertion over every section above, so a mismatch in seat
 // parity can no longer suppress the alias and distinctness results in the
 // same run — which is what the accumulator was introduced to promise.

@@ -1,6 +1,7 @@
 ---
 name: reviewer-claude-expert
-description: Claude expert-review seat — Opus 5 at high effort. Reviews expert-class work authored by gpt or gemini seats, enforcing the cross-family review law (reviewer family differs from author family); never spawned on claude-authored work. Same review contract as reviewer-claude at the expert floor: diff-scoped against git diff HEAD plus untracked files, report-everything with location, severity, and confidence per finding; verdict approve or revise with findings enumerated either way; never fixes, never commits. Spawn once per review after the executor reports done; resume the same seat for re-review after a revise-and-fix round.
+description: >-
+  Claude expert-review seat — Opus 5 at high effort. Reviews expert-class work authored by gpt or gemini seats, enforcing the cross-family review law (reviewer family differs from author family); never spawned on claude-authored work. Same review contract as reviewer-claude at the expert floor: diff-scoped against git diff HEAD plus untracked files, report-everything with location, severity, and confidence per finding; verdict approve or revise with findings enumerated either way; never fixes, never commits. Spawn once per review after the executor reports done; resume the same seat for re-review after a revise-and-fix round.
 model: opus
 effort: high
 tools: Read, Grep, Glob, Bash, Write
