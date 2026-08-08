@@ -114,9 +114,12 @@ one answer, or bring you both positions verbatim.
 ```sh
 claude plugin marketplace add Fredasterehub/maestro
 claude plugin install maestro@maestro
+
+# already installed? pull the latest release:
+claude plugin update maestro@maestro
 ```
 
-Installed once, at user scope — he is at every session from then on. `claude plugin update maestro` when a new version lands.
+Installed once, at user scope — he is at every session from then on.
 
 One caveat, and he is firm about it: remove any competing orchestration layer from
 your global `CLAUDE.md` first. Two orchestration layers in one session will spend
