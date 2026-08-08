@@ -1252,6 +1252,42 @@ function loadRouting(treeRoot) {
   return { config, activeFile, digest: actualDigest };
 }
 
+// The config a RECORD names, not the one the tree is pointing at today. A
+// route record carries `routing_config` precisely so its own decisions can
+// be re-read against the table that was authoritative when it was written;
+// reading the active pointer instead re-derives the record against a config
+// it never saw, and a since-revised seat table then contradicts a record
+// that was lawful. Same reads as loadRouting minus the pointer: the digest
+// belongs to the pointer, which says nothing about a non-active file, so
+// the caller gets the digest of the bytes actually read.
+function loadDatedConfig(treeRoot, filename) {
+  if (typeof filename !== 'string' || !DATED_CONFIG_RE.test(filename)) {
+    throw new Error(`routing: "${filename}" is not a valid routing-YYYY-MM-DD-N.json basename`);
+  }
+  const configPath = path.join(routingDir(treeRoot), filename);
+  refuseSymlink(configPath, filename);
+  let raw;
+  try {
+    raw = fs.readFileSync(configPath);
+  } catch (err) {
+    if (err.code === 'ENOENT') {
+      throw new Error(`routing: dated config "${filename}" does not exist at ${configPath}`);
+    }
+    throw err;
+  }
+  let config;
+  try {
+    config = JSON.parse(raw.toString('utf8'));
+  } catch (err) {
+    throw new Error(`routing: dated config "${filename}" is not valid JSON: ${err.message}`);
+  }
+  const { ok, errors } = validateRoutingConfig(config);
+  if (!ok) {
+    throw new Error(`routing: dated config "${filename}" failed shape validation: ${errors.join('; ')}`);
+  }
+  return { config, activeFile: filename, digest: sha256Of(raw) };
+}
+
 // --- degraded-mode composition -----------------------------------------------
 
 function readPreflight(treeRoot) {
@@ -2316,6 +2352,7 @@ module.exports = {
   init,
   revise,
   loadRouting,
+  loadDatedConfig,
   effectiveRouting,
   reviewFor,
   tierFor,

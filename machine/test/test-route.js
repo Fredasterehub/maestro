@@ -634,6 +634,33 @@ function reviewInput(authorRouteSeq, overrides) {
   const noConfig = seatFamily(bare, 'reviewer-gemini');
   assert.strictEqual(noConfig.family, null);
   assert.match(noConfig.reason, /the routing config could not be read/);
+
+  // The DATED config a record names is what the derivation reads, not the
+  // tree's active pointer: a seat re-seated by a later revise must still
+  // derive the family the record was written against.
+  const routingDir = path.join(root, 'routing');
+  const active = JSON.parse(fs.readFileSync(path.join(routingDir, 'active.json'), 'utf8'));
+  const pinnedName = 'routing-2020-01-01-1.json';
+  const pinned = JSON.parse(fs.readFileSync(path.join(routingDir, active.active_config), 'utf8'));
+  pinned.seats['reviewer-retired'] = { model: 'sonnet-5', family: 'claude', effort: 'high' };
+  fs.writeFileSync(path.join(routingDir, pinnedName), JSON.stringify(pinned, null, 2) + '\n');
+  assert.strictEqual(
+    seatFamily(root, 'reviewer-retired').family,
+    null,
+    'the seat is absent from the tree-active config'
+  );
+  assert.deepStrictEqual(
+    seatFamily(root, 'reviewer-retired', pinnedName),
+    { family: 'claude', reason: null },
+    'the named dated config is the authority, not the active pointer'
+  );
+  // A named config the tree no longer carries falls back to the active one
+  // rather than making an honest record underivable.
+  assert.deepStrictEqual(
+    seatFamily(root, 'reviewer-gemini', 'routing-2019-01-01-1.json'),
+    { family: 'gemini', reason: null },
+    'a missing dated config falls back to the active config'
+  );
 }
 
 // --- review route: artifact identity is one object, never a digest/SHA mix ---

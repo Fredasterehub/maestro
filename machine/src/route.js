@@ -54,7 +54,7 @@ const path = require('node:path');
 const { withLock, appendRecord, readRecords } = require('./jsonl.js');
 const { readJson } = require('./atomic-json.js');
 const { BRIEF_TIER_VALUES } = require('./validators.js');
-const { FAMILIES, DATED_CONFIG_RE, loadRouting } = require('./routing.js');
+const { FAMILIES, DATED_CONFIG_RE, loadRouting, loadDatedConfig } = require('./routing.js');
 
 const LEDGER_BASENAME = 'ledger.jsonl';
 const STATE_BASENAME = 'state.json';
@@ -208,10 +208,32 @@ function checkHostPair(errors, model, effort, modelKey, effortKey, label) {
 // table does not carry, and a seat entry that records no family, likewise
 // establish nothing. Callers refuse on `family === null` — a family that
 // cannot be established has not been established, and there is no default.
-function seatFamily(treeRoot, seatName) {
+// PREFERENCE, not a requirement: the named config is the authority when the
+// tree still carries it, and the active config stands in when it does not.
+// A dated file that is gone is not evidence the record lied — it is a tree
+// that was pruned or restored — and refusing every such derivation would
+// turn housekeeping into an unclosable mission. Either way the family is
+// derived from a real config rather than accepted from the record.
+function readSeatConfig(treeRoot, configFile) {
+  if (configFile === undefined || configFile === null) return loadRouting(treeRoot).config;
+  try {
+    return loadDatedConfig(treeRoot, configFile).config;
+  } catch (err) {
+    return loadRouting(treeRoot).config;
+  }
+}
+
+// `configFile` is the dated config the CALLER's own record names. A route
+// record carries `routing_config` exactly so its family can be re-derived
+// against the table that was authoritative when it was written; deriving it
+// from the tree-active pointer instead reads a config the record never saw,
+// and a since-revised seat table then contradicts a record that was lawful
+// when written. Callers without a record in hand pass nothing and get the
+// active config, which for them IS the authority.
+function seatFamily(treeRoot, seatName, configFile) {
   let config;
   try {
-    ({ config } = loadRouting(treeRoot));
+    config = readSeatConfig(treeRoot, configFile);
   } catch (err) {
     return { family: null, reason: `the routing config could not be read (${err.message})` };
   }
@@ -275,6 +297,11 @@ const FAMILY_DERIVATION = {
 function checkFamilyDerived(treeRoot, phase, input) {
   const spec = FAMILY_DERIVATION[phase];
   const seatName = input[spec.seatField];
+  // Reservation time: the record is being written NOW, so the tree's active
+  // config is the authority it is being written against — there is no
+  // earlier config for it to be re-read against yet. The dated-config read
+  // is for close-time re-derivation (mission.js), where the record already
+  // exists and the tree may have been revised since.
   const { family, reason } = seatFamily(treeRoot, seatName);
   if (family === null) {
     throw new Error(
