@@ -21,6 +21,14 @@ const { appendRecord } = require('./jsonl.js');
 
 const MISSING_STATE = Symbol('preflight.missing-state');
 const PROBE_TIMEOUT_MS = 15000;
+// The live lane probe actually reaches the provider, so it gets its own,
+// longer budget: a cold CLI start plus one trivial round trip.
+const LANE_PROBE_TIMEOUT_MS = 60000;
+
+// The lane classification vocabulary. Only "available" routes a lane up;
+// the other three are all "that lane is down", distinguished so a reader
+// (and the handoff) can tell a quota wall from a broken install.
+const LANE_STATES = ['available', 'quota-limited', 'absent', 'failing'];
 
 function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -59,6 +67,97 @@ function observeSemantic(probe) {
   if (probe.errorCode === 'ENOENT') return 'absent';
   if (probe.errorCode !== null || probe.exit === null) return 'unknown';
   return probe.exit === 0 ? 'present' : 'absent';
+}
+
+// The live probe needs the whole error text (that is where a quota wall
+// announces itself), so it captures stdout+stderr rather than execProbe's
+// one truncated line.
+function execLaneProbe(bin, args) {
+  const out = spawnSync(bin, args, { encoding: 'utf8', timeout: LANE_PROBE_TIMEOUT_MS });
+  const text = `${typeof out.stdout === 'string' ? out.stdout : ''}\n${typeof out.stderr === 'string' ? out.stderr : ''}`.trim();
+  return {
+    cmd: [bin, ...args].join(' '),
+    exit: out.status === null ? null : out.status,
+    errorCode: out.error ? out.error.code || 'EUNKNOWN' : null,
+    text,
+  };
+}
+
+// A quota wall is a lane that exists and answers — it just refuses to work
+// right now — so it must never be confused with a broken install. Every
+// provider phrases it differently; these are the shapes seen in the wild
+// plus the transport-level ones (HTTP 429, gRPC RESOURCE_EXHAUSTED).
+const QUOTA_PATTERNS = [
+  /usage limit/i,
+  /\bquota\b/i,
+  /rate[ -]?limit/i,
+  /\b429\b/,
+  /resource[_ ]exhausted/i,
+  /too many requests/i,
+];
+
+// Best-effort only: providers state the reset in prose, in whatever format
+// they like, and a wrong guess here is worse than no answer. The captured
+// text is returned verbatim (never reformatted into a timestamp we cannot
+// actually verify), and null means "the error named no reset time".
+const RESET_PATTERNS = [
+  /try again (?:at|after|on)\s+([^.\n]+)/i,
+  /resets?\s+(?:at|on|in)\s+([^.\n]+)/i,
+  /retry[ -]?after[:\s]+([^.\n]+)/i,
+  /available again (?:at|on)\s+([^.\n]+)/i,
+];
+
+function parseQuotaReset(text) {
+  for (const pattern of RESET_PATTERNS) {
+    const match = pattern.exec(text);
+    if (match) return match[1].trim().slice(0, 80);
+  }
+  return null;
+}
+
+// Classifies one live probe result. Exit 0 is the only route to
+// "available": a lane is up when it actually completed a trivial job, not
+// when its binary exists. ENOENT is "absent", quota text in any failing
+// outcome is "quota-limited", and everything else — nonzero exit, timeout,
+// signal, spawn error — is "failing".
+function classifyLaneProbe(probe) {
+  if (probe.errorCode === 'ENOENT') {
+    return { state: 'absent', reset_at: null, detail: 'binary not found on PATH' };
+  }
+  if (probe.errorCode === null && probe.exit === 0) {
+    return { state: 'available', reset_at: null, detail: null };
+  }
+  const text = probe.text || '';
+  if (QUOTA_PATTERNS.some((pattern) => pattern.test(text))) {
+    return { state: 'quota-limited', reset_at: parseQuotaReset(text), detail: text.slice(0, 200) };
+  }
+  const detail =
+    probe.errorCode === 'ETIMEDOUT'
+      ? `probe timed out after ${LANE_PROBE_TIMEOUT_MS / 1000}s`
+      : probe.errorCode !== null
+        ? `spawn error ${probe.errorCode}`
+        : `exit ${probe.exit}${text === '' ? '' : `: ${text.slice(0, 200)}`}`;
+  return { state: 'failing', reset_at: null, detail };
+}
+
+// The one live probe, shared by both external lanes: a minimal, cheap,
+// read-only job whose only question is "does this lane do work right now".
+// It never throws — an unreachable lane is a classification, not an error,
+// and preflight as a whole must still exit 0.
+const LANE_PROBES = {
+  codex: ['codex', ['exec', '--skip-git-repo-check', '--sandbox', 'read-only', 'ok']],
+  gemini: ['gemini', ['-p', 'ok']],
+};
+
+function probeLane(laneKey) {
+  const [bin, args] = LANE_PROBES[laneKey];
+  let probe;
+  try {
+    probe = execLaneProbe(bin, args);
+  } catch (err) {
+    probe = { cmd: [bin, ...args].join(' '), exit: null, errorCode: err.code || 'EUNKNOWN', text: '' };
+  }
+  return { ...classifyLaneProbe(probe), cmd: probe.cmd };
 }
 
 function pairFrom(observed) {
@@ -100,6 +199,23 @@ function probeNode() {
   return { ...pairFrom(observed), version: observed === 'present' ? version.firstLine : null, checks: { version } };
 }
 
+// The lane a presence probe never got far enough to test: a missing binary
+// is an absent lane, and an installed binary that misbehaved is a failing
+// one. Recorded rather than probed, so the state is always populated.
+function laneFromPresence(observed, why) {
+  return observed === 'absent'
+    ? { state: 'absent', reset_at: null, detail: why, cmd: null }
+    : { state: 'failing', reset_at: null, detail: why, cmd: null };
+}
+
+// The lane state IS the routing token for a probed lane: anything but
+// "available" routes as down. `observed` keeps measuring what the presence
+// probes saw, so an installed, authenticated, quota-walled CLI still reads
+// "present" as a measurement while routing away from it.
+function lanePair(lane, observed) {
+  return { routing: lane.state === 'available' ? 'present' : 'absent', observed };
+}
+
 function probeCodex() {
   const version = execProbe('codex', ['--version']);
   const versionObserved = observePresence(version);
@@ -107,20 +223,24 @@ function probeCodex() {
   if (versionObserved !== 'present') {
     // auth: null means NOT COMPUTED — the auth check never ran, which is a
     // different recorded fact from "ran and failed".
-    return { ...pairFrom(versionObserved), version: null, checks: { version, auth: null }, models };
+    const lane = laneFromPresence(versionObserved, 'codex --version did not report a working CLI');
+    return { ...lanePair(lane, versionObserved), version: null, checks: { version, auth: null }, lane, models };
   }
   const auth = execProbe('codex', ['login', 'status']);
   const observed = observeSemantic(auth);
-  return { ...pairFrom(observed), version: version.firstLine, checks: { version, auth }, models };
+  const lane = observed === 'present' ? probeLane('codex') : laneFromPresence('failing', 'codex login status reported not authenticated');
+  return { ...lanePair(lane, observed), version: version.firstLine, checks: { version, auth }, lane, models };
 }
 
 function probeGemini() {
   const version = execProbe('gemini', ['--version']);
   const observed = observePresence(version);
+  const lane = observed === 'present' ? probeLane('gemini') : laneFromPresence(observed, 'gemini --version did not report a working CLI');
   return {
-    ...pairFrom(observed),
+    ...lanePair(lane, observed),
     version: observed === 'present' ? version.firstLine : null,
     checks: { version },
+    lane,
     models: buildModelsMap('gemini'),
   };
 }
@@ -185,8 +305,8 @@ function run(treeRoot) {
     // model x effort map (design §11.1) so a future consumer never has to
     // distinguish "no map" from "empty map" for any probed provider.
     per_provider: {
-      codex: { routing: codex.routing, observed: codex.observed, models: codex.models },
-      gemini: { routing: gemini.routing, observed: gemini.observed, models: gemini.models },
+      codex: { routing: codex.routing, observed: codex.observed, lane: codex.lane, models: codex.models },
+      gemini: { routing: gemini.routing, observed: gemini.observed, lane: gemini.lane, models: gemini.models },
       antigravity: { routing: antigravity.routing, observed: antigravity.observed, models: antigravity.models },
     },
     // The project is the tree root's parent.
@@ -197,12 +317,16 @@ function run(treeRoot) {
   // Ledger first (evidence), state second (pointer): a crash between the two
   // leaves evidence without a pointer, never a pointer without evidence.
   const summarize = (p) => ({ routing: p.routing, observed: p.observed });
+  // A lane's classification and its reset time are the two facts a reader of
+  // the ledger needs to explain a rerouted dispatch, so they travel with the
+  // pair rather than only in state.json.
+  const summarizeLane = (p) => ({ ...summarize(p), lane: p.lane.state, lane_reset_at: p.lane.reset_at });
   appendRecord(ledgerPath, {
     kind: 'preflight',
     payload: {
       node: summarize(block.node),
-      codex: summarize(block.providers.codex),
-      gemini: summarize(block.providers.gemini),
+      codex: summarizeLane(block.providers.codex),
+      gemini: summarizeLane(block.providers.gemini),
       antigravity: summarize(block.providers.antigravity),
       git: summarize(block.git),
       gh: summarize(block.gh),
@@ -243,6 +367,11 @@ function describeModels(models) {
   return entries.map(([id, m]) => `${id}:${m.status}[${m.efforts.join(',')}]`).join(', ');
 }
 
+function describeLane(lane) {
+  const parts = [lane.reset_at === null ? null : `resets ${lane.reset_at}`, lane.detail].filter((p) => p !== null && p !== '');
+  return `    lane: ${lane.state}${parts.length === 0 ? '' : ` — ${parts.join('; ')}`}\n`;
+}
+
 function renderSummary(block) {
   let out = `preflight @ ${block.checked_ts}\n`;
   out += describe('node', block.node, block.node.version);
@@ -256,6 +385,7 @@ function renderSummary(block) {
           ? 'CLI present, not authenticated'
           : 'CLI present, auth check inconclusive';
   out += describe('codex', codex, codexExtra);
+  out += describeLane(codex.lane);
   out += `    models: ${describeModels(codex.models)}\n`;
   const antigravity = block.providers.antigravity;
   // The gemini seat's routing prefers antigravity over the gemini CLI when
@@ -269,6 +399,7 @@ function renderSummary(block) {
     .filter((part) => part !== null)
     .join(', ');
   out += describe('gemini', block.providers.gemini, geminiExtra === '' ? null : geminiExtra);
+  out += describeLane(block.providers.gemini.lane);
   out += `    models: ${describeModels(block.providers.gemini.models)}\n`;
   out += describe('antigravity', antigravity, antigravity.version);
   out += `    models: ${describeModels(antigravity.models)}\n`;
@@ -285,8 +416,9 @@ usage: preflight.js run <treeRoot>
 
 Probes (argv-style subprocesses, ${PROBE_TIMEOUT_MS / 1000}s timeout each):
   node         node --version
-  codex        codex --version, then codex login status (exit code IS the check)
-  gemini       gemini --version
+  codex        codex --version, then codex login status (exit code IS the check),
+               then the LIVE lane probe below
+  gemini       gemini --version, then the LIVE lane probe below
   antigravity  antigravity --version — its own capability pair, never folded
                into gemini's; the gemini seat's routing prefers antigravity
                over the gemini CLI when antigravity's token reads "present"
@@ -299,6 +431,20 @@ Each capability is recorded as the pair { routing: present|absent,
 observed: present|absent|unknown }: a probe that errors unexpectedly
 (timeout, signal, crash) is observed "unknown" and routes as absent —
 degraded, but never silently rounded down to a measured absence.
+
+codex and gemini additionally carry a LIVE lane probe: one minimal, cheap,
+read-only job (codex exec --skip-git-repo-check --sandbox read-only, gemini
+-p) with a ${LANE_PROBE_TIMEOUT_MS / 1000}s timeout, recorded as
+lane: { state, reset_at, detail, cmd } with state one of
+${LANE_STATES.join(' | ')}. Only "available" — the probe actually completed
+a trivial job — routes the lane up; a quota wall reads "quota-limited" and
+carries the reset time when the provider's error text states one (best
+effort, verbatim, null when it does not); a missing binary is "absent"; and
+any other outcome (nonzero exit, timeout, signal) is "failing". The lane
+state IS the routing token: routing reads "present" only for "available",
+so an installed, authenticated, quota-walled CLI still measures
+observed "present" while routing away from it. An unreachable lane is a
+classification, never an error — it can never fail preflight as a whole.
 
 codex, gemini, and antigravity additionally carry an exact model x effort
 capability map: models: { <model-id>: { status: present|absent|unknown,
@@ -354,4 +500,4 @@ if (require.main === module) {
   main(process.argv.slice(2));
 }
 
-module.exports = { run, PROBE_TIMEOUT_MS };
+module.exports = { run, PROBE_TIMEOUT_MS, LANE_PROBE_TIMEOUT_MS, LANE_STATES, classifyLaneProbe, parseQuotaReset };

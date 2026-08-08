@@ -32,12 +32,16 @@ fs.writeFileSync(
   '#!/bin/sh\n' +
     'if [ "$1" = "--version" ]; then echo "codex-cli 9.9.9"; exit ${FAKE_CODEX_VERSION_EXIT:-0}; fi\n' +
     'if [ "$1" = "login" ] && [ "$2" = "status" ]; then exit ${FAKE_CODEX_AUTH_EXIT:-0}; fi\n' +
+    'if [ "$1" = "exec" ]; then echo "${FAKE_CODEX_EXEC_MSG:-ok}" >&2; exit ${FAKE_CODEX_EXEC_EXIT:-0}; fi\n' +
     'exit 2\n',
   { mode: 0o755 }
 );
 fs.writeFileSync(
   path.join(fakeBin, 'gemini'),
-  '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "9.9.9"; exit ${FAKE_GEMINI_VERSION_EXIT:-0}; fi\nexit 2\n',
+  '#!/bin/sh\n' +
+    'if [ "$1" = "--version" ]; then echo "9.9.9"; exit ${FAKE_GEMINI_VERSION_EXIT:-0}; fi\n' +
+    'if [ "$1" = "-p" ]; then echo "${FAKE_GEMINI_EXEC_MSG:-ok}" >&2; exit ${FAKE_GEMINI_EXEC_EXIT:-0}; fi\n' +
+    'exit 2\n',
   { mode: 0o755 }
 );
 fs.writeFileSync(
@@ -95,6 +99,11 @@ function assertModelsShape(models, label) {
   assert.strictEqual(block.providers.codex.checks.auth, null, 'A: auth never ran, so it is null (NOT COMPUTED)');
   assertPair(block.providers.gemini, 'absent', 'absent', 'A gemini');
   assertPair(block.providers.antigravity, 'absent', 'absent', 'A antigravity');
+  // Classification 3 of 4: no binary on PATH is a measured "absent" lane,
+  // recorded without ever running the live probe.
+  assert.strictEqual(block.providers.codex.lane.state, 'absent', 'A codex lane absent');
+  assert.strictEqual(block.providers.gemini.lane.state, 'absent', 'A gemini lane absent');
+  assert.strictEqual(block.providers.codex.lane.reset_at, null, 'A: an absent lane states no reset time');
   assertPair(block.git, 'absent', 'absent', 'A git');
   assertPair(block.gh, 'absent', 'absent', 'A gh');
   assert.match(block.checked_ts, /^\d{4}-\d{2}-\d{2}T.*Z$/);
@@ -143,6 +152,12 @@ function assertModelsShape(models, label) {
   assertPair(block.providers.gemini, 'present', 'present', 'B gemini');
   assertPair(block.providers.antigravity, 'present', 'present', 'B antigravity');
   assert.strictEqual(block.providers.antigravity.version, 'antigravity 1.0.0');
+  // Classification 1 of 4: the live probe completed a trivial job, so the
+  // lane is available and routes up.
+  assert.strictEqual(block.providers.codex.lane.state, 'available', 'B codex lane available');
+  assert.strictEqual(block.providers.gemini.lane.state, 'available', 'B gemini lane available');
+  assert.match(block.providers.codex.lane.cmd, /^codex exec /, 'B: the lane probe records the exact command it ran');
+  assert.match(cli.stdout, /lane: available/, 'B: the lane state renders in the summary');
   assert.match(cli.stdout, /codex\s+present/);
   assert.match(cli.stdout, /gemini\s+present.*prefers antigravity/, 'B: preference recorded on the gemini line');
   assert.match(cli.stdout, /antigravity\s+present/);
@@ -199,7 +214,10 @@ function assertModelsShape(models, label) {
   const preflights = records.filter((r) => r.kind === 'preflight');
   assert.strictEqual(preflights.length, 5, 'one preflight ledger record per run');
   const last = preflights[preflights.length - 1];
-  assert.deepStrictEqual(last.codex, { routing: 'absent', observed: 'absent' });
+  // Case D: authenticated check failed, so the live probe never ran and the
+  // lane is recorded from the presence evidence alone.
+  assert.deepStrictEqual(last.codex, { routing: 'absent', observed: 'absent', lane: 'failing', lane_reset_at: null });
+  assert.deepStrictEqual(last.gemini, { routing: 'present', observed: 'present', lane: 'available', lane_reset_at: null });
   assert.deepStrictEqual(last.node, { routing: 'present', observed: 'present' });
   assert.deepStrictEqual(last.antigravity, { routing: 'present', observed: 'present' }, 'D still had antigravity on PATH via fakeBin');
 }
@@ -212,6 +230,101 @@ function assertModelsShape(models, label) {
   assert.strictEqual(effective.preflight_recorded, true);
   assert.deepStrictEqual(effective.degraded_modes, ['codex_down']);
   assert.strictEqual(effective.seat_substitutions['executor-sol-expert'], 'executor-claude');
+}
+
+// Case E: the real-world 2026-08-08 case — codex is installed and
+// authenticated, and the live probe comes back on a usage limit that names
+// its own reset time. Classification 2 of 4: quota-limited, observed
+// "present" (the CLI genuinely is there), routed as absent.
+{
+  const { cli, block } = runPreflight({
+    path: `${fakeBin}:${nodeDir}`,
+    vars: {
+      FAKE_CODEX_EXEC_EXIT: '1',
+      FAKE_CODEX_EXEC_MSG: 'You have hit your usage limit. Please try again at 2026-08-09T04:00:00Z.',
+    },
+  });
+  assertPair(block.providers.codex, 'absent', 'present', 'E codex');
+  assert.strictEqual(block.providers.codex.lane.state, 'quota-limited');
+  assert.strictEqual(block.providers.codex.lane.reset_at, '2026-08-09T04:00:00Z', 'E: the reset time is parsed out of the error text');
+  assert.strictEqual(block.providers.codex.checks.auth.exit, 0, 'E: the CLI really is authenticated');
+  assert.strictEqual(block.per_provider.codex.lane.state, 'quota-limited', 'E: the bare routing surface carries the lane state');
+  assert.match(cli.stdout, /lane: quota-limited — resets 2026-08-09T04:00:00Z/);
+
+  // Routing keys off the lane state, not mere presence: a quota-walled codex
+  // is codex_down, and every gpt seat resolves to its Claude substitute.
+  const { effectiveRouting } = require(path.join(SRC, 'routing.js'));
+  const effective = effectiveRouting(root);
+  assert.deepStrictEqual(effective.degraded_modes, ['codex_down'], 'E: the quota wall flips the lane down');
+  assert.strictEqual(effective.seat_substitutions['executor-sol-expert'], 'executor-claude');
+  assert.strictEqual(effective.seat_substitutions['reviewer-terra'], 'reviewer-claude');
+  assert.deepStrictEqual(effective.lane_states.gpt, { state: 'quota-limited', reset_at: '2026-08-09T04:00:00Z' });
+  assert.deepStrictEqual(effective.lane_states.gemini, { state: 'available', reset_at: null });
+  assert.ok(
+    effective.notices.some((n) => n.includes('hit its usage limit') && n.includes('2026-08-09T04:00:00Z')),
+    'E: a notice names the cause and the reset time'
+  );
+  // The gemini lane stayed available, so claude-authored standard work keeps
+  // its gemini reviewer while losing the gpt rung the downed lane carried.
+  assert.deepStrictEqual(effective.review_routing.claude.standard, ['reviewer-gemini']);
+}
+
+// Case F: the live probe fails for a reason that is not a quota wall —
+// classification 4 of 4. The lane is down, but it is never relabeled as a
+// quota wall, and preflight still exits 0.
+{
+  const { cli, block } = runPreflight({
+    path: `${fakeBin}:${nodeDir}`,
+    vars: { FAKE_GEMINI_EXEC_EXIT: '7', FAKE_GEMINI_EXEC_MSG: 'internal error: model backend unreachable' },
+  });
+  assertPair(block.providers.gemini, 'absent', 'present', 'F gemini');
+  assert.strictEqual(block.providers.gemini.lane.state, 'failing');
+  assert.strictEqual(block.providers.gemini.lane.reset_at, null, 'F: a failing lane claims no reset time');
+  assert.match(block.providers.gemini.lane.detail, /exit 7.*model backend unreachable/s);
+  assert.match(cli.stdout, /lane: failing/);
+
+  const { effectiveRouting } = require(path.join(SRC, 'routing.js'));
+  const effective = effectiveRouting(root);
+  assert.deepStrictEqual(effective.degraded_modes, ['gemini_down'], 'F: a failing lane is that lane down');
+  assert.strictEqual(effective.seat_substitutions['executor-gemini'], 'executor-claude');
+  assert.strictEqual(effective.seat_substitutions['reviewer-gemini'], 'reviewer-claude');
+  assert.deepStrictEqual(effective.lane_states.gemini, { state: 'failing', reset_at: null });
+}
+
+// The classifier itself, against synthesized probe results — every branch
+// reachable without a subprocess at all, real CLI or fake.
+{
+  const { classifyLaneProbe, parseQuotaReset, LANE_STATES } = require(PREFLIGHT);
+  const probe = (over) => ({ cmd: 'x', exit: 1, errorCode: null, text: '', ...over });
+
+  assert.deepStrictEqual(classifyLaneProbe(probe({ exit: 0 })), { state: 'available', reset_at: null, detail: null });
+  assert.strictEqual(classifyLaneProbe(probe({ errorCode: 'ENOENT', exit: null })).state, 'absent');
+  assert.strictEqual(classifyLaneProbe(probe({ errorCode: 'ETIMEDOUT', exit: null })).state, 'failing');
+  assert.match(classifyLaneProbe(probe({ errorCode: 'ETIMEDOUT', exit: null })).detail, /timed out after 60s/);
+  assert.strictEqual(classifyLaneProbe(probe({ text: 'stack overflow' })).state, 'failing');
+
+  // Every quota phrasing the wild uses, at whatever exit code, plus the
+  // transport-level ones — all one classification.
+  for (const text of [
+    'You have hit your usage limit',
+    'Quota exceeded for this project',
+    'rate-limit reached',
+    'HTTP 429 Too Many Requests',
+    'RESOURCE_EXHAUSTED',
+  ]) {
+    assert.strictEqual(classifyLaneProbe(probe({ text })).state, 'quota-limited', `quota text: ${text}`);
+  }
+  // Quota text never wins over a successful run: exit 0 is exit 0.
+  assert.strictEqual(classifyLaneProbe(probe({ exit: 0, text: 'usage limit' })).state, 'available');
+
+  // Reset parsing is best effort and verbatim — no reformatting into a
+  // timestamp nothing measured, and null when the error names no time.
+  assert.strictEqual(parseQuotaReset('try again at 2026-08-09T04:00:00Z.'), '2026-08-09T04:00:00Z');
+  assert.strictEqual(parseQuotaReset('Your limit resets in 3 hours.'), '3 hours');
+  assert.strictEqual(parseQuotaReset('retry-after: 600'), '600');
+  assert.strictEqual(parseQuotaReset('you have hit your usage limit'), null);
+
+  assert.deepStrictEqual(LANE_STATES, ['available', 'quota-limited', 'absent', 'failing']);
 }
 
 // Unscaffolded tree: a usage error, exit 1.

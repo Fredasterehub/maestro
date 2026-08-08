@@ -263,10 +263,15 @@ Live routing (including which seats are currently degraded) is data, not this
 table: `routing.js active <treeRoot>` (and `routing.js review-for <treeRoot>
 <author_family> [class] [author_model] [--json]` for the routed reviewer —
 class-aware, and `--json` returns the full resolution bundle with its
-independence label). When a codex or gemini probe is down, or the operator
-has set that provider's lane to `operator-down` in settings (either cause
-composes through the same degraded tables, each carrying its own notice),
-the tables substitute same-family Claude seats — and every substituted
+independence label). Preflight probes each external lane LIVE — one cheap
+read-only job per lane — and classifies it `available`, `quota-limited`
+(carrying the reset time when the provider's error states one), `absent`, or
+`failing`; routing keys off that classification, not off the CLI merely being
+installed, so an authenticated but quota-walled codex is codex_down. When a
+lane is anything but `available`, or the operator has set that provider's lane
+to `operator-down` in settings (either cause composes through the same
+degraded tables, each carrying its own notice), the tables substitute
+same-family Claude seats — and every substituted
 dispatch's envelope carries a one-sentence decorrelation-cost notice in
 `risks`, so nobody mistakes a degraded review chain for a full one.
 

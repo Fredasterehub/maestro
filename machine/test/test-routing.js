@@ -387,6 +387,57 @@ function setPreflight(root, perProvider) {
   assert.strictEqual(run(['review-for', root, 'gemini']).stdout.trim(), 'reviewer-claude');
 }
 
+// --- lane state, not mere presence, is what routing keys off -----------------
+{
+  const { root } = initTree('lane-states');
+  // The 2026-08-08 real-world case: codex is installed and authenticated —
+  // the routing token an older preflight would have written reads "present" —
+  // but the live probe hit a usage limit. The lane state wins.
+  setPreflight(root, {
+    codex: {
+      routing: 'present',
+      observed: 'present',
+      lane: { state: 'quota-limited', reset_at: '2026-08-09T04:00:00Z', detail: 'You have hit your usage limit' },
+    },
+    gemini: { routing: 'present', observed: 'present', lane: { state: 'available', reset_at: null } },
+  });
+
+  const active = JSON.parse(run(['active', root]).stdout);
+  assert.deepStrictEqual(active.degraded_modes, ['codex_down'], 'a quota-limited lane is that lane down');
+  assert.strictEqual(active.seat_substitutions['executor-sol-expert'], 'executor-claude');
+  assert.strictEqual(active.seat_substitutions['reviewer-terra'], 'reviewer-claude');
+  assert.deepStrictEqual(active.lane_states.gpt, { state: 'quota-limited', reset_at: '2026-08-09T04:00:00Z' });
+  assert.ok(
+    active.notices.some((n) => n.includes('hit its usage limit') && n.includes('2026-08-09T04:00:00Z')),
+    'the notice names the cause and the reset time the provider stated'
+  );
+  assert.strictEqual(run(['review-for', root, 'claude']).stdout.trim(), 'reviewer-gemini');
+
+  // The other three classifications, each of them that lane down.
+  for (const state of ['failing', 'absent']) {
+    setPreflight(root, {
+      codex: { routing: 'present', observed: 'present', lane: { state, reset_at: null } },
+      gemini: { routing: 'present', observed: 'present', lane: { state: 'available', reset_at: null } },
+    });
+    const one = JSON.parse(run(['active', root]).stdout);
+    assert.deepStrictEqual(one.degraded_modes, ['codex_down'], `lane state "${state}" routes the lane down`);
+  }
+  setPreflight(root, {
+    codex: { routing: 'present', observed: 'present', lane: { state: 'available', reset_at: null } },
+    gemini: { routing: 'present', observed: 'present', lane: { state: 'available', reset_at: null } },
+  });
+  const up = JSON.parse(run(['active', root]).stdout);
+  assert.deepStrictEqual(up.degraded_modes, [], 'only "available" keeps a lane up');
+  assert.deepStrictEqual(up.notices, []);
+
+  // A tree written before the lane probe existed carries no lane block at
+  // all, and still degrades off the older routing token alone.
+  setPreflight(root, { codex: { routing: 'absent', observed: 'absent' }, gemini: { routing: 'present' } });
+  const legacy = JSON.parse(run(['active', root]).stdout);
+  assert.deepStrictEqual(legacy.degraded_modes, ['codex_down'], 'a pre-lane-probe tree still degrades off its routing token');
+  assert.strictEqual(legacy.lane_states.gpt, null, 'no lane block recorded is not a lane-state claim');
+}
+
 // --- degraded rerouting: both down — the review floor never scales down ------
 {
   const { root } = initTree('both-down');

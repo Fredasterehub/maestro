@@ -65,7 +65,7 @@ not guaranteed inside an ordinary model shell.
 
 ```
 node "<plugin-root>/machine/src/scaffold.js"   <treeRoot>                            # create the genesis-seeded .maestro/ tree (no subcommand); also gitignores .maestro/ in the project
-node "<plugin-root>/machine/src/preflight.js"  run <treeRoot>                        # probe node/codex/gemini/git/gh -> state.json.preflight
+node "<plugin-root>/machine/src/preflight.js"  run <treeRoot>                        # probe node/codex/gemini/git/gh + a LIVE probe per external lane (available|quota-limited|absent|failing) -> state.json.preflight
 node "<plugin-root>/machine/src/validators.js" validate-brief|validate-envelope|validate-deviation|validate-friction|validate-stop   # document JSON via stdin; never throws, reports {ok, errors}
 node "<plugin-root>/machine/src/mission.js"    open|record-envelope|record-consult|checkpoint|close <treeRoot> ...   # mission lifecycle; close refuses without cross-family approve + passing gate
 node "<plugin-root>/machine/src/gate.js"       run-gate|check-honesty <treeRoot> ... # run-gate is the ONLY producer of "tests pass" evidence
