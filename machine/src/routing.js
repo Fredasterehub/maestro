@@ -1213,19 +1213,29 @@ function loadRouting(treeRoot) {
 
 function readPreflight(treeRoot) {
   const capability = { gpt: null, gemini: null };
+  const laneStates = { gpt: null, gemini: null };
   const state = readJson(path.join(treeRoot, STATE_BASENAME), null);
   if (!isPlainObject(state) || !isPlainObject(state.preflight)) {
-    return { recorded: false, modes: [], capability };
+    return { recorded: false, modes: [], capability, laneStates };
   }
   const perProvider = isPlainObject(state.preflight.per_provider) ? state.preflight.per_provider : {};
   const modes = [];
   for (const [provider, modeName, lane] of PROVIDER_MODES) {
     const entry = perProvider[provider];
-    // Routing token discipline: only an explicit "present" keeps the
-    // provider up; absent, unknown, or an unrecorded provider all route as
-    // down within a recorded preflight.
-    const routingToken = isPlainObject(entry) ? entry.routing : undefined;
-    if (routingToken !== 'present') {
+    // A lane is up only when preflight's LIVE probe watched it complete a
+    // trivial job: "available" and nothing else. Every other classification —
+    // quota-limited, absent, failing — is that lane down, so a quota-walled
+    // CLI that is installed and authenticated still routes to its Claude
+    // substitute. Trees written before the lane probe existed carry no lane
+    // block, and fall back to the older routing token, where only an explicit
+    // "present" keeps the provider up.
+    const laneState = isPlainObject(entry) && isPlainObject(entry.lane) ? entry.lane : null;
+    const up =
+      laneState !== null ? laneState.state === 'available' : isPlainObject(entry) && entry.routing === 'present';
+    if (laneState !== null) {
+      laneStates[lane] = { state: laneState.state, reset_at: laneState.reset_at ?? null };
+    }
+    if (!up) {
       modes.push(modeName);
     }
     // Exact model × effort capability, where preflight recorded one. Absence
@@ -1235,7 +1245,24 @@ function readPreflight(treeRoot) {
       capability[lane] = entry.models;
     }
   }
-  return { recorded: true, modes, capability };
+  return { recorded: true, modes, capability, laneStates };
+}
+
+// Named for what the probe measured, so a reader can tell a quota wall from
+// a broken install without opening state.json — and, where the provider
+// stated one, when the lane comes back.
+function laneStateNotice(lane, state) {
+  const when = state.reset_at === null ? '' : ` The provider stated it resets at ${state.reset_at}.`;
+  const cause =
+    state.state === 'quota-limited'
+      ? 'hit its usage limit'
+      : state.state === 'absent'
+        ? 'has no CLI installed'
+        : 'failed its live probe';
+  return (
+    `The ${lane} lane ${cause} (preflight lane state "${state.state}"): its seats are excluded from routing ` +
+    `and run on their recorded degraded substitutes until a later preflight measures the lane available.${when}`
+  );
 }
 
 // The operator lane state and the degraded-review posture, in ONE settings
@@ -1301,7 +1328,7 @@ function composeReviewRouting(config, modes) {
 
 function effectiveRouting(treeRoot) {
   const { config, activeFile, digest } = loadRouting(treeRoot);
-  const { recorded, modes: preflightModes, capability } = readPreflight(treeRoot);
+  const { recorded, modes: preflightModes, capability, laneStates } = readPreflight(treeRoot);
   const { lanes, posture } = readOperatorSettings(treeRoot);
   // Effective = preflight present AND NOT operator-down: either cause
   // activates the same degraded table through the same composition — an
@@ -1315,6 +1342,14 @@ function effectiveRouting(treeRoot) {
     if (!probeDown && !operatorDown) continue;
     modes.push(modeName);
     if (probeDown) notices.push(config.degraded[modeName].notice);
+    // The live probe can distinguish causes the older presence-only pair
+    // could not, so those states earn a second notice naming the cause and,
+    // where the provider stated one, the reset time. A plain "absent" adds
+    // nothing the config notice does not already say.
+    const laneState = laneStates[lane];
+    if (probeDown && laneState !== null && (laneState.state === 'quota-limited' || laneState.state === 'failing')) {
+      notices.push(laneStateNotice(lane, laneState));
+    }
     if (operatorDown) notices.push(operatorDownNotice(lane));
   }
   const substitutions = {};
@@ -1344,6 +1379,10 @@ function effectiveRouting(treeRoot) {
       gpt: lanes.gpt === 'operator-down' ? 'operator-down' : 'auto',
       gemini: lanes.gemini === 'operator-down' ? 'operator-down' : 'auto',
     },
+    // What preflight's live probe measured per lane, null where no probe was
+    // recorded — the fact behind a degraded mode, kept separate from the
+    // operator toggle above so a reader can always tell the two apart.
+    lane_states: laneStates,
     degraded_modes: modes,
     notices,
     seats: config.seats,
