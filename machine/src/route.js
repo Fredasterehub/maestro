@@ -534,6 +534,17 @@ const REVIEW_KEYS = [
   'replacement_reason',
 ];
 
+// Same-model degraded-review telemetry, optional so records written before
+// the fields existed stay valid. The degraded path is a PREFERENCE ladder:
+// when the preferred cross-model reviewer is unavailable, a second fresh
+// instance of the author's own model reviews instead. That is a materially
+// weaker independence claim than the record otherwise reads as, and
+// `replacement_reason` — free text about a seat SUBSTITUTION — cannot carry
+// it: the seat is unchanged, only the model behind it fell back. Same names
+// and same shape as roster.js's author-phase OUTCOME_KEYS, so the two phases
+// answer "did a fallback carry this?" identically.
+const REVIEW_OPTIONAL_KEYS = ['fallback_used', 'fallback_reason'];
+
 const IDENTITY_KEYS = ['source_head', 'source_tree', 'patch_digest', 'dirty'];
 
 // The canonical artifact identity object (§7). Shapes are checked strictly so
@@ -578,7 +589,7 @@ function validateReviewRouteChecked(input) {
   }
   const errors = [];
   const label = 'review route';
-  checkExactKeys(input, REVIEW_KEYS, [], label, errors);
+  checkExactKeys(input, REVIEW_KEYS, REVIEW_OPTIONAL_KEYS, label, errors);
 
   checkToken(errors, input.mission_id, `${label} field "mission_id"`);
   checkInt(errors, input.author_route_seq, `${label} field "author_route_seq"`, 0);
@@ -610,8 +621,28 @@ function validateReviewRouteChecked(input) {
   if (input.replacement_reason !== null) {
     checkPhrase(errors, input.replacement_reason, `${label} field "replacement_reason"`);
   }
+  checkFallbackPair(errors, input, label);
 
   return { ok: errors.length === 0, errors };
+}
+
+// Absent entirely, or a boolean that carries its reason when it is true — the
+// same rule roster.js holds on the author-phase outcome record. A reason
+// without a fallback is a claim about nothing, so it is refused too.
+function checkFallbackPair(errors, input, label) {
+  const hasUsed = Object.prototype.hasOwnProperty.call(input, 'fallback_used');
+  const hasReason = Object.prototype.hasOwnProperty.call(input, 'fallback_reason');
+  if (!hasUsed && !hasReason) return;
+  if (!hasUsed) {
+    errors.push(`${label} field "fallback_reason" requires "fallback_used"`);
+    return;
+  }
+  checkBoolean(errors, input.fallback_used, `${label} field "fallback_used"`);
+  if (input.fallback_used === true) {
+    checkPhrase(errors, input.fallback_reason, `${label} field "fallback_reason"`);
+  } else if (hasReason && input.fallback_reason !== null) {
+    errors.push(`${label} field "fallback_reason" must be null when "fallback_used" is false`);
+  }
 }
 
 // --- supersession shape ------------------------------------------------------
@@ -898,6 +929,11 @@ function authorPayload(input, predecessorBlock) {
 function reviewPayload(input, predecessorBlock) {
   const payload = {};
   for (const key of REVIEW_KEYS) payload[key] = input[key];
+  // Carried only when the caller stated them: an absent pair is "not
+  // recorded", which is a different claim from "no fallback happened".
+  for (const key of REVIEW_OPTIONAL_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(input, key)) payload[key] = input[key];
+  }
   payload.artifact_identity = {};
   for (const key of IDENTITY_KEYS) payload.artifact_identity[key] = input.artifact_identity[key];
   payload.phase = 'review';
@@ -1223,5 +1259,6 @@ module.exports = {
   ESCALATION_TRANSITIONS,
   AUTHOR_KEYS,
   REVIEW_KEYS,
+  REVIEW_OPTIONAL_KEYS,
   IDENTITY_KEYS,
 };

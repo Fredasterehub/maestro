@@ -326,7 +326,48 @@ function reviewInput(authorRouteSeq, overrides) {
   assert.strictEqual(rec.independence, 'degraded-path');
   assert.strictEqual(rec.replacement_reason, null, 'the reserved reviewer was honoured');
   assert.strictEqual(rec.predecessor, null);
+  assert.ok(
+    !Object.prototype.hasOwnProperty.call(rec, 'fallback_used'),
+    'an unstated fallback pair is absent, not recorded false'
+  );
   assert.ok(rec.seq > author.seq, 'the review route is written after the author route');
+}
+
+// --- review route: same-model degraded fallback telemetry --------------------
+//
+// The degraded path is a preference ladder: when the preferred cross-model
+// reviewer is unavailable, a second fresh instance of the AUTHOR's model
+// reviews instead. replacement_reason is about a seat substitution and
+// cannot carry that — the seat is unchanged, only the model behind it fell
+// back — so the review record carries the same pair roster.js's author-phase
+// outcome record does.
+{
+  const m = openMission();
+  const author = reserve(root, authorInput({ mission_id: m }));
+  const fell = reserveReview(
+    root,
+    reviewInput(author.seq, {
+      mission_id: m,
+      fallback_used: true,
+      fallback_reason: 'preferred fable-5 reviewer unavailable; second fresh opus-5 instance reviewed',
+    })
+  );
+  assert.strictEqual(fell.fallback_used, true);
+  assert.match(fell.fallback_reason, /second fresh opus-5 instance/);
+
+  // true without a reason, and a reason without the flag, are both refused.
+  assert.throws(
+    () => reserveReview(root, reviewInput(author.seq, { mission_id: m, fallback_used: true, fallback_reason: null })),
+    /"fallback_reason" must be a non-empty single-line string/
+  );
+  assert.throws(
+    () => reserveReview(root, reviewInput(author.seq, { mission_id: m, fallback_reason: 'no flag' })),
+    /"fallback_reason" requires "fallback_used"/
+  );
+  assert.throws(
+    () => reserveReview(root, reviewInput(author.seq, { mission_id: m, fallback_used: false, fallback_reason: 'x' })),
+    /"fallback_reason" must be null when "fallback_used" is false/
+  );
 }
 
 // --- review route: embeds a really-computed identity, field for field -------

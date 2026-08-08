@@ -259,6 +259,14 @@ runs is reviewed on the degraded path instead, and it closes only because a
 `replacement_reason` is recorded. Close can catch a dishonest or unexplained
 label, not fix a wrong one — route the reviewer correctly at dispatch.
 
+A same-model degraded fallback is a different fact and takes different
+fields. The degraded path is a preference ladder: when the preferred
+cross-model reviewer is unavailable, a second fresh instance of the author's
+own model reviews instead. The seat is unchanged there — only the model
+behind it fell back — so that is recorded as `fallback_used: true` with a
+`fallback_reason` on the review route, the same pair the author-phase
+outcome record uses, never as a `replacement_reason`.
+
 Live routing (including which seats are currently degraded) is data, not this
 table: `routing.js active <treeRoot>` (and `routing.js review-for <treeRoot>
 <author_family> [class] [author_model] [--json]` for the routed reviewer —
