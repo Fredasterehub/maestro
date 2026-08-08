@@ -420,11 +420,22 @@ function register(treeRoot, input) {
       }
       // Liveness uniqueness keys on seat+attempt, not seat alone: a fan-out
       // that spawns several concurrent instances of the same seat name
-      // (distinct attempts) must be able to register all of them. Entries
-      // that carry no attempt fall back to seat-alone, so unattempted
-      // registrations keep the original one-live-entry-per-seat behavior.
+      // (distinct attempts) must be able to register all of them.
+      //
+      // `attempt` is OPTIONAL, and a missing one is a WILDCARD, never its own
+      // distinct value: a registration that names no attempt is not claiming
+      // to be a different attempt from the live entry — it is declining to
+      // say which attempt it is, and "unknown" cannot be shown to differ from
+      // anything. Comparing `undefined !== 1` as a difference would let the
+      // same seat go live twice (once unattempted, once attempted), which is
+      // the doubled name this check exists to refuse and is weaker than the
+      // seat-alone rule this replaced. Two entries collide unless BOTH name an
+      // attempt and the two attempts differ.
       const liveSeat = roster.entries.find(
-        (e) => e.seat === entry.seat && e.status === 'alive' && e.attempt === entry.attempt
+        (e) =>
+          e.seat === entry.seat &&
+          e.status === 'alive' &&
+          !(e.attempt !== undefined && entry.attempt !== undefined && e.attempt !== entry.attempt)
       );
       if (liveSeat) {
         throw new Error(
