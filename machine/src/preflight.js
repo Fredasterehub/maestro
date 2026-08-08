@@ -500,8 +500,4 @@ if (require.main === module) {
   main(process.argv.slice(2));
 }
 
-<<<<<<< HEAD
-module.exports = { run, PROBE_TIMEOUT_MS, LANE_PROBE_TIMEOUT_MS, LANE_STATES, classifyLaneProbe, parseQuotaReset };
-=======
-module.exports = { run, PROBE_TIMEOUT_MS, PROVIDER_MODEL_IDS };
->>>>>>> holds-fixbatch
+module.exports = { run, PROBE_TIMEOUT_MS, LANE_PROBE_TIMEOUT_MS, LANE_STATES, classifyLaneProbe, parseQuotaReset, PROVIDER_MODEL_IDS };
