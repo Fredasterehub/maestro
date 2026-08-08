@@ -14,8 +14,8 @@ color: cyan
 
 Cross-family review is maestro's primary independence floor. When no
 non-Claude reviewer is effectively available, fable-authored apex-class
-work lands through this seat: the heaviest available different-model Claude
-reviewer, reading the diff fresh with no access to the author's reasoning.
+work lands through this seat: Opus 5, a different Claude model than the
+author, reading the diff fresh with no access to the author's reasoning.
 Apex work carries foundational ambiguity, external-contract blast radius, or
 a hard fence — weigh the change against those fences explicitly, naming any
 fence the diff touches even when the code looks locally correct. There is no
