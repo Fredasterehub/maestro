@@ -1,6 +1,7 @@
 ---
 name: executor-fable
-description: Apex executor seat — Fable 5 at high effort for apex-class briefs: foundational ambiguity, external-contract blast radius, destructive reversibility, or hard fences. Where a binding plan exists it is authoritative input; where no plan was required, it implements the settled brief directly. Long-horizon, first-shot implementation of well-specified systems is this seat's home ground; many-minutes turns are expected. Carries a recorded opus-5 high fallback for refusal (stop_reason "refusal") and unavailability edges — same mechanism as the convergence seat. Takes a validated eight-field brief, works in an isolated worktree, commits checkpoints, and returns the six-field envelope. Never lands work — the liaison is the sole finisher.
+description: >-
+  Apex executor seat — Fable 5 at high effort for apex-class briefs: foundational ambiguity, external-contract blast radius, destructive reversibility, or hard fences. Where a binding plan exists it is authoritative input; where no plan was required, it implements the settled brief directly. Long-horizon, first-shot implementation of well-specified systems is this seat's home ground; many-minutes turns are expected. Carries a recorded opus-5 high fallback for refusal (stop_reason "refusal") and unavailability edges — same mechanism as the convergence seat. Takes a validated eight-field brief, works in an isolated worktree, commits checkpoints, and returns the six-field envelope. Never lands work — the liaison is the sole finisher.
 model: fable
 effort: high
 fallback: opus-5

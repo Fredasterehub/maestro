@@ -69,11 +69,18 @@ function setPreflight(root, perProvider) {
 
   const config = JSON.parse(fs.readFileSync(path.join(root, 'routing', init.active_config), 'utf8'));
   // Literals, not the module's own constant, so this can actually fail:
-  // the highest shipped migration is r6->r7, so the current revision is 7
+  // the highest shipped migration is r8->r9, so the current revision is 9
   // and init stamps exactly that — never a label above or below the
   // content. Each slice that ships a migration raises both literals.
-  assert.strictEqual(CURRENT_ROUTING_REVISION, 7);
-  assert.strictEqual(config.revision, 7);
+  assert.strictEqual(CURRENT_ROUTING_REVISION, 9);
+  assert.strictEqual(config.revision, 9);
+  // Every hosted seat carries its own worker effort, not just a host profile:
+  // reviewFor cannot construct review capacity from a seat whose effort is
+  // absent, and the four original hosted seats were the ones left behind.
+  for (const seatName of ['executor-sol', 'executor-gemini', 'reviewer-sol', 'reviewer-gemini']) {
+    const seat = config.seats[seatName];
+    assert.ok(seat && typeof seat.effort === 'string' && seat.effort !== '', `hosted seat ${seatName} records no worker effort`);
+  }
   // Class-keyed ladders (design §6.1/§6.2), now carrying the gpt standard rung
   // r5 seats: claude-authored recon/mechanical/standard leads with
   // reviewer-terra and falls to gemini behind it, and gemini-authored work of

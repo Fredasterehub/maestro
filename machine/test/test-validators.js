@@ -55,11 +55,12 @@ bad(validateEnvelope(envelope({ state: 'finished' })), /must be one of done, par
 bad(validateEnvelope(envelope({ state: 42 })), /"state" must be a string/, 'non-string state');
 bad(validateEnvelope(envelope({ risks: null })), /"risks" must be a string/, 'non-string field');
 
-// --- envelope: question IFF blocked ------------------------------------------
+// --- envelope: question required on blocked, permitted on partial, forbidden on done ---
 bad(validateEnvelope(envelope({ state: 'blocked', question: '' })), /must be non-empty when state is "blocked"/, 'blocked without question');
 bad(validateEnvelope(envelope({ state: 'blocked', question: '   ' })), /must be non-empty when state is "blocked"/, 'blocked with whitespace question');
 bad(validateEnvelope(envelope({ state: 'done', question: 'why?' })), /must be empty when state is "done"/, 'done with question');
-bad(validateEnvelope(envelope({ state: 'partial', question: 'why?' })), /must be empty when state is "partial"/, 'partial with question');
+ok(validateEnvelope(envelope({ state: 'partial', question: 'which schema wins?' })), 'partial with question');
+ok(validateEnvelope(envelope({ state: 'partial', question: '' })), 'partial without question');
 
 // --- envelope: 300-word ceiling ----------------------------------------------
 {

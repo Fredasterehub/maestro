@@ -21,6 +21,12 @@ const ROSTER = path.join(SRC, 'roster.js');
 const { readRecords } = require(path.join(SRC, 'jsonl.js'));
 const { reserve, reserveReview, supersede } = require(path.join(SRC, 'route.js'));
 const roster = require(ROSTER);
+// The dated config name `routing.init` writes for a tree created in this
+// process. It has to be the REAL one now: family derivation reads the dated
+// config a route record names, and a name no tree carries resolves to no
+// family at all rather than quietly falling back to the active config.
+const ROUTING_CONFIG = `routing-${new Date().toISOString().slice(0, 10)}-1.json`;
+
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-telemetry-'));
 process.on('exit', () => fs.rmSync(tmp, { recursive: true, force: true }));
@@ -90,7 +96,7 @@ function hostedAuthor(missionId, overrides) {
     attempt: 1,
     brief_digest: 'sha256:' + 'a'.repeat(64),
     task_class: 'expert',
-    routing_config: 'routing-2026-08-06-2.json',
+    routing_config: ROUTING_CONFIG,
     routing_digest: 'sha256:' + 'b'.repeat(64),
     routing_revision: 5,
     requested_seat: 'executor-sol-expert',
@@ -301,7 +307,7 @@ function registration(missionId, overrides) {
     reviewer_host_model: null,
     reviewer_host_effort: null,
     independence: 'cross-family',
-    routing_config: 'routing-2026-08-06-2.json',
+    routing_config: ROUTING_CONFIG,
     routing_digest: 'sha256:' + 'b'.repeat(64),
     replacement_reason: null,
   });
@@ -650,7 +656,7 @@ function registration(missionId, overrides) {
     reviewer_host_model: null,
     reviewer_host_effort: null,
     independence: 'cross-family',
-    routing_config: 'routing-2026-08-06-2.json',
+    routing_config: ROUTING_CONFIG,
     routing_digest: 'sha256:' + 'b'.repeat(64),
     replacement_reason: 'reserved reviewer-claude was unavailable',
   });
@@ -747,7 +753,7 @@ function registration(missionId, overrides) {
     reviewer_host_model: null,
     reviewer_host_effort: null,
     independence: 'cross-family',
-    routing_config: 'routing-2026-08-06-2.json',
+    routing_config: ROUTING_CONFIG,
     routing_digest: 'sha256:' + 'b'.repeat(64),
     replacement_reason: null,
   });

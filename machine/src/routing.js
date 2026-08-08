@@ -743,7 +743,50 @@ function migrateGeminiEffort(config) {
   return out;
 }
 
-const MIGRATIONS = [migrateSolSplit, migrateDegradedReview, migrateClaudeLadder, migrateGptLadder, migrateTiersBlock, migrateGeminiEffort];
+// r7 -> r8: the two original hosted gpt seats gain their own worker effort.
+// r1 shipped `executor-sol`/`reviewer-sol` with a host profile only, so
+// reviewFor resolved their worker effort to null while every later hosted
+// seat (the r2 Sol split, the r7 gemini rung) carries one — review capacity
+// for those seats could not be constructed from the table alone.
+function migrateSolEffort(config) {
+  const out = JSON.parse(JSON.stringify(config));
+  if (!isPlainObject(out.seats)) {
+    throw new Error('r7->r8 migration: config has no seats table — not a revision-7 shape');
+  }
+  for (const required of ['executor-gemini', 'reviewer-gemini']) {
+    if (typeof (out.seats[required] || {}).effort !== 'string') {
+      throw new Error(
+        `r7->r8 migration: seats["${required}"] records no effort — not a revision-7 shape (the r6->r7 gemini effort migration has not been applied)`
+      );
+    }
+  }
+  out.seats['executor-sol'] = { ...out.seats['executor-sol'], effort: 'high' };
+  out.seats['reviewer-sol'] = { ...out.seats['reviewer-sol'], effort: 'medium' };
+  out.revision = 8;
+  return out;
+}
+
+// r8 -> r9: expert-class degraded review gains its fable-authored row.
+// fable-5 is a real expert-class author rung (agents/executor-fable-low.md),
+// but the expert row keyed only opus-5 — fable-authored expert work had no
+// degraded reviewer at all. reviewer-degraded-sonnet is cross-model against
+// a fable author exactly as it is against an opus one, so the row extends
+// that seat's scope rather than adding a seat.
+function migrateExpertFableRow(config) {
+  const out = JSON.parse(JSON.stringify(config));
+  const rows = isPlainObject(out.degraded_review) ? out.degraded_review.rows : null;
+  if (!isPlainObject(rows) || !isPlainObject(rows.expert)) {
+    throw new Error('r8->r9 migration: config has no degraded_review.rows.expert — not a revision-8 shape');
+  }
+  if (rows.expert['opus-5'] !== 'reviewer-degraded-sonnet') {
+    throw new Error('r8->r9 migration: degraded_review.rows.expert does not carry the r2->r3 opus-5 row — not a revision-8 shape');
+  }
+  rows.expert['fable-5'] = 'reviewer-degraded-sonnet';
+  out.revision = 9;
+  return out;
+}
+
+const MIGRATIONS = [migrateSolSplit, migrateDegradedReview, migrateClaudeLadder, migrateGptLadder, migrateTiersBlock, migrateGeminiEffort, migrateSolEffort, migrateExpertFableRow];
 
 // The revision of the highest migration actually shipped — each slice that
 // pushes a MIGRATIONS entry raises this in the same commit, by construction.
@@ -1209,6 +1252,42 @@ function loadRouting(treeRoot) {
   return { config, activeFile, digest: actualDigest };
 }
 
+// The config a RECORD names, not the one the tree is pointing at today. A
+// route record carries `routing_config` precisely so its own decisions can
+// be re-read against the table that was authoritative when it was written;
+// reading the active pointer instead re-derives the record against a config
+// it never saw, and a since-revised seat table then contradicts a record
+// that was lawful. Same reads as loadRouting minus the pointer: the digest
+// belongs to the pointer, which says nothing about a non-active file, so
+// the caller gets the digest of the bytes actually read.
+function loadDatedConfig(treeRoot, filename) {
+  if (typeof filename !== 'string' || !DATED_CONFIG_RE.test(filename)) {
+    throw new Error(`routing: "${filename}" is not a valid routing-YYYY-MM-DD-N.json basename`);
+  }
+  const configPath = path.join(routingDir(treeRoot), filename);
+  refuseSymlink(configPath, filename);
+  let raw;
+  try {
+    raw = fs.readFileSync(configPath);
+  } catch (err) {
+    if (err.code === 'ENOENT') {
+      throw new Error(`routing: dated config "${filename}" does not exist at ${configPath}`);
+    }
+    throw err;
+  }
+  let config;
+  try {
+    config = JSON.parse(raw.toString('utf8'));
+  } catch (err) {
+    throw new Error(`routing: dated config "${filename}" is not valid JSON: ${err.message}`);
+  }
+  const { ok, errors } = validateRoutingConfig(config);
+  if (!ok) {
+    throw new Error(`routing: dated config "${filename}" failed shape validation: ${errors.join('; ')}`);
+  }
+  return { config, activeFile: filename, digest: sha256Of(raw) };
+}
+
 // --- degraded-mode composition -----------------------------------------------
 
 function readPreflight(treeRoot) {
@@ -1445,6 +1524,19 @@ function init(treeRoot) {
   return { active_config: filename, digest };
 }
 
+// The failure a dated-config write reports. `leftoverTemps` is a declared
+// field of a named error type rather than a property bolted onto whatever
+// error happened to surface: a caller reading it off a plain Error cannot
+// tell an absent field from an unrelated error that never set one.
+class DatedConfigWriteError extends Error {
+  constructor(message, leftoverTemps, cause) {
+    super(message);
+    this.name = 'DatedConfigWriteError';
+    this.leftoverTemps = leftoverTemps;
+    if (cause !== undefined) this.cause = cause;
+  }
+}
+
 // Best-effort removal of a temp only this writer can name — it never races
 // another writer. Returns the basenames it could not remove, so a caller
 // that is already reporting orphans can name them too.
@@ -1467,6 +1559,13 @@ function removeTempFile(tmpPath) {
 // leave a truncated file permanently occupying an immutable name whenever
 // the write failed; linking a fully written temp means a dated name only
 // ever appears complete, and a failed write consumes no dated name at all.
+// FILESYSTEM REQUIREMENT: linkSync means the routing directory must live on
+// a filesystem supporting hard links. Every POSIX filesystem maestro is
+// expected to run on does; a few (FAT-family volumes, some network and
+// container overlay mounts) do not, and there linkSync fails EPERM/ENOSYS
+// and revise refuses rather than silently falling back — a rename-based
+// fallback would give up the EEXIST exclusivity immutability rests on, and
+// silently trading that away is worse than refusing to migrate.
 // Byte format matches atomic-json's writeJson exactly, so equal content
 // always hashes to an equal digest regardless of which path wrote it.
 // Rollback/re-upgrade cycles therefore accumulate byte-identical dated
@@ -1481,7 +1580,16 @@ function writeDatedConfigExclusive(dir, dateStr, value) {
   try {
     const fd = fs.openSync(tmpPath, 'wx');
     try {
-      fs.writeSync(fd, serialized);
+      // Same short-write fence atomic-json.js holds: a partial temp linked
+      // under a dated name would be digested from its own truncated bytes
+      // and certified as the config that was written.
+      const expected = Buffer.byteLength(serialized);
+      const written = fs.writeSync(fd, serialized);
+      if (written !== expected) {
+        throw new Error(
+          `routing: short write for the dated config — ${written} of ${expected} bytes written; nothing was linked`
+        );
+      }
       fs.fsyncSync(fd);
     } finally {
       fs.closeSync(fd);
@@ -1499,14 +1607,14 @@ function writeDatedConfigExclusive(dir, dateStr, value) {
   } catch (err) {
     // Nothing was linked, so the temp is unreachable except through this
     // name. If even removing it fails it is a genuine leftover, and the
-    // orphan report has to say so rather than let it drop off the record.
-    err.orphanFiles = removeTempFile(tmpPath);
-    throw err;
+    // report has to say so rather than let it drop off the record.
+    throw new DatedConfigWriteError(err.message, removeTempFile(tmpPath), err);
   }
   // The dated name now holds these exact bytes; the temp is a second link
-  // to them that nothing else refers to.
-  removeTempFile(tmpPath);
-  return claimed;
+  // to them that nothing else refers to. A temp that survives its own
+  // removal is reported on the SUCCESS path too (F3): the migration is fine,
+  // but a file nobody will ever clean up otherwise leaves no trace at all.
+  return { ...claimed, leftoverTemps: removeTempFile(tmpPath) };
 }
 
 // Migrates the active revision stepwise toward CURRENT_ROUTING_REVISION —
@@ -1536,6 +1644,9 @@ function revise(treeRoot) {
   const dir = routingDir(treeRoot);
   const dateStr = new Date().toISOString().slice(0, 10);
   const steps = [];
+  // Temp files a successful write could not remove afterwards. Harmless to
+  // the migration, invisible to everyone unless reported (F3).
+  const strandedTemps = [];
   let current = config;
   let revision = from;
   try {
@@ -1548,7 +1659,8 @@ function revise(treeRoot) {
       if (!ok) {
         throw new Error(`migration to revision ${revision + 1} produced an invalid config: ${errors.join('; ')}`);
       }
-      const { filename, configPath } = writeDatedConfigExclusive(dir, dateStr, next);
+      const { filename, configPath, leftoverTemps } = writeDatedConfigExclusive(dir, dateStr, next);
+      strandedTemps.push(...leftoverTemps);
       // Digest from the exact bytes on disk, same discipline as init: the
       // pointer will certify the file as-written, not the in-memory value.
       const digest = sha256Of(fs.readFileSync(configPath));
@@ -1557,13 +1669,17 @@ function revise(treeRoot) {
       revision += 1;
     }
   } catch (err) {
-    // Dated files already written, plus anything a failed write could not
-    // clean up — §11 requires the orphan report to name whatever survives.
-    const orphans = steps.map((s) => s.file).concat(err.orphanFiles || []);
+    // Two DIFFERENT kinds of leftover, reported apart (F1). A dated file is
+    // a complete, immutable config that was written and never activated; a
+    // temp is an incomplete dot-file no dated name ever pointed at. Naming
+    // them in one list told an operator to treat one like the other.
+    const orphanConfigs = steps.map((s) => s.file);
+    const temps = strandedTemps.concat(err instanceof DatedConfigWriteError ? err.leftoverTemps : []);
     throw new Error(
       `routing: revise failed at revision ${revision}: ${err.message} — active.json still points at ` +
         `"${activeFile}", which stays authoritative` +
-        (orphans.length > 0 ? `; orphan dated file(s) written but never activated: ${orphans.join(', ')}` : '')
+        (orphanConfigs.length > 0 ? `; orphan dated file(s) written but never activated: ${orphanConfigs.join(', ')}` : '') +
+        (temps.length > 0 ? `; temp file(s) left behind and not removable: ${temps.join(', ')}` : '')
     );
   }
 
@@ -1600,6 +1716,9 @@ function revise(treeRoot) {
     steps,
     active_config: last.file,
     digest: last.digest,
+    // Present on every success, empty in the ordinary case: a temp a
+    // successful write could not remove is invisible unless it is reported.
+    stranded_temps: strandedTemps,
   };
 }
 
@@ -2303,11 +2422,16 @@ module.exports = {
   init,
   revise,
   loadRouting,
+  loadDatedConfig,
   effectiveRouting,
   reviewFor,
   tierFor,
   validateRoutingConfig,
   buildDefaultConfig,
+  // Exported for the migration suite alone: every migration is proven by
+  // walking a real revision-1 config through the shipped chain, and the
+  // r1 baseline cannot be reconstructed from buildDefaultConfig, which is
+  // that baseline already migrated. No production caller reads it.
   buildRevision1Config,
   CURRENT_ROUTING_REVISION,
   MIGRATIONS,

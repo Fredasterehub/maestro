@@ -80,6 +80,44 @@ function registration(overrides) {
   assert.strictEqual(readRoster(root).entries.length, 2);
 }
 
+// --- concurrent same-seat fan-out: distinct attempts both register -----------
+{
+  const root = freshTree('fanout-attempts');
+  const first = run(['register', root], JSON.stringify(registration({ attempt: 1 })));
+  assert.strictEqual(first.status, 0, first.stderr);
+  const second = run(['register', root], JSON.stringify(registration({ task_id: 't-2', attempt: 2 })));
+  assert.strictEqual(second.status, 0, second.stderr, 'a second attempt of the same seat must register alongside a live first attempt');
+  assert.strictEqual(readRoster(root).entries.length, 2);
+
+  // A third registration reusing an attempt already alive is still refused.
+  const dupAttempt = run(['register', root], JSON.stringify(registration({ task_id: 't-3', attempt: 1 })));
+  assert.strictEqual(dupAttempt.status, 1);
+  assert.match(dupAttempt.stderr, /never double a name/);
+
+  // MIXED CASE: a registration naming no attempt is not a distinct attempt —
+  // it declines to say which one it is, and "unknown" cannot be shown to
+  // differ from 1 or 2. It collides with the live attempted entries rather
+  // than doubling the name, which is what the seat-alone rule guaranteed
+  // before this check keyed on attempt at all.
+  const noAttempt = run(['register', root], JSON.stringify(registration({ task_id: 't-4' })));
+  assert.strictEqual(noAttempt.status, 1, 'an unattempted registration must not go live beside attempted ones');
+  assert.match(noAttempt.stderr, /never double a name/);
+}
+
+// --- the mixed case from the other direction ---------------------------------
+//
+// Live entry carries NO attempt, incoming one does: same reasoning, same
+// refusal. Neither order may produce two live entries for one seat name.
+{
+  const root = freshTree('fanout-mixed-reverse');
+  const first = run(['register', root], JSON.stringify(registration({})));
+  assert.strictEqual(first.status, 0, first.stderr);
+  const attempted = run(['register', root], JSON.stringify(registration({ task_id: 't-2', attempt: 2 })));
+  assert.strictEqual(attempted.status, 1, 'an attempted registration must not go live beside an unattempted one');
+  assert.match(attempted.stderr, /never double a name/);
+  assert.strictEqual(readRoster(root).entries.length, 1);
+}
+
 // --- register input validation ----------------------------------------------
 {
   const root = freshTree('validate');

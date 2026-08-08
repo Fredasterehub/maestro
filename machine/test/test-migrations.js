@@ -68,7 +68,7 @@ function revision1Tree(name, dateStr) {
 
 // --- determinism and boundary idempotence of the real, shipped migration ----
 {
-  assert.strictEqual(MIGRATIONS.length, 6, 'this suite assumes six shipped migrations — update it alongside the next one');
+  assert.strictEqual(MIGRATIONS.length, 8, 'this suite assumes eight shipped migrations — update it alongside the next one');
   let input = buildRevision1Config('2026-08-01');
   for (const [index, migrate] of MIGRATIONS.entries()) {
     const out1 = migrate(JSON.parse(JSON.stringify(input)));
@@ -244,10 +244,9 @@ function revision1Tree(name, dateStr) {
   if (writtenDate !== today) {
     console.log(`test-migrations: SKIP collision-suffix strict filename assertion (UTC date rolled over mid-test: fixture built for ${today}, revise wrote under ${writtenDate})`);
   } else {
-    // Six shipped migrations: the r1->r2 write skips the occupied N=2 to
-    // claim N=3, and the r2->r3, r3->r4, r4->r5, r5->r6 and r6->r7 writes
-    // land on N=4, N=5, N=6, N=7 and N=8.
-    assert.strictEqual(result.active_config, `routing-${today}-8.json`, 'a collision at N must increment to the next free N, never overwrite it');
+    // Eight shipped migrations: the r1->r2 write skips the occupied N=2 to
+    // claim N=3, and the r2->r3 through r7->r8 writes land on N=4 to N=10.
+    assert.strictEqual(result.active_config, `routing-${today}-10.json`, 'a collision at N must increment to the next free N, never overwrite it');
   }
   // Independent of the date race: whatever name revise picked, it must not
   // be N=2 (already occupied), and the occupant must survive untouched.
@@ -300,7 +299,7 @@ function revision1Tree(name, dateStr) {
 // independently.
 function buildPatchedRoutingModule(migrationsSource, fixtureName) {
   const marker =
-    'const MIGRATIONS = [migrateSolSplit, migrateDegradedReview, migrateClaudeLadder, migrateGptLadder, migrateTiersBlock, migrateGeminiEffort];';
+    'const MIGRATIONS = [migrateSolSplit, migrateDegradedReview, migrateClaudeLadder, migrateGptLadder, migrateTiersBlock, migrateGeminiEffort, migrateSolEffort, migrateExpertFableRow];';
   // The copy lives outside machine/src/, so every sibling require must be
   // rewritten absolute — a relative one would resolve against the temp dir.
   const requireMarkers = ['atomic-json.js', 'settings.js', 'validators.js'].map((f) => [

@@ -56,6 +56,22 @@ function friction(overrides) {
   assert.strictEqual(rec.seat, 'reviewer-sol');
 }
 
+// --- the experiment-proposal kind is recordable -------------------------------
+//
+// computeRates SURFACES a cell at the threshold but never appends: it is
+// stateless and would re-record the same proposal on every run. The record
+// is the liaison's, written once when it acts on a surfaced proposal, so the
+// vocabulary has to carry the kind for that write to be possible at all.
+{
+  const tree = makeTree();
+  const rec = recordFriction(
+    tree,
+    friction({ kind: 'experiment-proposed', seat: 'executor-sol', detail: 'standard/executor-sol reached 20 closes' })
+  );
+  assert.strictEqual(rec.kind, 'experiment-proposed');
+  assert.strictEqual(computeRates(tree).by_kind['experiment-proposed'], 1);
+}
+
 // --- closed vocabulary + exact-key shape enforced -----------------------------
 {
   const tree = makeTree();
@@ -107,6 +123,7 @@ function friction(overrides) {
     'quota-rerouted': 0,
     'safety-refusal-rerouted': 0,
     'runtime-retried': 0,
+    'experiment-proposed': 0,
   });
   assert.deepStrictEqual(rates.by_mission, {});
   assert.deepStrictEqual(rates.revise_verdict_by_mission, {});
@@ -142,6 +159,7 @@ function friction(overrides) {
     'quota-rerouted': 0,
     'safety-refusal-rerouted': 0,
     'runtime-retried': 0,
+    'experiment-proposed': 0,
   });
   assert.strictEqual(rates.by_mission.m1.total, 4);
   assert.strictEqual(rates.by_mission.m1['revise-verdict'], 2);

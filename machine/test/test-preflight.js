@@ -343,4 +343,39 @@ function assertModelsShape(models, label) {
   assert.match(help.stdout, /usage: preflight\.js run <treeRoot>/);
 }
 
+// Sync check: PROVIDER_MODEL_IDS is a hand-maintained duplicate of the
+// model ids routing.js's own seat table actually names for the gpt/gemini
+// families. This walks a fresh default routing config (every seat table,
+// including the class-keyed tiers) and asserts every gpt/gemini model id it
+// finds is present in preflight's map — so the two drift apart loudly
+// instead of silently (seq5 hold).
+{
+  const { PROVIDER_MODEL_IDS } = require(PREFLIGHT);
+  const { buildDefaultConfig } = require(path.join(SRC, 'routing.js'));
+  const config = buildDefaultConfig('2026-08-07');
+  const knownIds = new Set([...PROVIDER_MODEL_IDS.codex, ...PROVIDER_MODEL_IDS.gemini]);
+  const seen = new Set();
+
+  const walk = (node) => {
+    if (Array.isArray(node)) {
+      node.forEach(walk);
+      return;
+    }
+    if (node === null || typeof node !== 'object') return;
+    if (typeof node.model === 'string' && (node.family === 'gpt' || node.family === 'gemini')) {
+      seen.add(node.model);
+    }
+    for (const value of Object.values(node)) walk(value);
+  };
+  walk(config);
+
+  assert.ok(seen.size > 0, 'expected at least one gpt/gemini seat in the default routing config');
+  for (const modelId of seen) {
+    assert.ok(
+      knownIds.has(modelId),
+      `routing.js names gpt/gemini model "${modelId}" that PROVIDER_MODEL_IDS in preflight.js does not know about — keep them in sync`
+    );
+  }
+}
+
 console.log('test-preflight: ok');

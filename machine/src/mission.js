@@ -1294,16 +1294,16 @@ function firstDerivedFamilySeq(records, spec) {
 // derivation that succeeds and disagrees, and that refuses. Failing closed is
 // deliberate — this fence cannot tell a config that was corrected from one that
 // was rewritten to launder a past review, and the two are indistinguishable
-// from inside the ledger. The cost is the known limit recorded against this
-// step: the derivation reads the tree's ACTIVE config, not the dated one the
-// record names, so a rollback can refuse a close that was lawful when it was
-// recorded. Closing that needs the record's own dated config, which is routing
-// knowledge and belongs to whoever owns that hold — not to a widened tolerance
-// here, which would trade a refused honest close for an accepted false one.
+// from inside the ledger. The derivation reads the DATED config the record
+// itself names (`routing_config`), not the tree's active pointer: re-deriving
+// against a config the record never saw would let a later revise or rollback
+// refuse a close that was lawful when it was recorded. A record naming a
+// config that no longer reads resolves to no family at all, which is the
+// bounded legacy tolerance below, never a widened one.
 function checkRouteFamily(treeRoot, phase, route, routeSeq, records) {
   const spec = FAMILY_DERIVATION[phase];
   const seatName = route[spec.seatField];
-  const { family, reason } = seatFamily(treeRoot, seatName);
+  const { family, reason } = seatFamily(treeRoot, seatName, route.routing_config);
   if (family === null) {
     if (derivedFamily(route, spec)) {
       throw new Error(

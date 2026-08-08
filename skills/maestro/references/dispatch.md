@@ -231,7 +231,7 @@ brief is worded:
 | `reviewer-sol-apex-rev` | Sonnet 5 high hosting GPT-5.6-Sol (gpt) — dormant until the gpt lane is effective | — | apex-class claude- and gemini-authored work |
 | `reviewer-sol` | — | Alias of `reviewer-sol-expert-rev` since the r1→r2 Sol split. No read path resolves an alias — it is never routable. | — |
 | `reviewer-degraded-opus` | Opus 5 medium (claude) | — | degraded path only: sonnet-authored recon/mechanical/standard work, when no cross-family reviewer is effectively available |
-| `reviewer-degraded-sonnet` | Sonnet 5 high (claude) | — | degraded path only: opus-authored expert work |
+| `reviewer-degraded-sonnet` | Sonnet 5 high (claude) | — | degraded path only: opus- or fable-authored expert work |
 | `reviewer-degraded-opus-apex` | Opus 5 high (claude) | — | degraded path only: fable-authored apex work (preferred heavy-model pairing) |
 | `reviewer-degraded-fable-apex` | Fable 5 low (claude) — no seat-level fallback; an unavailable pairing partner is resolved by `reviewFor` to a fresh instance of the author's own model (opus-5 high, since this seat only reviews opus-authored apex work) | — | degraded path only: opus-authored apex work (preferred heavy-model pairing) |
 | `convergence` | Fable 5 low (claude), fallback Opus 5 high; dispatches Sol or Gemini directly for the second family | Both convergence moments: ladder step 2 (two-seat consensus on a disputed judgment) and direction-setting plans | — |
@@ -258,6 +258,14 @@ often: a reservation taken cross-family whose lane is lost while the author
 runs is reviewed on the degraded path instead, and it closes only because a
 `replacement_reason` is recorded. Close can catch a dishonest or unexplained
 label, not fix a wrong one — route the reviewer correctly at dispatch.
+
+A same-model degraded fallback is a different fact and takes different
+fields. The degraded path is a preference ladder: when the preferred
+cross-model reviewer is unavailable, a second fresh instance of the author's
+own model reviews instead. The seat is unchanged there — only the model
+behind it fell back — so that is recorded as `fallback_used: true` with a
+`fallback_reason` on the review route, the same pair the author-phase
+outcome record uses, never as a `replacement_reason`.
 
 Live routing (including which seats are currently degraded) is data, not this
 table: `routing.js active <treeRoot>` (and `routing.js review-for <treeRoot>

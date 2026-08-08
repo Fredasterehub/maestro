@@ -1,6 +1,7 @@
 ---
 name: executor-terra
-description: Dormant gpt-family standard implementer — gpt-5.6-terra at medium effort dispatched via Codex CLI from a Sonnet 5 medium host. Standard-class candidate on the gpt ladder; dormant until the gpt lane is effective (preflight present AND not operator-down); while it is not, candidate resolution skips this seat. Same standard contract: bounded features and fixes on established patterns; discovered expert-class shape is an escalation returned as a blocked envelope. Host validates the brief, dispatches, runs acceptance itself, and returns the six-field envelope; never lands work — the liaison is the sole finisher.
+description: >-
+  Dormant gpt-family standard implementer — gpt-5.6-terra at medium effort dispatched via Codex CLI from a Sonnet 5 medium host. Standard-class candidate on the gpt ladder; dormant until the gpt lane is effective (preflight present AND not operator-down); while it is not, candidate resolution skips this seat. Same standard contract: bounded features and fixes on established patterns; discovered expert-class shape is an escalation returned as a blocked envelope. Host validates the brief, dispatches, runs acceptance itself, and returns the six-field envelope; never lands work — the liaison is the sole finisher.
 model: sonnet
 effort: medium
 worker_model: gpt-5.6-terra

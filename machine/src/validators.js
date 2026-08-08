@@ -87,8 +87,9 @@ function validateEnvelopeChecked(env) {
     }
   }
 
-  // question is non-empty IFF state is "blocked" — a blocked worker owes the
-  // operator its question, and a non-blocked one may not smuggle one in.
+  // A blocked worker owes the operator its question. A "partial" worker may
+  // carry one — it completed part of its scope and stopped on a genuine open
+  // question — but a "done" worker may not smuggle one in.
   if (
     typeof env.state === 'string' &&
     ENVELOPE_STATES.has(env.state) &&
@@ -97,7 +98,7 @@ function validateEnvelopeChecked(env) {
     const hasQuestion = env.question.trim() !== '';
     if (env.state === 'blocked' && !hasQuestion) {
       errors.push('envelope field "question" must be non-empty when state is "blocked"');
-    } else if (env.state !== 'blocked' && hasQuestion) {
+    } else if (env.state === 'done' && hasQuestion) {
       errors.push(`envelope field "question" must be empty when state is "${env.state}"`);
     }
   }
@@ -262,6 +263,13 @@ const FRICTION_KINDS = new Set([
   'quota-rerouted',
   'safety-refusal-rerouted',
   'runtime-retried',
+  // §16.6's class-and-seat cell experiment proposal. friction.js SURFACES a
+  // cell at the threshold but never records one: its aggregate is stateless,
+  // so appending on every recompute would re-record a proposal already made.
+  // The record is written by the liaison, once, when it acts on a surfaced
+  // proposal — which is also who consumes it, reading the ledger to see
+  // which cells have already been taken up.
+  'experiment-proposed',
 ]);
 const FRICTION_REQUIRED_KEYS = ['kind', 'mission_id', 'detail'];
 const FRICTION_KEYS = ['kind', 'mission_id', 'seat', 'detail'];

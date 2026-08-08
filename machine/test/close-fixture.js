@@ -26,7 +26,11 @@ const routing = require(path.join(SRC, 'routing.js'));
 
 const DIGEST_A = 'sha256:' + 'a'.repeat(64);
 const DIGEST_B = 'sha256:' + 'b'.repeat(64);
-const ROUTING_CONFIG = 'routing-2026-08-06-2.json';
+// The dated config name `routing.init` writes for a tree created in this
+// process. It has to be the REAL one now: family derivation reads the dated
+// config a route record names, and a name no tree carries resolves to no
+// family at all rather than quietly falling back to the active config.
+const ROUTING_CONFIG = `routing-${new Date().toISOString().slice(0, 10)}-1.json`;
 
 function runNode(script, args, stdin) {
   return spawnSync(process.execPath, [script, ...args], {

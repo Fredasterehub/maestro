@@ -121,6 +121,33 @@ function tempFilesIn(dir) {
     });
 }
 
+// --- short write is never published -----------------------------------------
+{
+  const f = file('short-write.json');
+  const script = `
+    const fs = require('node:fs');
+    const real = fs.writeSync;
+    fs.writeSync = (fd, data, ...rest) => {
+      const n = real.call(fs, fd, String(data).slice(0, 3), ...rest);
+      return n;
+    };
+    const { writeJson } = require(${JSON.stringify(SRC)});
+    try {
+      writeJson(${JSON.stringify(f)}, { truncated: false });
+      process.exit(9);
+    } catch (err) {
+      if (!/short write/.test(err.message)) process.exit(8);
+    }
+  `;
+  execFileSync(process.execPath, ['-e', script], { encoding: 'utf8' });
+  assert.ok(!fs.existsSync(f), 'a short write publishes no file');
+  assert.deepStrictEqual(
+    tempFilesIn(tmp).filter((name) => name.includes('short-write.json')),
+    [],
+    'a short write leaves no temp behind'
+  );
+}
+
 // --- --help self-documentation ----------------------------------------------
 {
   const out = execFileSync(process.execPath, [SRC, '--help'], { encoding: 'utf8' });

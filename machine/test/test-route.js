@@ -33,6 +33,12 @@ const routingInit = routing.init(root);
 const routingConfig = routing.loadRouting(root).config;
 
 const DIGEST_A = 'sha256:' + 'a'.repeat(64);
+// The dated config name `routing.init` writes for a tree created in this
+// process. It has to be the REAL one now: family derivation reads the dated
+// config a route record names, and a name no tree carries resolves to no
+// family at all rather than quietly falling back to the active config.
+const ROUTING_CONFIG = `routing-${new Date().toISOString().slice(0, 10)}-1.json`;
+
 const DIGEST_B = 'sha256:' + 'b'.repeat(64);
 const DIGEST_C = 'sha256:' + 'c'.repeat(64);
 const HEAD_A = '1'.repeat(40);
@@ -87,7 +93,7 @@ function authorInput(overrides) {
     attempt: 1,
     brief_digest: DIGEST_A,
     task_class: 'expert',
-    routing_config: 'routing-2026-08-06-2.json',
+    routing_config: ROUTING_CONFIG,
     routing_digest: DIGEST_B,
     routing_revision: 6,
     requested_seat: 'executor-claude',
@@ -133,7 +139,7 @@ function reviewInput(authorRouteSeq, overrides) {
     reviewer_host_model: null,
     reviewer_host_effort: null,
     independence: 'degraded-path',
-    routing_config: 'routing-2026-08-06-2.json',
+    routing_config: ROUTING_CONFIG,
     routing_digest: DIGEST_B,
     replacement_reason: null,
     ...overrides,
@@ -164,7 +170,7 @@ function reviewInput(authorRouteSeq, overrides) {
   assert.strictEqual(rec.attempt, 1);
   assert.strictEqual(rec.brief_digest, DIGEST_A);
   assert.strictEqual(rec.task_class, 'expert');
-  assert.strictEqual(rec.routing_config, 'routing-2026-08-06-2.json');
+  assert.strictEqual(rec.routing_config, ROUTING_CONFIG);
   assert.strictEqual(rec.routing_revision, 6);
   assert.strictEqual(rec.author_family, 'claude');
   assert.strictEqual(rec.host_model, null);
@@ -326,7 +332,48 @@ function reviewInput(authorRouteSeq, overrides) {
   assert.strictEqual(rec.independence, 'degraded-path');
   assert.strictEqual(rec.replacement_reason, null, 'the reserved reviewer was honoured');
   assert.strictEqual(rec.predecessor, null);
+  assert.ok(
+    !Object.prototype.hasOwnProperty.call(rec, 'fallback_used'),
+    'an unstated fallback pair is absent, not recorded false'
+  );
   assert.ok(rec.seq > author.seq, 'the review route is written after the author route');
+}
+
+// --- review route: same-model degraded fallback telemetry --------------------
+//
+// The degraded path is a preference ladder: when the preferred cross-model
+// reviewer is unavailable, a second fresh instance of the AUTHOR's model
+// reviews instead. replacement_reason is about a seat substitution and
+// cannot carry that — the seat is unchanged, only the model behind it fell
+// back — so the review record carries the same pair roster.js's author-phase
+// outcome record does.
+{
+  const m = openMission();
+  const author = reserve(root, authorInput({ mission_id: m }));
+  const fell = reserveReview(
+    root,
+    reviewInput(author.seq, {
+      mission_id: m,
+      fallback_used: true,
+      fallback_reason: 'preferred fable-5 reviewer unavailable; second fresh opus-5 instance reviewed',
+    })
+  );
+  assert.strictEqual(fell.fallback_used, true);
+  assert.match(fell.fallback_reason, /second fresh opus-5 instance/);
+
+  // true without a reason, and a reason without the flag, are both refused.
+  assert.throws(
+    () => reserveReview(root, reviewInput(author.seq, { mission_id: m, fallback_used: true, fallback_reason: null })),
+    /"fallback_reason" must be a non-empty single-line string/
+  );
+  assert.throws(
+    () => reserveReview(root, reviewInput(author.seq, { mission_id: m, fallback_reason: 'no flag' })),
+    /"fallback_reason" requires "fallback_used"/
+  );
+  assert.throws(
+    () => reserveReview(root, reviewInput(author.seq, { mission_id: m, fallback_used: false, fallback_reason: 'x' })),
+    /"fallback_reason" must be null when "fallback_used" is false/
+  );
 }
 
 // --- review route: embeds a really-computed identity, field for field -------
@@ -634,6 +681,35 @@ function reviewInput(authorRouteSeq, overrides) {
   const noConfig = seatFamily(bare, 'reviewer-gemini');
   assert.strictEqual(noConfig.family, null);
   assert.match(noConfig.reason, /the routing config could not be read/);
+
+  // The DATED config a record names is what the derivation reads, not the
+  // tree's active pointer: a seat re-seated by a later revise must still
+  // derive the family the record was written against.
+  const routingDir = path.join(root, 'routing');
+  const active = JSON.parse(fs.readFileSync(path.join(routingDir, 'active.json'), 'utf8'));
+  const pinnedName = 'routing-2020-01-01-1.json';
+  const pinned = JSON.parse(fs.readFileSync(path.join(routingDir, active.active_config), 'utf8'));
+  pinned.seats['reviewer-retired'] = { model: 'sonnet-5', family: 'claude', effort: 'high' };
+  fs.writeFileSync(path.join(routingDir, pinnedName), JSON.stringify(pinned, null, 2) + '\n');
+  assert.strictEqual(
+    seatFamily(root, 'reviewer-retired').family,
+    null,
+    'the seat is absent from the tree-active config'
+  );
+  assert.deepStrictEqual(
+    seatFamily(root, 'reviewer-retired', pinnedName),
+    { family: 'claude', reason: null },
+    'the named dated config is the authority, not the active pointer'
+  );
+  // A named config the tree no longer carries is NO FAMILY, never a quiet
+  // substitution of the active one: standing on the active config would
+  // re-derive the record against a config it never saw — the exact defect
+  // naming the dated file closes — and a pruned file is indistinguishable
+  // from one rewritten to launder a past review, so the fallback would
+  // silently pick the laundered answer.
+  const gone = seatFamily(root, 'reviewer-gemini', 'routing-2019-01-01-1.json');
+  assert.strictEqual(gone.family, null, 'a missing dated config resolves to no family, never to the active config');
+  assert.match(gone.reason, /the routing config could not be read/);
 }
 
 // --- review route: artifact identity is one object, never a digest/SHA mix ---

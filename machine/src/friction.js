@@ -312,18 +312,14 @@ function computeAttemptRates(records) {
   // surfaced here; nothing anywhere in this module writes a status change.
   //
   // Plan §17 names this a ledger record ("experiment proposal ... at
-  // aggregation threshold"); this returns a field instead (repair round 1,
-  // F8 — liaison ruling). FRICTION_KINDS (validators.js) carries no
-  // "experiment-proposal" kind, and validators.js is fenced out of this
-  // step's surface — this module is the sole writer of the friction
-  // vocabulary's ledger records, but it does not own that vocabulary, so it
-  // cannot mint the kind a record would need without exceeding its brief.
-  // If that vocabulary later gains one, this becomes an append instead of a
-  // return; until then, a returned field, said plainly, is the honest
-  // choice over a silent one. It also has no memory: every call recomputes
-  // from the whole ledger, so a cell already proposed is proposed again on
-  // the next run — there is no "already acted on" state for a stateless
-  // aggregate to consult, and adding one is the same out-of-surface problem.
+  // aggregation threshold"); this returns a field instead. FRICTION_KINDS
+  // now carries "experiment-proposed", but this aggregate is still not the
+  // one to append it: it has no memory — every call recomputes from the
+  // whole ledger, so a cell already proposed is proposed again on the next
+  // run, and appending here would re-record the same proposal forever. The
+  // record is written once by the liaison, when it acts on a proposal
+  // surfaced here, and reading those records back is how a later run learns
+  // which cells have already been taken up.
   const experiment_proposals = [];
   for (const [key, closesCount] of cellCloses) {
     if (closesCount >= EXPERIMENT_PROPOSAL_THRESHOLD) {

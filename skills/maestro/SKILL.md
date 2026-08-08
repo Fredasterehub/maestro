@@ -120,8 +120,8 @@ Shared contract terms, defined once here so the references can use them freely:
   before spawn; anchors are file paths, never pasted content.
 - **Envelope** — the six-field worker report: `state / result / evidence /
   risks / artifact / question`; `state ∈ {done, partial, blocked}`; ≤300 words
-  across result+evidence+risks+question; `question` non-empty only when
-  blocked.
+  across result+evidence+risks+question; `question` is required on `blocked`,
+  permitted on `partial`, and forbidden on `done`.
 - **Verdict** — `approve | revise`, from reviewers only. Revise loop caps at 2.
 - **Stop** — `DONE | BLOCKED-OPERATOR (+question) | QUOTA-WAIT
   (+earliest_resume) | BUDGET-CEILING | EXHAUSTED`, written only by `stop.js`.

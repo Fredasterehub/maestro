@@ -54,7 +54,7 @@ const path = require('node:path');
 const { withLock, appendRecord, readRecords } = require('./jsonl.js');
 const { readJson } = require('./atomic-json.js');
 const { BRIEF_TIER_VALUES } = require('./validators.js');
-const { FAMILIES, DATED_CONFIG_RE, loadRouting } = require('./routing.js');
+const { FAMILIES, DATED_CONFIG_RE, loadRouting, loadDatedConfig } = require('./routing.js');
 
 const LEDGER_BASENAME = 'ledger.jsonl';
 const STATE_BASENAME = 'state.json';
@@ -208,10 +208,30 @@ function checkHostPair(errors, model, effort, modelKey, effortKey, label) {
 // table does not carry, and a seat entry that records no family, likewise
 // establish nothing. Callers refuse on `family === null` — a family that
 // cannot be established has not been established, and there is no default.
-function seatFamily(treeRoot, seatName) {
+// The named config or NOTHING — never a quiet substitution. Standing on the
+// active config when the named one cannot be read would re-derive the record
+// against a config it never saw, which is the exact defect naming the dated
+// file was meant to close, and it would do it invisibly: a pruned file and a
+// file rewritten to launder a past review are indistinguishable from here,
+// so a fallback would silently pick the laundered answer. Unreadable is
+// therefore no family at all, which callers already handle as the bounded
+// legacy tolerance — a refusal or a tolerated absence, never a fabrication.
+function readSeatConfig(treeRoot, configFile) {
+  if (configFile === undefined || configFile === null) return loadRouting(treeRoot).config;
+  return loadDatedConfig(treeRoot, configFile).config;
+}
+
+// `configFile` is the dated config the CALLER's own record names. A route
+// record carries `routing_config` exactly so its family can be re-derived
+// against the table that was authoritative when it was written; deriving it
+// from the tree-active pointer instead reads a config the record never saw,
+// and a since-revised seat table then contradicts a record that was lawful
+// when written. Callers without a record in hand pass nothing and get the
+// active config, which for them IS the authority.
+function seatFamily(treeRoot, seatName, configFile) {
   let config;
   try {
-    ({ config } = loadRouting(treeRoot));
+    config = readSeatConfig(treeRoot, configFile);
   } catch (err) {
     return { family: null, reason: `the routing config could not be read (${err.message})` };
   }
@@ -275,6 +295,11 @@ const FAMILY_DERIVATION = {
 function checkFamilyDerived(treeRoot, phase, input) {
   const spec = FAMILY_DERIVATION[phase];
   const seatName = input[spec.seatField];
+  // Reservation time: the record is being written NOW, so the tree's active
+  // config is the authority it is being written against — there is no
+  // earlier config for it to be re-read against yet. The dated-config read
+  // is for close-time re-derivation (mission.js), where the record already
+  // exists and the tree may have been revised since.
   const { family, reason } = seatFamily(treeRoot, seatName);
   if (family === null) {
     throw new Error(
@@ -507,6 +532,17 @@ const REVIEW_KEYS = [
   'replacement_reason',
 ];
 
+// Same-model degraded-review telemetry, optional so records written before
+// the fields existed stay valid. The degraded path is a PREFERENCE ladder:
+// when the preferred cross-model reviewer is unavailable, a second fresh
+// instance of the author's own model reviews instead. That is a materially
+// weaker independence claim than the record otherwise reads as, and
+// `replacement_reason` — free text about a seat SUBSTITUTION — cannot carry
+// it: the seat is unchanged, only the model behind it fell back. Same names
+// and same shape as roster.js's author-phase OUTCOME_KEYS, so the two phases
+// answer "did a fallback carry this?" identically.
+const REVIEW_OPTIONAL_KEYS = ['fallback_used', 'fallback_reason'];
+
 const IDENTITY_KEYS = ['source_head', 'source_tree', 'patch_digest', 'dirty'];
 
 // The canonical artifact identity object (§7). Shapes are checked strictly so
@@ -551,7 +587,7 @@ function validateReviewRouteChecked(input) {
   }
   const errors = [];
   const label = 'review route';
-  checkExactKeys(input, REVIEW_KEYS, [], label, errors);
+  checkExactKeys(input, REVIEW_KEYS, REVIEW_OPTIONAL_KEYS, label, errors);
 
   checkToken(errors, input.mission_id, `${label} field "mission_id"`);
   checkInt(errors, input.author_route_seq, `${label} field "author_route_seq"`, 0);
@@ -583,8 +619,28 @@ function validateReviewRouteChecked(input) {
   if (input.replacement_reason !== null) {
     checkPhrase(errors, input.replacement_reason, `${label} field "replacement_reason"`);
   }
+  checkFallbackPair(errors, input, label);
 
   return { ok: errors.length === 0, errors };
+}
+
+// Absent entirely, or a boolean that carries its reason when it is true — the
+// same rule roster.js holds on the author-phase outcome record. A reason
+// without a fallback is a claim about nothing, so it is refused too.
+function checkFallbackPair(errors, input, label) {
+  const hasUsed = Object.prototype.hasOwnProperty.call(input, 'fallback_used');
+  const hasReason = Object.prototype.hasOwnProperty.call(input, 'fallback_reason');
+  if (!hasUsed && !hasReason) return;
+  if (!hasUsed) {
+    errors.push(`${label} field "fallback_reason" requires "fallback_used"`);
+    return;
+  }
+  checkBoolean(errors, input.fallback_used, `${label} field "fallback_used"`);
+  if (input.fallback_used === true) {
+    checkPhrase(errors, input.fallback_reason, `${label} field "fallback_reason"`);
+  } else if (hasReason && input.fallback_reason !== null) {
+    errors.push(`${label} field "fallback_reason" must be null when "fallback_used" is false`);
+  }
 }
 
 // --- supersession shape ------------------------------------------------------
@@ -871,6 +927,11 @@ function authorPayload(input, predecessorBlock) {
 function reviewPayload(input, predecessorBlock) {
   const payload = {};
   for (const key of REVIEW_KEYS) payload[key] = input[key];
+  // Carried only when the caller stated them: an absent pair is "not
+  // recorded", which is a different claim from "no fallback happened".
+  for (const key of REVIEW_OPTIONAL_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(input, key)) payload[key] = input[key];
+  }
   payload.artifact_identity = {};
   for (const key of IDENTITY_KEYS) payload.artifact_identity[key] = input.artifact_identity[key];
   payload.phase = 'review';
@@ -1196,5 +1257,6 @@ module.exports = {
   ESCALATION_TRANSITIONS,
   AUTHOR_KEYS,
   REVIEW_KEYS,
+  REVIEW_OPTIONAL_KEYS,
   IDENTITY_KEYS,
 };

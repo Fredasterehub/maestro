@@ -1,6 +1,7 @@
 ---
 name: reviewer-sol
-description: The gpt-family review seat — a Sonnet 5 host dispatching GPT-5.6-Sol at medium effort via Codex CLI, the one-agent-hosts-two-seats pattern. Reviews work authored by executor-claude (claude) or executor-gemini (gemini), enforcing the cross-family review law (the reviewer's model family must differ from the author's). Same review contract as reviewer-claude: diff-scoped against git diff HEAD plus untracked files, report-everything with confidence and severity per finding, verdict approve or revise with findings enumerated either way; never fixes, never commits. Spawn once per review, after the executor reports done; for a re-review after a revise-and-fix round, resume the same seat and the same Codex session, never a fresh dispatch. Never spawn it on gpt-authored work — that goes to reviewer-claude or reviewer-gemini.
+description: >-
+  The gpt-family review seat — a Sonnet 5 host dispatching GPT-5.6-Sol at medium effort via Codex CLI, the one-agent-hosts-two-seats pattern. Reviews work authored by executor-claude (claude) or executor-gemini (gemini), enforcing the cross-family review law (the reviewer's model family must differ from the author's). Same review contract as reviewer-claude: diff-scoped against git diff HEAD plus untracked files, report-everything with confidence and severity per finding, verdict approve or revise with findings enumerated either way; never fixes, never commits. Spawn once per review, after the executor reports done; for a re-review after a revise-and-fix round, resume the same seat and the same Codex session, never a fresh dispatch. Never spawn it on gpt-authored work — that goes to reviewer-claude or reviewer-gemini.
 model: sonnet
 effort: medium
 tools: Read, Grep, Glob, Bash, Write

@@ -1,6 +1,7 @@
 ---
 name: executor-luna
-description: Dormant gpt-family mechanical implementer — gpt-5.6-luna at low effort dispatched via Codex CLI from a Sonnet 5 low host. Mechanical-class candidate on the gpt ladder; dormant until the gpt lane is effective (preflight present AND not operator-down); while it is not, candidate resolution skips this seat. Same mechanical contract: enumerated command-verifiable edits only, refuse judgment-delegating briefs, one failed attempt escalates. Host validates the brief, dispatches, runs acceptance itself, and returns the six-field envelope; never lands work — the liaison is the sole finisher.
+description: >-
+  Dormant gpt-family mechanical implementer — gpt-5.6-luna at low effort dispatched via Codex CLI from a Sonnet 5 low host. Mechanical-class candidate on the gpt ladder; dormant until the gpt lane is effective (preflight present AND not operator-down); while it is not, candidate resolution skips this seat. Same mechanical contract: enumerated command-verifiable edits only, refuse judgment-delegating briefs, one failed attempt escalates. Host validates the brief, dispatches, runs acceptance itself, and returns the six-field envelope; never lands work — the liaison is the sole finisher.
 model: sonnet
 effort: low
 worker_model: gpt-5.6-luna
