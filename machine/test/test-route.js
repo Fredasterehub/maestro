@@ -33,6 +33,12 @@ const routingInit = routing.init(root);
 const routingConfig = routing.loadRouting(root).config;
 
 const DIGEST_A = 'sha256:' + 'a'.repeat(64);
+// The dated config name `routing.init` writes for a tree created in this
+// process. It has to be the REAL one now: family derivation reads the dated
+// config a route record names, and a name no tree carries resolves to no
+// family at all rather than quietly falling back to the active config.
+const ROUTING_CONFIG = `routing-${new Date().toISOString().slice(0, 10)}-1.json`;
+
 const DIGEST_B = 'sha256:' + 'b'.repeat(64);
 const DIGEST_C = 'sha256:' + 'c'.repeat(64);
 const HEAD_A = '1'.repeat(40);
@@ -87,7 +93,7 @@ function authorInput(overrides) {
     attempt: 1,
     brief_digest: DIGEST_A,
     task_class: 'expert',
-    routing_config: 'routing-2026-08-06-2.json',
+    routing_config: ROUTING_CONFIG,
     routing_digest: DIGEST_B,
     routing_revision: 6,
     requested_seat: 'executor-claude',
@@ -133,7 +139,7 @@ function reviewInput(authorRouteSeq, overrides) {
     reviewer_host_model: null,
     reviewer_host_effort: null,
     independence: 'degraded-path',
-    routing_config: 'routing-2026-08-06-2.json',
+    routing_config: ROUTING_CONFIG,
     routing_digest: DIGEST_B,
     replacement_reason: null,
     ...overrides,
@@ -164,7 +170,7 @@ function reviewInput(authorRouteSeq, overrides) {
   assert.strictEqual(rec.attempt, 1);
   assert.strictEqual(rec.brief_digest, DIGEST_A);
   assert.strictEqual(rec.task_class, 'expert');
-  assert.strictEqual(rec.routing_config, 'routing-2026-08-06-2.json');
+  assert.strictEqual(rec.routing_config, ROUTING_CONFIG);
   assert.strictEqual(rec.routing_revision, 6);
   assert.strictEqual(rec.author_family, 'claude');
   assert.strictEqual(rec.host_model, null);
@@ -695,13 +701,15 @@ function reviewInput(authorRouteSeq, overrides) {
     { family: 'claude', reason: null },
     'the named dated config is the authority, not the active pointer'
   );
-  // A named config the tree no longer carries falls back to the active one
-  // rather than making an honest record underivable.
-  assert.deepStrictEqual(
-    seatFamily(root, 'reviewer-gemini', 'routing-2019-01-01-1.json'),
-    { family: 'gemini', reason: null },
-    'a missing dated config falls back to the active config'
-  );
+  // A named config the tree no longer carries is NO FAMILY, never a quiet
+  // substitution of the active one: standing on the active config would
+  // re-derive the record against a config it never saw — the exact defect
+  // naming the dated file closes — and a pruned file is indistinguishable
+  // from one rewritten to launder a past review, so the fallback would
+  // silently pick the laundered answer.
+  const gone = seatFamily(root, 'reviewer-gemini', 'routing-2019-01-01-1.json');
+  assert.strictEqual(gone.family, null, 'a missing dated config resolves to no family, never to the active config');
+  assert.match(gone.reason, /the routing config could not be read/);
 }
 
 // --- review route: artifact identity is one object, never a digest/SHA mix ---

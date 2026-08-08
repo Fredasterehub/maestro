@@ -208,19 +208,17 @@ function checkHostPair(errors, model, effort, modelKey, effortKey, label) {
 // table does not carry, and a seat entry that records no family, likewise
 // establish nothing. Callers refuse on `family === null` — a family that
 // cannot be established has not been established, and there is no default.
-// PREFERENCE, not a requirement: the named config is the authority when the
-// tree still carries it, and the active config stands in when it does not.
-// A dated file that is gone is not evidence the record lied — it is a tree
-// that was pruned or restored — and refusing every such derivation would
-// turn housekeeping into an unclosable mission. Either way the family is
-// derived from a real config rather than accepted from the record.
+// The named config or NOTHING — never a quiet substitution. Standing on the
+// active config when the named one cannot be read would re-derive the record
+// against a config it never saw, which is the exact defect naming the dated
+// file was meant to close, and it would do it invisibly: a pruned file and a
+// file rewritten to launder a past review are indistinguishable from here,
+// so a fallback would silently pick the laundered answer. Unreadable is
+// therefore no family at all, which callers already handle as the bounded
+// legacy tolerance — a refusal or a tolerated absence, never a fabrication.
 function readSeatConfig(treeRoot, configFile) {
   if (configFile === undefined || configFile === null) return loadRouting(treeRoot).config;
-  try {
-    return loadDatedConfig(treeRoot, configFile).config;
-  } catch (err) {
-    return loadRouting(treeRoot).config;
-  }
+  return loadDatedConfig(treeRoot, configFile).config;
 }
 
 // `configFile` is the dated config the CALLER's own record names. A route

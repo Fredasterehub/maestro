@@ -41,6 +41,12 @@ const ROSTER = path.join(__dirname, '..', 'src', 'roster.js');
 const { readRecords } = require(path.join(__dirname, '..', 'src', 'jsonl.js'));
 const { reserve, reserveReview, supersede } = require(ROUTE);
 const { artifactIdentity } = require(path.join(__dirname, '..', 'src', 'gate.js'));
+// The dated config name `routing.init` writes for a tree created in this
+// process. It has to be the REAL one now: family derivation reads the dated
+// config a route record names, and a name no tree carries resolves to no
+// family at all rather than quietly falling back to the active config.
+const ROUTING_CONFIG = `routing-${new Date().toISOString().slice(0, 10)}-1.json`;
+
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-dispatch-integration-'));
 process.on('exit', () => fs.rmSync(tmp, { recursive: true, force: true }));
@@ -134,7 +140,7 @@ function authorInput(missionId, overrides) {
     attempt: 1,
     brief_digest: 'sha256:' + 'a'.repeat(64),
     task_class: 'standard',
-    routing_config: 'routing-2026-08-06-2.json',
+    routing_config: ROUTING_CONFIG,
     routing_digest: 'sha256:' + 'b'.repeat(64),
     routing_revision: 6,
     requested_seat: 'executor-sol-expert',
@@ -175,7 +181,7 @@ function reviewInput(missionId, authorRoute, identity, overrides) {
     reviewer_host_model: null,
     reviewer_host_effort: null,
     independence: 'cross-family',
-    routing_config: 'routing-2026-08-06-2.json',
+    routing_config: ROUTING_CONFIG,
     routing_digest: 'sha256:' + 'b'.repeat(64),
     replacement_reason: null,
     ...overrides,
