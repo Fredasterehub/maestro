@@ -75,6 +75,57 @@ session to resume — their `gemini_handle` records the saved dispatch prompt
 and its hash, so recovery is re-dispatch from that prompt, not continuation.
 Only when no live path exists does re-dispatch spawn a fresh seat.
 
+## When close refuses on the ledger's own state
+
+Crash recovery is one thing; a mission whose LEDGER refuses the close is
+another, and the two have nothing in common. `mission.js close` refuses on
+four states no re-dispatch, no gate run, and no re-review will clear, because
+the ledger is append-only and nothing can retract the record that caused them:
+
+- a dispatch record naming no readable `route_seq` — nothing can classify it;
+- two dispatch records against one `route_seq` — whatever happened to that
+  one route happened to both, so neither can be classified without inventing
+  which;
+- a dispatch-outcome record naming a dispatch the close cites as a winner — a
+  winning dispatch has no terminal outcome, so one of the two is false;
+- a supersession recording a reason outside `route.js`'s closed vocabulary —
+  no terminal outcome can be read from a word the vocabulary does not carry.
+
+(The fifth refusal that looks like these — a standing revise against the
+closing artifact — is not one: `route.js supersede` clears it, and that is
+the documented path.)
+
+There is deliberately no `--force`, `--override`, or `--repair` flag. Each of
+these refusals exists because the ledger cannot say what happened, and a flag
+that closed anyway would write a mission outcome asserting a fact no record
+supports — the precise failure the whole close path is built to prevent. The
+refusal is correct. What was missing is what to do next.
+
+**The recovery is a successor mission, never a repair of this one:**
+
+1. `hold.js park` a hold against the stuck mission, `owner_mission` set to it,
+   summarising the refusal verbatim — the exact `close refused` message. That
+   record is what makes the stuck stream legible to a later session, which
+   will otherwise re-derive the whole diagnosis from scratch.
+2. `mission.js open` a successor mission with the SAME eight-field brief. Its
+   ledger stream is clean; the defect lives in records, and records are
+   per-mission.
+3. Land the work through the successor: normal dispatch, review, close. If the
+   artifact already exists and was already approved under the stuck mission,
+   the successor still reserves its own route and takes its own review — a
+   verdict recorded in one stream is not evidence in another.
+4. The stuck mission STAYS OPEN. Nothing closes it, and nothing should: an
+   open mission with a hold against it is an honest record of a stream that
+   could not be resolved. Resolve the hold (`hold.js resolve`, `routed_to` the
+   successor) once the successor closes, so the open mission carries its own
+   explanation.
+
+Report the successor to the operator as what it is — the same work, landed
+through a second mission because the first one's records contradicted
+themselves — and say which of the four states you hit. All four are writer
+defects upstream of the close, so an operator seeing one repeatedly is seeing
+a bug to fix, not a workflow to get used to.
+
 ## The resume report
 
 Recovery is invisible to the operator unless you say what it recovered. Work
